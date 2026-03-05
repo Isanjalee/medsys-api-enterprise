@@ -1,0 +1,21 @@
+{
+  "name": "@medsys/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"No lint configured\""
+  },
+  "dependencies": {
+    "@medsys/config": "0.1.0",
+    "@medsys/db": "0.1.0",
+    "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}

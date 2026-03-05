@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../../",
+    "outDir": "dist",
+    "declaration": true,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@medsys/config": [
+        "../../packages/config/src/index.ts"
+      ],
+      "@medsys/db": [
+        "../../packages/db/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

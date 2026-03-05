@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: medsys-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medsys
+      POSTGRES_USER: medsys
+      POSTGRES_PASSWORD: medsys
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medsys -d medsys"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: medsys-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:5432"
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+  redis:
+    image: redis:7
+    container_name: medsys-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: medsys-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+
+volumes:
+  postgres_data:

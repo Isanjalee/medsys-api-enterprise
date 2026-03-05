@@ -1,0 +1,430 @@
+import {
+  bigserial,
+  bigint,
+  boolean,
+  date,
+  index,
+  inet,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+  varchar
+} from "drizzle-orm/pg-core";
+
+export const userRoleEnum = pgEnum("user_role", ["owner", "doctor", "assistant"]);
+export const genderEnum = pgEnum("gender", ["male", "female", "other"]);
+export const allergySeverityEnum = pgEnum("allergy_severity", ["low", "moderate", "high"]);
+export const appointmentStatusEnum = pgEnum("appointment_status", [
+  "waiting",
+  "in_consultation",
+  "completed",
+  "cancelled"
+]);
+export const priorityLevelEnum = pgEnum("priority_level", ["low", "normal", "high", "critical"]);
+export const drugSourceEnum = pgEnum("drug_source", ["clinical", "outside"]);
+export const inventoryCategoryEnum = pgEnum("inventory_category", [
+  "medicine",
+  "consumable",
+  "equipment",
+  "other"
+]);
+export const inventoryMovementTypeEnum = pgEnum("inventory_movement_type", [
+  "in",
+  "out",
+  "adjustment"
+]);
+export const testOrderStatusEnum = pgEnum("test_order_status", [
+  "ordered",
+  "in_progress",
+  "completed",
+  "cancelled"
+]);
+
+const auditTimestamps = {
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+};
+
+export const users = pgTable(
+  "users",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    uuid: uuid("uuid").notNull().defaultRandom().unique(),
+    email: varchar("email", { length: 255 }).notNull(),
+    passwordHash: text("password_hash").notNull(),
+    firstName: varchar("first_name", { length: 80 }).notNull(),
+    lastName: varchar("last_name", { length: 80 }).notNull(),
+    role: userRoleEnum("role").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps
+  },
+  (table) => [uniqueIndex("users_org_email_idx").on(table.organizationId, table.email)]
+);
+
+export const refreshTokens = pgTable(
+  "refresh_tokens",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    tokenId: uuid("token_id").notNull().defaultRandom().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("refresh_tokens_user_idx").on(table.userId)]
+);
+
+export const families = pgTable(
+  "families",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    familyCode: varchar("family_code", { length: 30 }).notNull().unique(),
+    familyName: varchar("family_name", { length: 120 }).notNull(),
+    assigned: boolean("assigned").notNull().default(false),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [index("families_org_assigned_idx").on(table.organizationId, table.assigned)]
+);
+
+export const patients = pgTable(
+  "patients",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    uuid: uuid("uuid").notNull().defaultRandom().unique(),
+    nic: varchar("nic", { length: 20 }),
+    firstName: varchar("first_name", { length: 80 }).notNull(),
+    lastName: varchar("last_name", { length: 80 }).notNull(),
+    fullName: varchar("full_name", { length: 170 }).notNull(),
+    dob: date("dob"),
+    age: bigint("age", { mode: "number" }),
+    gender: genderEnum("gender").notNull(),
+    phone: varchar("phone", { length: 30 }),
+    address: text("address"),
+    bloodGroup: varchar("blood_group", { length: 5 }),
+    familyId: bigint("family_id", { mode: "number" }).references(() => families.id),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("patients_org_nic_unique").on(table.organizationId, table.nic),
+    index("patients_org_full_name_idx").on(table.organizationId, table.fullName),
+    index("patients_org_family_idx").on(table.organizationId, table.familyId)
+  ]
+);
+
+export const familyMembers = pgTable(
+  "family_members",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    familyId: bigint("family_id", { mode: "number" })
+      .notNull()
+      .references(() => families.id),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    relationship: varchar("relationship", { length: 40 }),
+    ...auditTimestamps
+  },
+  (table) => [
+    unique("family_members_unique").on(table.familyId, table.patientId),
+    index("family_members_org_family_idx").on(table.organizationId, table.familyId)
+  ]
+);
+
+export const patientAllergies = pgTable(
+  "patient_allergies",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    allergyName: varchar("allergy_name", { length: 120 }).notNull(),
+    severity: allergySeverityEnum("severity"),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [index("patient_allergies_patient_idx").on(table.patientId)]
+);
+
+export const patientConditions = pgTable(
+  "patient_conditions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    conditionName: varchar("condition_name", { length: 180 }).notNull(),
+    icd10Code: varchar("icd10_code", { length: 16 }),
+    status: varchar("status", { length: 20 }).notNull().default("active"),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [index("patient_conditions_patient_idx").on(table.patientId)]
+);
+
+export const appointments = pgTable(
+  "appointments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    doctorId: bigint("doctor_id", { mode: "number" }).references(() => users.id),
+    assistantId: bigint("assistant_id", { mode: "number" }).references(() => users.id),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    status: appointmentStatusEnum("status").notNull(),
+    reason: text("reason"),
+    priority: priorityLevelEnum("priority").notNull().default("normal"),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("appointments_status_scheduled_idx").on(table.status, table.scheduledAt),
+    index("appointments_patient_idx").on(table.patientId),
+    index("appointments_org_scheduled_idx").on(table.organizationId, table.scheduledAt)
+  ]
+);
+
+export const encounters = pgTable(
+  "encounters",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    appointmentId: bigint("appointment_id", { mode: "number" })
+      .notNull()
+      .references(() => appointments.id),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    doctorId: bigint("doctor_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    notes: text("notes"),
+    nextVisitDate: date("next_visit_date"),
+    status: varchar("status", { length: 20 }).notNull().default("completed"),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("encounters_appointment_unique").on(table.appointmentId),
+    index("encounters_patient_idx").on(table.patientId)
+  ]
+);
+
+export const encounterDiagnoses = pgTable(
+  "encounter_diagnoses",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    encounterId: bigint("encounter_id", { mode: "number" })
+      .notNull()
+      .references(() => encounters.id),
+    icd10Code: varchar("icd10_code", { length: 16 }),
+    diagnosisName: varchar("diagnosis_name", { length: 255 }).notNull(),
+    ...auditTimestamps
+  },
+  (table) => [index("encounter_diagnoses_encounter_idx").on(table.encounterId)]
+);
+
+export const testOrders = pgTable(
+  "test_orders",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    encounterId: bigint("encounter_id", { mode: "number" })
+      .notNull()
+      .references(() => encounters.id),
+    testName: varchar("test_name", { length: 180 }).notNull(),
+    status: testOrderStatusEnum("status").notNull().default("ordered"),
+    ...auditTimestamps
+  },
+  (table) => [index("test_orders_encounter_idx").on(table.encounterId)]
+);
+
+export const prescriptions = pgTable(
+  "prescriptions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    encounterId: bigint("encounter_id", { mode: "number" })
+      .notNull()
+      .references(() => encounters.id),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    doctorId: bigint("doctor_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("prescriptions_patient_idx").on(table.patientId),
+    index("prescriptions_encounter_idx").on(table.encounterId)
+  ]
+);
+
+export const prescriptionItems = pgTable(
+  "prescription_items",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    prescriptionId: bigint("prescription_id", { mode: "number" })
+      .notNull()
+      .references(() => prescriptions.id),
+    drugName: varchar("drug_name", { length: 180 }).notNull(),
+    dose: varchar("dose", { length: 80 }).notNull(),
+    frequency: varchar("frequency", { length: 80 }).notNull(),
+    duration: varchar("duration", { length: 80 }),
+    quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull(),
+    source: drugSourceEnum("source").notNull(),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [index("prescription_items_prescription_idx").on(table.prescriptionId)]
+);
+
+export const dispenseRecords = pgTable(
+  "dispense_records",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    prescriptionId: bigint("prescription_id", { mode: "number" })
+      .notNull()
+      .references(() => prescriptions.id),
+    assistantId: bigint("assistant_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    dispensedAt: timestamp("dispensed_at", { withTimezone: true }).notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("completed"),
+    notes: text("notes"),
+    ...auditTimestamps
+  },
+  (table) => [index("dispense_records_prescription_idx").on(table.prescriptionId)]
+);
+
+export const inventoryItems = pgTable(
+  "inventory_items",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    sku: varchar("sku", { length: 80 }).unique(),
+    name: varchar("name", { length: 180 }).notNull(),
+    category: inventoryCategoryEnum("category").notNull(),
+    unit: varchar("unit", { length: 20 }).notNull(),
+    stock: numeric("stock", { precision: 12, scale: 2 }).notNull().default("0"),
+    reorderLevel: numeric("reorder_level", { precision: 12, scale: 2 }).notNull().default("0"),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [index("inventory_items_org_name_idx").on(table.organizationId, table.name)]
+);
+
+export const inventoryMovements = pgTable(
+  "inventory_movements",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    inventoryItemId: bigint("inventory_item_id", { mode: "number" })
+      .notNull()
+      .references(() => inventoryItems.id),
+    movementType: inventoryMovementTypeEnum("movement_type").notNull(),
+    quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull(),
+    referenceType: varchar("reference_type", { length: 30 }),
+    referenceId: bigint("reference_id", { mode: "number" }),
+    createdById: bigint("created_by_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("inventory_movements_item_idx").on(table.inventoryItemId)]
+);
+
+export const patientVitals = pgTable(
+  "patient_vitals",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    encounterId: bigint("encounter_id", { mode: "number" }).references(() => encounters.id),
+    bpSystolic: bigint("bp_systolic", { mode: "number" }),
+    bpDiastolic: bigint("bp_diastolic", { mode: "number" }),
+    heartRate: bigint("heart_rate", { mode: "number" }),
+    temperatureC: numeric("temperature_c", { precision: 4, scale: 1 }),
+    spo2: bigint("spo2", { mode: "number" }),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("patient_vitals_patient_recorded_idx").on(table.patientId, table.recordedAt),
+    index("patient_vitals_encounter_idx").on(table.encounterId)
+  ]
+);
+
+export const patientTimelineEvents = pgTable(
+  "patient_timeline_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    encounterId: bigint("encounter_id", { mode: "number" }).references(() => encounters.id),
+    eventDate: date("event_date").notNull(),
+    title: varchar("title", { length: 160 }).notNull(),
+    description: text("description"),
+    eventKind: varchar("event_kind", { length: 30 }),
+    tags: text("tags").array(),
+    value: varchar("value", { length: 80 }),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [index("patient_timeline_events_patient_date_idx").on(table.patientId, table.eventDate)]
+);
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    actorUserId: bigint("actor_user_id", { mode: "number" }).references(() => users.id),
+    entityType: varchar("entity_type", { length: 60 }).notNull(),
+    entityId: bigint("entity_id", { mode: "number" }),
+    action: varchar("action", { length: 30 }).notNull(),
+    ip: inet("ip"),
+    userAgent: text("user_agent"),
+    requestId: uuid("request_id"),
+    payload: jsonb("payload"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("audit_logs_created_idx").on(table.createdAt),
+    index("audit_logs_entity_idx").on(table.entityType, table.entityId)
+  ]
+);
