@@ -4,13 +4,25 @@ import { buildDbClient } from "@medsys/db";
 const databasePlugin = fp(async (app) => {
   const writer = buildDbClient(app.env.DATABASE_URL);
   const reader = buildDbClient(app.env.DATABASE_READ_URL ?? app.env.DATABASE_URL);
+  const analyticsUsesReplica =
+    Boolean(app.env.DATABASE_READ_URL) && app.env.DATABASE_READ_URL !== app.env.DATABASE_URL;
 
   app.decorate("db", writer.db);
-  app.decorate("readDb", reader.db);
+  app.decorate("readDb", writer.db);
+  app.decorate("analyticsDb", reader.db);
+
+  app.log.info(
+    { analyticsUsesReplica },
+    analyticsUsesReplica
+      ? "Analytics/reporting reads are routed to DATABASE_READ_URL; writes and operational reads stay on the primary database"
+      : "DATABASE_READ_URL not configured; analytics/reporting reads are currently using the primary database"
+  );
 
   app.addHook("onClose", async () => {
     await writer.sql.end({ timeout: 5 });
-    await reader.sql.end({ timeout: 5 });
+    if (reader.sql !== writer.sql) {
+      await reader.sql.end({ timeout: 5 });
+    }
   });
 });
 

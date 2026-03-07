@@ -3,11 +3,13 @@ import {
   bigint,
   boolean,
   date,
+  foreignKey,
   index,
   inet,
   jsonb,
   numeric,
   pgEnum,
+  primaryKey,
   pgTable,
   text,
   timestamp,
@@ -183,7 +185,7 @@ export const patientConditions = pgTable(
 export const appointments = pgTable(
   "appointments",
   {
-    id: bigserial("id", { mode: "number" }).primaryKey(),
+    id: bigserial("id", { mode: "number" }).notNull(),
     organizationId: uuid("organization_id").notNull(),
     patientId: bigint("patient_id", { mode: "number" })
       .notNull()
@@ -198,6 +200,8 @@ export const appointments = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
   (table) => [
+    primaryKey({ columns: [table.id, table.scheduledAt], name: "appointments_partitioned_pkey" }),
+    index("appointments_id_idx").on(table.id),
     index("appointments_status_scheduled_idx").on(table.status, table.scheduledAt),
     index("appointments_patient_idx").on(table.patientId),
     index("appointments_org_scheduled_idx").on(table.organizationId, table.scheduledAt)
@@ -209,9 +213,8 @@ export const encounters = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     organizationId: uuid("organization_id").notNull(),
-    appointmentId: bigint("appointment_id", { mode: "number" })
-      .notNull()
-      .references(() => appointments.id),
+    appointmentId: bigint("appointment_id", { mode: "number" }).notNull(),
+    appointmentScheduledAt: timestamp("appointment_scheduled_at", { withTimezone: true }).notNull(),
     patientId: bigint("patient_id", { mode: "number" })
       .notNull()
       .references(() => patients.id),
@@ -226,7 +229,13 @@ export const encounters = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
   (table) => [
+    foreignKey({
+      columns: [table.appointmentId, table.appointmentScheduledAt],
+      foreignColumns: [appointments.id, appointments.scheduledAt],
+      name: "encounters_appointment_id_fkey"
+    }).onUpdate("cascade"),
     unique("encounters_appointment_unique").on(table.appointmentId),
+    index("encounters_appointment_fk_idx").on(table.appointmentId, table.appointmentScheduledAt),
     index("encounters_patient_idx").on(table.patientId)
   ]
 );

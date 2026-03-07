@@ -16,19 +16,19 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/overview", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
     const actor = request.actor!;
     const [patientCount, waitingCount, prescriptionCount, lowStockCount] = await Promise.all([
-      app.readDb
+      app.analyticsDb
         .select({ count: sql<number>`count(*)` })
         .from(patients)
         .where(eq(patients.organizationId, actor.organizationId)),
-      app.readDb
+      app.analyticsDb
         .select({ count: sql<number>`count(*)` })
         .from(appointments)
         .where(and(eq(appointments.organizationId, actor.organizationId), eq(appointments.status, "waiting"))),
-      app.readDb
+      app.analyticsDb
         .select({ count: sql<number>`count(*)` })
         .from(prescriptions)
         .where(eq(prescriptions.organizationId, actor.organizationId)),
-      app.readDb
+      app.analyticsDb
         .select({ count: sql<number>`count(*)` })
         .from(inventoryItems)
         .where(and(eq(inventoryItems.organizationId, actor.organizationId), sql`${inventoryItems.stock} <= ${inventoryItems.reorderLevel}`))

@@ -10,6 +10,7 @@ declare module "fastify" {
     env: AppEnv;
     db: ReturnType<typeof buildDbClient>["db"];
     readDb: ReturnType<typeof buildDbClient>["db"];
+    analyticsDb: ReturnType<typeof buildDbClient>["db"];
     auditPublisher: AuditPublisher;
     authenticate: (request: FastifyRequest) => Promise<void>;
     authorize: (roles: UserRole[]) => preHandlerHookHandler;

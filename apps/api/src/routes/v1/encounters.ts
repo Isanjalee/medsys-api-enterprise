@@ -163,6 +163,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         .values({
           organizationId: actor.organizationId,
           appointmentId: payload.appointmentId,
+          appointmentScheduledAt: appointmentRows[0].scheduledAt,
           patientId: payload.patientId,
           doctorId: payload.doctorId,
           checkedAt: new Date(payload.checkedAt),

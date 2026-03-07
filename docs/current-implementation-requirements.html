@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MEDSYS Current Implementation Specification</title>
+  <style>
+    @page { size: A4; margin: 16mm 12mm; }
+    body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; font-size: 11px; line-height: 1.45; color: #1f2933; }
+    main { padding: 0; }
+    .page { padding: 28px 34px 34px; page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+    .cover { min-height: 255mm; background: linear-gradient(135deg, rgba(8,92,76,.08), rgba(21,78,99,.04)); }
+    .eyebrow { text-transform: uppercase; letter-spacing: .12em; color: #0a6c59; font-size: 10px; font-weight: 700; margin-bottom: 10px; }
+    h1, h2, h3 { margin: 0 0 10px; color: #102a43; }
+    h1 { font-size: 30px; line-height: 1.1; max-width: 78%; }
+    h2 { font-size: 18px; margin-top: 26px; padding-bottom: 6px; border-bottom: 2px solid #d9e2ec; }
+    h3 { font-size: 13px; margin-top: 18px; }
+    p, ul { margin: 0 0 10px; }
+    ul { padding-left: 18px; }
+    li { margin-bottom: 4px; }
+    .summary { max-width: 78%; font-size: 12px; color: #334e68; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; }
+    .meta div, .panel { border: 1px solid #d9e2ec; background: #f8fbff; padding: 12px; }
+    .meta strong { display: block; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; color: #52606d; margin-bottom: 4px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .callout { border: 1px solid #b7d7cf; border-left: 5px solid #0a6c59; background: #eef7f4; padding: 12px 14px; margin: 12px 0 14px; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; table-layout: fixed; }
+    th, td { border: 1px solid #d9e2ec; padding: 8px; vertical-align: top; text-align: left; }
+    th { background: #eef4f8; text-transform: uppercase; font-size: 10px; color: #334e68; }
+    .req td:first-child, .req th:first-child { width: 14%; }
+    .req td:nth-child(2), .req th:nth-child(2) { width: 18%; }
+    .small { font-size: 10px; }
+    .reqid { font-weight: 700; color: #164e63; }
+    .mono { font-family: Consolas, "Courier New", monospace; font-size: 10px; background: #f0f4f8; padding: 1px 4px; border-radius: 3px; }
+    .foot { border-top: 1px solid #d9e2ec; padding-top: 12px; color: #52606d; font-size: 10px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="page cover">
+      <div class="eyebrow">As-Built Client Specification</div>
+      <h1>MEDSYS Current Implementation Specification</h1>
+      <p class="summary">Client-facing description of the backend as implemented today, including functional behavior, non-functional expectations, technical stack, data model, and operational constraints.</p>
+      <div class="meta">
+        <div><strong>Document Type</strong>Current Implementation / As-Built Specification</div>
+        <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
+        <div><strong>Version</strong>1.0</div>
+        <div><strong>Prepared Date</strong>2026-03-07</div>
+        <div><strong>Prepared For</strong>Client Review and Delivery</div>
+        <div><strong>Scope Basis</strong>Repository implementation available in the current workspace</div>
+      </div>
+      <div class="foot">This document describes implemented system behavior only. Unimplemented roadmap items are excluded except where identified as current boundaries.</div>
+    </section>
+
+    <section class="page">
+      <h2>1. Purpose and Scope</h2>
+      <p>This specification provides a professional baseline description of the MEDSYS backend as it currently exists. It is intended for direct sharing with client stakeholders, delivery teams, and reviewers.</p>
+      <div class="callout"><strong>Scope rule:</strong> all statements in this document are derived from the current codebase and database design, not from planned roadmap features.</div>
+      <h3>1.1 In Scope</h3>
+      <ul>
+        <li>Implemented business capabilities and user-visible behaviors</li>
+        <li>Role-based access and current security model</li>
+        <li>API capability summary</li>
+        <li>Technology stack and runtime configuration</li>
+        <li>Implemented data model, attributes, and relationships</li>
+        <li>Current non-functional expectations enforced by the implementation</li>
+      </ul>
+      <h3>1.2 Out of Scope</h3>
+      <ul>
+        <li>Unimplemented roadmap features such as search, advanced observability, and final infrastructure automation</li>
+        <li>Commercial, pricing, support, or contractual terms</li>
+      </ul>
+
+      <h2>2. Executive Summary</h2>
+      <p>MEDSYS currently provides a healthcare backend MVP that supports authentication, patient management, families, appointments, encounters, prescriptions, dispensing, inventory, analytics overview, and audit logging. The system is implemented as a TypeScript monorepo with a Fastify API service and a worker service for asynchronous audit persistence.</p>
+      <div class="grid">
+        <div class="panel">
+          <h3>Business Modules</h3>
+          <ul>
+            <li>Authentication and session management</li>
+            <li>Patients and families</li>
+            <li>Appointments and encounters</li>
+            <li>Prescriptions and dispensing</li>
+            <li>Inventory and stock movement</li>
+            <li>Analytics overview</li>
+            <li>Audit trail</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Operational Characteristics</h3>
+          <ul>
+            <li>JWT-based access control</li>
+            <li>Organization-scoped data access</li>
+            <li>Transactional clinical write flows</li>
+            <li>Structured logging with PHI redaction</li>
+            <li>Rate limiting</li>
+            <li>OpenAPI documentation</li>
+            <li>Partitioned appointment and audit tables</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2>3. Technology Stack</h2>
+      <table>
+        <thead><tr><th style="width: 24%">Layer</th><th>Current Technology</th></tr></thead>
+        <tbody>
+          <tr><td>Runtime</td><td>Node.js 20 target runtime, TypeScript</td></tr>
+          <tr><td>API Framework</td><td>Fastify</td></tr>
+          <tr><td>Authentication</td><td><span class="mono">@fastify/jwt</span> using RS256 JWT signing and verification</td></tr>
+          <tr><td>Rate Limiting</td><td><span class="mono">@fastify/rate-limit</span></td></tr>
+          <tr><td>Documentation</td><td><span class="mono">@fastify/swagger</span> and <span class="mono">@fastify/swagger-ui</span></td></tr>
+          <tr><td>Database</td><td>PostgreSQL 16</td></tr>
+          <tr><td>Migration Tooling</td><td>Flyway</td></tr>
+          <tr><td>ORM / Query Layer</td><td>Drizzle ORM</td></tr>
+          <tr><td>Queue / Messaging</td><td>Redis for audit event transport when enabled</td></tr>
+          <tr><td>Monorepo Build</td><td>Turborepo</td></tr>
+          <tr><td>CI Validation</td><td>GitHub Actions Flyway validation workflow</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="page">
+      <h2>4. User Roles and Access Model</h2>
+      <table>
+        <thead><tr><th style="width: 16%">Role</th><th style="width: 24%">Primary Responsibility</th><th>Current Implemented Access</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Owner</strong></td><td>Administrative and supervisory control</td><td>Can access all implemented modules within the organization and is the only role that can retrieve audit logs.</td></tr>
+          <tr><td><strong>Doctor</strong></td><td>Clinical review and care delivery</td><td>Can view patient and clinical records, create encounter bundles, add allergies and conditions, view prescriptions, and access analytics. Cannot dispense prescriptions or create families/patients.</td></tr>
+          <tr><td><strong>Assistant</strong></td><td>Front-desk and operational support</td><td>Can create patients, families, appointments, inventory items, stock movements, dispense prescriptions, and record selected patient support data such as vitals and timeline events.</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>All protected endpoints require a valid access token.</li>
+        <li>The token subject must resolve to an active user record.</li>
+        <li>All business data access is scoped by organization.</li>
+        <li>Role authorization is enforced per route.</li>
+      </ul>
+
+      <h2>5. API Capability Summary</h2>
+      <table>
+        <thead><tr><th style="width: 18%">Module</th><th style="width: 34%">Endpoints</th><th style="width: 16%">Main Roles</th><th>Current Capability</th></tr></thead>
+        <tbody>
+          <tr><td>Authentication</td><td><span class="mono">POST /v1/auth/login</span><br /><span class="mono">POST /v1/auth/refresh</span></td><td>Public</td><td>User authentication, access token issuance, refresh token rotation.</td></tr>
+          <tr><td>Patients</td><td><span class="mono">/v1/patients</span> with profile, family, allergies, conditions, vitals, timeline sub-resources</td><td>Owner, Doctor, Assistant</td><td>Patient master management and clinical support records.</td></tr>
+          <tr><td>Families</td><td><span class="mono">/v1/families</span> and member assignment</td><td>Owner, Assistant</td><td>Family registration and patient-family association.</td></tr>
+          <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td><td>Owner, Doctor, Assistant</td><td>Appointment scheduling, listing, retrieval, update, and filtering.</td></tr>
+          <tr><td>Encounters</td><td><span class="mono">/v1/encounters</span></td><td>Owner, Doctor</td><td>Atomic clinical encounter bundle creation with tests, diagnoses, and optional prescription.</td></tr>
+          <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td>Owner, Doctor, Assistant</td><td>Prescription viewing, pending-dispense queue, and atomic dispense processing.</td></tr>
+          <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td>Owner, Assistant, Doctor (view)</td><td>Inventory master management and stock movement history.</td></tr>
+          <tr><td>Analytics</td><td><span class="mono">GET /v1/analytics/overview</span></td><td>Owner, Doctor, Assistant</td><td>Organization-level overview counters.</td></tr>
+          <tr><td>Audit</td><td><span class="mono">GET /v1/audit/logs</span></td><td>Owner</td><td>Filterable audit trail retrieval.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="page">
+      <h2>6. Functional Requirements</h2>
+      <table class="req">
+        <thead><tr><th>ID</th><th>Area</th><th>Requirement</th></tr></thead>
+        <tbody>
+          <tr><td class="reqid">FR-001</td><td>Authentication</td><td>The system shall authenticate users using email, password, and organization ID.</td></tr>
+          <tr><td class="reqid">FR-002</td><td>Authentication</td><td>The system shall reject invalid credentials and inactive users.</td></tr>
+          <tr><td class="reqid">FR-003</td><td>Tokens</td><td>The system shall issue RS256 access tokens containing user ID, role, and organization context.</td></tr>
+          <tr><td class="reqid">FR-004</td><td>Refresh Tokens</td><td>The system shall persist, validate, revoke, and rotate refresh tokens.</td></tr>
+          <tr><td class="reqid">FR-005</td><td>Patients</td><td>The system shall create, list, retrieve, and update patients within the authenticated organization.</td></tr>
+          <tr><td class="reqid">FR-006</td><td>Patients</td><td>The system shall validate NIC format, name format, DOB constraints, and age bounds for patient records.</td></tr>
+          <tr><td class="reqid">FR-007</td><td>Patients</td><td>The system shall provide a combined patient profile containing patient master data, allergies, conditions, recent vitals, and timeline events.</td></tr>
+          <tr><td class="reqid">FR-008</td><td>Families</td><td>The system shall create family records and auto-generate a family code when one is not supplied.</td></tr>
+          <tr><td class="reqid">FR-009</td><td>Families</td><td>The system shall create family membership links and update the patient master record with the selected family ID.</td></tr>
+          <tr><td class="reqid">FR-010</td><td>Appointments</td><td>The system shall create, list, retrieve, filter, and update appointments.</td></tr>
+          <tr><td class="reqid">FR-011</td><td>Appointments</td><td>The system shall support statuses of waiting, in consultation, completed, and cancelled.</td></tr>
+          <tr><td class="reqid">FR-012</td><td>Encounters</td><td>The system shall create encounter bundles only from appointments that are in waiting or in consultation state.</td></tr>
+          <tr><td class="reqid">FR-013</td><td>Encounters</td><td>The system shall create encounter, diagnoses, tests, optional prescription, optional prescription items, and appointment completion atomically in one transaction.</td></tr>
+          <tr><td class="reqid">FR-014</td><td>Encounters</td><td>The system shall enforce a single encounter per appointment.</td></tr>
+          <tr><td class="reqid">FR-015</td><td>Prescriptions</td><td>The system shall list prescriptions and return prescription detail with prescription items and dispense records.</td></tr>
+          <tr><td class="reqid">FR-016</td><td>Dispensing</td><td>The system shall provide a pending dispense queue for eligible prescriptions without an existing dispense record.</td></tr>
+          <tr><td class="reqid">FR-017</td><td>Dispensing</td><td>The system shall prevent a prescription from being dispensed more than once.</td></tr>
+          <tr><td class="reqid">FR-018</td><td>Dispensing</td><td>The system shall verify inventory item existence and sufficient stock before deducting stock during dispense.</td></tr>
+          <tr><td class="reqid">FR-019</td><td>Inventory</td><td>The system shall create, list, and update inventory items and movement history.</td></tr>
+          <tr><td class="reqid">FR-020</td><td>Inventory</td><td>The system shall reject stock-reducing movements when available stock is insufficient.</td></tr>
+          <tr><td class="reqid">FR-021</td><td>Analytics</td><td>The system shall provide an analytics overview with counts for patients, waiting appointments, prescriptions, and low-stock inventory items.</td></tr>
+          <tr><td class="reqid">FR-022</td><td>Audit</td><td>The system shall write audit records for implemented administrative and clinical actions and allow owners to retrieve them with filters.</td></tr>
+          <tr><td class="reqid">FR-023</td><td>Documentation</td><td>The system shall expose OpenAPI UI at <span class="mono">/api/v1/docs</span> and redirect <span class="mono">/docs</span> to it.</td></tr>
+          <tr><td class="reqid">FR-024</td><td>Health</td><td>The system shall expose a health check endpoint returning <span class="mono">{ "ok": true }</span>.</td></tr>
+          <tr><td class="reqid">FR-025</td><td>Audit Worker</td><td>The worker service shall consume Redis-backed audit queue messages and persist them to the audit log table when queue mode is enabled.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>7. Non-Functional Requirements</h2>
+      <table class="req">
+        <thead><tr><th>ID</th><th>Category</th><th>Requirement</th></tr></thead>
+        <tbody>
+          <tr><td class="reqid">NFR-001</td><td>Security</td><td>The system shall use RS256 JWT-based authentication for protected API access.</td></tr>
+          <tr><td class="reqid">NFR-002</td><td>Security</td><td>The system shall require valid RSA key material through environment variables before startup.</td></tr>
+          <tr><td class="reqid">NFR-003</td><td>Security</td><td>The system shall enforce route-level role-based access control and active-user verification.</td></tr>
+          <tr><td class="reqid">NFR-004</td><td>Security</td><td>The system shall redact selected credential and PHI fields from structured logs.</td></tr>
+          <tr><td class="reqid">NFR-005</td><td>Rate Limiting</td><td>The system shall limit login requests to five per minute and default authenticated requests to one hundred per minute.</td></tr>
+          <tr><td class="reqid">NFR-006</td><td>Integrity</td><td>The system shall preserve transactional integrity for encounter bundle creation and prescription dispensing.</td></tr>
+          <tr><td class="reqid">NFR-007</td><td>Integrity</td><td>The system shall prevent inventory stock from becoming negative through implemented write flows.</td></tr>
+          <tr><td class="reqid">NFR-008</td><td>Reliability</td><td>The system shall fall back to direct audit persistence when queue publication fails.</td></tr>
+          <tr><td class="reqid">NFR-009</td><td>Reliability</td><td>The worker service shall shut down cleanly on termination signals.</td></tr>
+          <tr><td class="reqid">NFR-010</td><td>Scalability</td><td>The system shall support a dedicated analytics/reporting database connection through <span class="mono">DATABASE_READ_URL</span>.</td></tr>
+          <tr><td class="reqid">NFR-011</td><td>Scalability</td><td>The system shall partition appointments by scheduled time and audit logs by creation time.</td></tr>
+          <tr><td class="reqid">NFR-012</td><td>Observability</td><td>The system shall provide an API health endpoint and OpenAPI documentation.</td></tr>
+          <tr><td class="reqid">NFR-013</td><td>Maintainability</td><td>The system shall manage schema evolution through Flyway migrations.</td></tr>
+          <tr><td class="reqid">NFR-014</td><td>Maintainability</td><td>The system shall validate Flyway migrations in CI using an ephemeral PostgreSQL service.</td></tr>
+          <tr><td class="reqid">NFR-015</td><td>Configuration</td><td>The system shall fail startup when mandatory runtime environment variables are missing.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="page">
+      <h2>8. Data Model: Tables, Attributes, and Relationships</h2>
+      <table class="small">
+        <thead><tr><th style="width: 14%">Table</th><th style="width: 48%">Attributes</th><th style="width: 38%">Relationships and Notes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>users</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">uuid</span>, <span class="mono">email</span>, <span class="mono">password_hash</span>, <span class="mono">first_name</span>, <span class="mono">last_name</span>, <span class="mono">role</span>, <span class="mono">is_active</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span></td><td>Core user table. Unique email within organization. Referenced by multiple domain tables.</td></tr>
+          <tr><td><strong>refresh_tokens</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">user_id</span>, <span class="mono">token_id</span>, <span class="mono">expires_at</span>, <span class="mono">revoked_at</span>, <span class="mono">created_at</span></td><td>Refresh token lifecycle state. Many-to-one to users.</td></tr>
+          <tr><td><strong>families</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">family_code</span>, <span class="mono">family_name</span>, <span class="mono">assigned</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Family master. Referenced by patients and family_members.</td></tr>
+          <tr><td><strong>patients</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">uuid</span>, <span class="mono">nic</span>, <span class="mono">first_name</span>, <span class="mono">last_name</span>, <span class="mono">full_name</span>, <span class="mono">dob</span>, <span class="mono">age</span>, <span class="mono">gender</span>, <span class="mono">phone</span>, <span class="mono">address</span>, <span class="mono">blood_group</span>, <span class="mono">family_id</span>, <span class="mono">is_active</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Patient master. Referenced by appointments, encounters, prescriptions, allergies, conditions, vitals, timeline, and family membership.</td></tr>
+          <tr><td><strong>family_members</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">family_id</span>, <span class="mono">patient_id</span>, <span class="mono">relationship</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span></td><td>Join table between families and patients. Unique family/patient pair.</td></tr>
+          <tr><td><strong>patient_allergies</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">patient_id</span>, <span class="mono">allergy_name</span>, <span class="mono">severity</span>, <span class="mono">is_active</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Many allergies per patient.</td></tr>
+          <tr><td><strong>patient_conditions</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">patient_id</span>, <span class="mono">condition_name</span>, <span class="mono">icd10_code</span>, <span class="mono">status</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Many conditions per patient.</td></tr>
+          <tr><td><strong>appointments</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">patient_id</span>, <span class="mono">doctor_id</span>, <span class="mono">assistant_id</span>, <span class="mono">scheduled_at</span>, <span class="mono">status</span>, <span class="mono">reason</span>, <span class="mono">priority</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Monthly partitioned by scheduled time. Composite primary key of appointment ID and scheduled time.</td></tr>
+          <tr><td><strong>encounters</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">appointment_id</span>, <span class="mono">appointment_scheduled_at</span>, <span class="mono">patient_id</span>, <span class="mono">doctor_id</span>, <span class="mono">checked_at</span>, <span class="mono">notes</span>, <span class="mono">next_visit_date</span>, <span class="mono">status</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>One encounter per appointment. Composite foreign key to appointments.</td></tr>
+          <tr><td><strong>encounter_diagnoses</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">encounter_id</span>, <span class="mono">icd10_code</span>, <span class="mono">diagnosis_name</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span></td><td>Many diagnoses per encounter.</td></tr>
+          <tr><td><strong>test_orders</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">encounter_id</span>, <span class="mono">test_name</span>, <span class="mono">status</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span></td><td>Many test orders per encounter.</td></tr>
+          <tr><td><strong>prescriptions</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">encounter_id</span>, <span class="mono">patient_id</span>, <span class="mono">doctor_id</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Prescription header linked to encounter, patient, and doctor.</td></tr>
+          <tr><td><strong>prescription_items</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">prescription_id</span>, <span class="mono">drug_name</span>, <span class="mono">dose</span>, <span class="mono">frequency</span>, <span class="mono">duration</span>, <span class="mono">quantity</span>, <span class="mono">source</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Many items per prescription.</td></tr>
+          <tr><td><strong>dispense_records</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">prescription_id</span>, <span class="mono">assistant_id</span>, <span class="mono">dispensed_at</span>, <span class="mono">status</span>, <span class="mono">notes</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span></td><td>Dispense event history for prescriptions.</td></tr>
+          <tr><td><strong>inventory_items</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">sku</span>, <span class="mono">name</span>, <span class="mono">category</span>, <span class="mono">unit</span>, <span class="mono">stock</span>, <span class="mono">reorder_level</span>, <span class="mono">is_active</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Inventory master used by stock movement and dispensing.</td></tr>
+          <tr><td><strong>inventory_movements</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">inventory_item_id</span>, <span class="mono">movement_type</span>, <span class="mono">quantity</span>, <span class="mono">reference_type</span>, <span class="mono">reference_id</span>, <span class="mono">created_by_id</span>, <span class="mono">created_at</span></td><td>Immutable inventory transaction history.</td></tr>
+          <tr><td><strong>patient_vitals</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">patient_id</span>, <span class="mono">encounter_id</span>, <span class="mono">bp_systolic</span>, <span class="mono">bp_diastolic</span>, <span class="mono">heart_rate</span>, <span class="mono">temperature_c</span>, <span class="mono">spo2</span>, <span class="mono">recorded_at</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Repeated clinical measurements, optionally linked to an encounter.</td></tr>
+          <tr><td><strong>patient_timeline_events</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">patient_id</span>, <span class="mono">encounter_id</span>, <span class="mono">event_date</span>, <span class="mono">title</span>, <span class="mono">description</span>, <span class="mono">event_kind</span>, <span class="mono">tags</span>, <span class="mono">value</span>, <span class="mono">created_at</span>, <span class="mono">updated_at</span>, <span class="mono">deleted_at</span></td><td>Chronological patient narrative events.</td></tr>
+          <tr><td><strong>audit_logs</strong></td><td><span class="mono">id</span>, <span class="mono">organization_id</span>, <span class="mono">actor_user_id</span>, <span class="mono">entity_type</span>, <span class="mono">entity_id</span>, <span class="mono">action</span>, <span class="mono">ip</span>, <span class="mono">user_agent</span>, <span class="mono">request_id</span>, <span class="mono">payload</span>, <span class="mono">created_at</span></td><td>Monthly partitioned audit trail with actor and request correlation.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>9. Key Relationship Summary</h2>
+      <ul>
+        <li>One organization contains many users, patients, families, appointments, encounters, prescriptions, inventory items, and audit logs.</li>
+        <li>One family can contain many patients through family membership links.</li>
+        <li>One patient can have many appointments, allergies, conditions, vitals, timeline events, encounters, and prescriptions.</li>
+        <li>One appointment can have at most one encounter.</li>
+        <li>One encounter can have many diagnoses and test orders and can produce a prescription.</li>
+        <li>One prescription can have many prescription items and dispense history, although the application permits only a single successful dispense flow.</li>
+        <li>One inventory item can have many movement records.</li>
+      </ul>
+
+      <h2>10. Runtime and Delivery Boundaries</h2>
+      <ul>
+        <li>Mandatory runtime configuration includes <span class="mono">DATABASE_URL</span>, JWT key material, and <span class="mono">ORGANIZATION_ID</span>.</li>
+        <li>Optional runtime configuration includes <span class="mono">DATABASE_READ_URL</span> for analytics/reporting reads and <span class="mono">REDIS_URL</span> for audit queue transport.</li>
+        <li>The application fails startup when mandatory environment variables are missing or invalid.</li>
+        <li>This document reflects the implemented backend only and excludes unimplemented roadmap features such as search, advanced observability, and final infrastructure completion.</li>
+      </ul>
+      <div class="foot">This specification is intended to serve as a client-ready description of the current MEDSYS backend implementation and can be used as a baseline delivery artifact.</div>
+    </section>
+  </main>
+</body>
+</html>

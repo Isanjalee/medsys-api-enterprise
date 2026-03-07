@@ -95,5 +95,9 @@ npm run dev -w @medsys/worker
   - `auto` uses Redis queue if `REDIS_URL` is set, otherwise direct DB write.
   - API falls back to direct DB write if queue publish fails.
 - `audit_logs` is partitioned monthly in `V1__init.sql`.
-- `appointments` partitioning is recommended for phase-4 scale work and can be added in a dedicated migration.
+- `appointments` is partitioned monthly by `scheduled_at` in `V4__partition_appointments.sql`.
+- Keep future `appointments` partitions warm with [infra/flyway/scripts/maintain_appointments_partitions.sql](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/infra/flyway/scripts/maintain_appointments_partitions.sql).
+- `app.db` and `app.readDb` are pinned to `DATABASE_URL` for writes and operational reads; analytics/reporting routes use `app.analyticsDb`, which targets `DATABASE_READ_URL` when configured.
+- Migration validation now runs in CI via [flyway-validate.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/flyway-validate.yml).
+- Rollback steps for schema releases are documented in [docs/flyway-rollback-playbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/flyway-rollback-playbook.md).
 - Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).

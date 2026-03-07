@@ -1,0 +1,53 @@
+name: Flyway Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  flyway-validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: medsys
+          POSTGRES_USER: medsys
+          POSTGRES_PASSWORD: medsys
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U medsys -d medsys"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Apply migrations
+        run: |
+          docker run --rm --network host \
+            -v "${{ github.workspace }}:/flyway/project" \
+            -w /flyway/project \
+            redgate/flyway:10-alpine \
+            -url=jdbc:postgresql://127.0.0.1:5432/medsys \
+            -user=medsys \
+            -password=medsys \
+            -locations=filesystem:/flyway/project/infra/flyway/sql \
+            migrate
+
+      - name: Validate migrations
+        run: |
+          docker run --rm --network host \
+            -v "${{ github.workspace }}:/flyway/project" \
+            -w /flyway/project \
+            redgate/flyway:10-alpine \
+            -url=jdbc:postgresql://127.0.0.1:5432/medsys \
+            -user=medsys \
+            -password=medsys \
+            -locations=filesystem:/flyway/project/infra/flyway/sql \
+            validate

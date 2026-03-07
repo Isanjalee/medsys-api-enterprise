@@ -11,15 +11,18 @@ This is the execution plan for all pending backend work after the current MVP.
 
 ## Phase 1: Data Platform Hardening (Priority: P0)
 Target: 1 week
+Status: In progress
+
+Phase 1 is complete only after all tasks below are done and the exit criteria are verified on a real database/staging snapshot.
 
 ### Tasks
-- [ ] Add monthly partitioning for `appointments` with a safe FK strategy.
-- [ ] Add partition maintenance SQL script (create next 3 months partitions).
-- [ ] Add read/write DB connection policy:
+- [x] Add monthly partitioning for `appointments` with a safe FK strategy.
+- [x] Add partition maintenance SQL script (create next 3 months partitions).
+- [x] Add read/write DB connection policy:
   - writes -> primary DB only
   - analytics/reporting reads -> replica
-- [ ] Add DB migration CI check (`flyway validate` in pipeline).
-- [ ] Add rollback playbook for Flyway migrations.
+- [x] Add DB migration CI check (`flyway validate` in pipeline).
+- [x] Add rollback playbook for Flyway migrations.
 
 ### Deliverables
 - New Flyway migrations (`V3+`) for partitioning + maintenance function.
