@@ -417,6 +417,27 @@ export const patientTimelineEvents = pgTable(
   (table) => [index("patient_timeline_events_patient_date_idx").on(table.patientId, table.eventDate)]
 );
 
+export const patientHistoryEntries = pgTable(
+  "patient_history_entries",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    createdByUserId: bigint("created_by_user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    note: text("note").notNull(),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("patient_history_entries_org_patient_idx").on(table.organizationId, table.patientId),
+    index("patient_history_entries_patient_created_idx").on(table.patientId, table.createdAt)
+  ]
+);
+
 export const auditLogs = pgTable(
   "audit_logs",
   {

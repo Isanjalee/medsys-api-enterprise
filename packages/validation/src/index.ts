@@ -45,6 +45,22 @@ export const createPatientSchema = z.object({
 
 export const updatePatientSchema = createPatientSchema.partial();
 
+export const createPatientHistorySchema = z.object({
+  note: z.string().trim().min(1).max(1000)
+});
+
+export const createUserSchema = z.object({
+  firstName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid first name"),
+  lastName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid last name"),
+  email: z.string().trim().toLowerCase().email().max(160),
+  password: z.string().min(8).max(128),
+  role: userRoleSchema
+});
+
+export const listUsersQuerySchema = z.object({
+  role: userRoleSchema.optional()
+});
+
 export const createFamilySchema = z.object({
   familyCode: z.string().max(30).optional(),
   familyName: z.string().min(1).max(120),

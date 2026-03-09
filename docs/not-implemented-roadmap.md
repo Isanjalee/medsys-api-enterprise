@@ -7,6 +7,41 @@ This is the execution plan for all pending backend work after the current MVP.
 - Do not start a lower phase before finishing the `Exit criteria` of the current phase.
 - Mark each task as done when merged.
 
+## Active Parallel Track: Frontend Contract Alignment (Priority: P0)
+Target: 1-2 weeks
+Status: In progress
+
+This track runs in parallel with the backend phases because the current frontend BFF contract does not yet align with the implemented `/v1/...` backend API.
+
+### Tasks
+- [x] Produce frontend-backend gap analysis.
+- [x] Produce route-by-route contract mapping for auth and patient flows.
+- [x] Produce permission-string to backend-role mapping.
+- [ ] Decide whether the Next.js BFF contract is the browser-facing source of truth.
+- [x] Decide that patient `history` is a new backend resource, not a timeline alias.
+- [x] Add backend `GET /v1/auth/me`.
+- [x] Add backend `GET /v1/auth/status`.
+- [x] Implement backend `POST /v1/auth/register` with bootstrap-owner behavior and owner-controlled post-bootstrap registration.
+- [x] Add backend `DELETE /v1/patients/:id`.
+- [x] Add backend patient history endpoints:
+  - [x] `GET /v1/patients/:id/history`
+  - [x] `POST /v1/patients/:id/history`
+- [x] Add backend users endpoints:
+  - [x] `GET /v1/users`
+  - [x] `POST /v1/users`
+- [ ] Add backend `GET /v1/clinical/icd10`.
+- [ ] Normalize response and validation handling at the BFF layer for mismatched backend shapes.
+
+### Deliverables
+- `docs/frontend-backend-gap-analysis.md`
+- `docs/frontend-backend-contract-mapping.md`
+- `docs/authorization-permission-mapping.md`
+
+### Exit criteria
+- Frontend auth flow works end-to-end against the backend.
+- Frontend patient list/get/update flows work without contract drift.
+- Ownership of validation, response normalization, and session profile shape is explicitly documented.
+
 ---
 
 ## Phase 1: Data Platform Hardening (Priority: P0)

@@ -3,11 +3,14 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import {
   patientAllergies,
   patientConditions,
+  patientHistoryEntries,
   patientTimelineEvents,
   patientVitals,
-  patients
+  patients,
+  users
 } from "@medsys/db";
 import {
+  createPatientHistorySchema,
   createPatientSchema,
   createVitalSchema,
   idParamSchema,
@@ -83,6 +86,29 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       bodyExample: {
         phone: "+94770000002",
         address: "No.10, Main Street, Colombo"
+      }
+    },
+    "DELETE /:id": {
+      operationId: "PatientsController_delete",
+      summary: "Soft delete patient"
+    },
+    "GET /:id/history": {
+      operationId: "PatientsController_listHistory",
+      summary: "List patient history notes"
+    },
+    "POST /:id/history": {
+      operationId: "PatientsController_addHistory",
+      summary: "Add patient history note",
+      bodySchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["note"],
+        properties: {
+          note: { type: "string", minLength: 1, maxLength: 1000 }
+        }
+      },
+      bodyExample: {
+        note: "Observed for 24 hours"
       }
     },
     "GET /:id/profile": {
@@ -204,6 +230,22 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.addHook("preHandler", app.authenticate);
+
+  const assertPatientExists = async (organizationId: string, patientId: number): Promise<void> => {
+    const row = await app.readDb
+      .select({ id: patients.id })
+      .from(patients)
+      .where(
+        and(
+          eq(patients.id, patientId),
+          eq(patients.organizationId, organizationId),
+          isNull(patients.deletedAt)
+        )
+      )
+      .limit(1);
+
+    assertOrThrow(row.length === 1, 404, "Patient not found");
+  };
 
   app.get(
     "/",
@@ -388,6 +430,138 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         entityId: id
       });
       return updated[0];
+    }
+  );
+
+  app.delete(
+    "/:id",
+    {
+      preHandler: app.authorize(["owner"]),
+      schema: {
+        tags: [tag],
+        operationId: "PatientsController_delete",
+        summary: "Soft delete patient"
+      }
+    },
+    async (request) => {
+      const actor = request.actor!;
+      const { id } = idParamSchema.parse(request.params);
+
+      const deleted = await app.db
+        .update(patients)
+        .set({
+          isActive: false,
+          updatedAt: new Date(),
+          deletedAt: new Date()
+        })
+        .where(
+          and(
+            eq(patients.id, id),
+            eq(patients.organizationId, actor.organizationId),
+            isNull(patients.deletedAt)
+          )
+        )
+        .returning({ id: patients.id });
+
+      assertOrThrow(deleted.length === 1, 404, "Patient not found");
+
+      await writeAuditLog(request, {
+        entityType: "patient",
+        action: "delete",
+        entityId: id
+      });
+
+      return { success: true };
+    }
+  );
+
+  app.get(
+    "/:id/history",
+    {
+      preHandler: app.authorize(["owner", "doctor", "assistant"]),
+      schema: {
+        tags: [tag],
+        operationId: "PatientsController_listHistory",
+        summary: "List patient history notes"
+      }
+    },
+    async (request) => {
+      const actor = request.actor!;
+      const { id } = idParamSchema.parse(request.params);
+      await assertPatientExists(actor.organizationId, id);
+
+      const rows = await app.readDb
+        .select({
+          id: patientHistoryEntries.id,
+          note: patientHistoryEntries.note,
+          createdAt: patientHistoryEntries.createdAt,
+          createdByUserId: patientHistoryEntries.createdByUserId,
+          createdByFirstName: users.firstName,
+          createdByLastName: users.lastName,
+          createdByRole: users.role
+        })
+        .from(patientHistoryEntries)
+        .innerJoin(users, eq(patientHistoryEntries.createdByUserId, users.id))
+        .where(
+          and(
+            eq(patientHistoryEntries.patientId, id),
+            eq(patientHistoryEntries.organizationId, actor.organizationId),
+            isNull(patientHistoryEntries.deletedAt)
+          )
+        )
+        .orderBy(desc(patientHistoryEntries.createdAt));
+
+      return {
+        history: rows.map((row) => ({
+          id: row.id,
+          note: row.note,
+          created_at: row.createdAt,
+          created_by_user_id: row.createdByUserId,
+          created_by_name: `${row.createdByFirstName} ${row.createdByLastName}`,
+          created_by_role: row.createdByRole
+        }))
+      };
+    }
+  );
+
+  app.post(
+    "/:id/history",
+    {
+      preHandler: app.authorize(["owner", "doctor", "assistant"]),
+      schema: {
+        tags: [tag],
+        operationId: "PatientsController_addHistory",
+        summary: "Add patient history note"
+      }
+    },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const { id } = idParamSchema.parse(request.params);
+      await assertPatientExists(actor.organizationId, id);
+      const payload = createPatientHistorySchema.parse(request.body);
+
+      const inserted = await app.db
+        .insert(patientHistoryEntries)
+        .values({
+          organizationId: actor.organizationId,
+          patientId: id,
+          createdByUserId: actor.userId,
+          note: payload.note
+        })
+        .returning();
+
+      await writeAuditLog(request, {
+        entityType: "patient_history",
+        action: "create",
+        entityId: inserted[0].id
+      });
+
+      return reply.code(201).send({
+        id: inserted[0].id,
+        patientId: inserted[0].patientId,
+        note: inserted[0].note,
+        createdByUserId: inserted[0].createdByUserId
+      });
     }
   );
 
