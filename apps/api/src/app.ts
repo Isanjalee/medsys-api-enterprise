@@ -6,7 +6,8 @@ import docsPlugin from "./plugins/docs.js";
 import rateLimitPlugin from "./plugins/rate-limit.js";
 import auditPublisherPlugin from "./plugins/audit-publisher.js";
 import routesPlugin from "./routes/index.js";
-import { HttpError } from "./lib/http-error.js";
+import { ZodError } from "zod";
+import { HttpError, ValidationError, validationIssuesFromZodError } from "./lib/http-error.js";
 
 export const buildApp = async () => {
   const app = Fastify({
@@ -39,6 +40,24 @@ export const buildApp = async () => {
   await app.register(routesPlugin, { prefix: "/v1" });
 
   app.setErrorHandler((error, request, reply) => {
+    if (error instanceof ValidationError) {
+      return reply.status(400).send({
+        error: "Validation failed.",
+        issues: error.issues
+      });
+    }
+    if (error instanceof ZodError) {
+      return reply.status(400).send({
+        error: "Validation failed.",
+        issues: validationIssuesFromZodError(error)
+      });
+    }
+    if ((error as { code?: string }).code === "FST_ERR_CTP_INVALID_JSON_BODY") {
+      return reply.status(400).send({
+        error: "Validation failed.",
+        issues: [{ field: "body", message: "Must be valid JSON." }]
+      });
+    }
     if (error instanceof HttpError) {
       return reply.status(error.statusCode).send({ message: error.message, requestId: request.id });
     }

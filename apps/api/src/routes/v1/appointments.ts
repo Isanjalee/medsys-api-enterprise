@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { appointments, patients } from "@medsys/db";
-import { appointmentStatusSchema, createAppointmentSchema, idParamSchema } from "@medsys/validation";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { createAppointmentSchema, idParamSchema, listAppointmentsQuerySchema, updateAppointmentSchema } from "@medsys/validation";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
@@ -76,10 +76,10 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
-  app.get("/", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/", { preHandler: app.authorizePermissions(["appointment.read"]) }, async (request) => {
     const actor = request.actor!;
-    const query = request.query as { status?: string };
-    const validatedStatus = query.status ? appointmentStatusSchema.parse(query.status) : null;
+    const query = parseOrThrowValidation(listAppointmentsQuerySchema, request.query ?? {});
+    const validatedStatus = query.status ?? null;
 
     const baseCondition = and(
       eq(appointments.organizationId, actor.organizationId),
@@ -96,9 +96,9 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(appointments.scheduledAt));
   });
 
-  app.post("/", { preHandler: app.authorize(["owner", "assistant"]) }, async (request, reply) => {
+  app.post("/", { preHandler: app.authorizePermissions(["appointment.create"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const payload = createAppointmentSchema.parse(request.body);
+    const payload = parseOrThrowValidation(createAppointmentSchema.strict(), request.body);
     const patientExists = await app.readDb
       .select({ id: patients.id })
       .from(patients)
@@ -114,9 +114,9 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
         doctorId: payload.doctorId ?? null,
         assistantId: payload.assistantId ?? null,
         scheduledAt: new Date(payload.scheduledAt),
-        status: payload.status,
+        status: payload.status ?? "waiting",
         reason: payload.reason ?? null,
-        priority: payload.priority
+        priority: payload.priority ?? "normal"
       })
       .returning();
 
@@ -128,9 +128,9 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(inserted[0]);
   });
 
-  app.get("/:id", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id", { preHandler: app.authorizePermissions(["appointment.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     const rows = await app.readDb
       .select()
       .from(appointments)
@@ -146,21 +146,14 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     return rows[0];
   });
 
-  app.patch("/:id", { preHandler: app.authorize(["owner", "assistant", "doctor"]) }, async (request) => {
+  app.patch("/:id", { preHandler: app.authorizePermissions(["appointment.update"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as {
-      status?: "waiting" | "in_consultation" | "completed" | "cancelled";
-      doctorId?: number | null;
-      assistantId?: number | null;
-      scheduledAt?: string;
-      reason?: string | null;
-      priority?: "low" | "normal" | "high" | "critical";
-    };
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(updateAppointmentSchema, request.body);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.status !== undefined) {
-      patch.status = appointmentStatusSchema.parse(body.status);
+      patch.status = body.status;
     }
     if (body.doctorId !== undefined) {
       patch.doctorId = body.doctorId;

@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, isNull } from "drizzle-orm";
 import { families, familyMembers, patients } from "@medsys/db";
-import { createFamilySchema, idParamSchema } from "@medsys/validation";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { createFamilyMemberSchema, createFamilySchema, idParamSchema } from "@medsys/validation";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
@@ -56,7 +56,7 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
-  app.get("/", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/", { preHandler: app.authorizePermissions(["family.read"]) }, async (request) => {
     const actor = request.actor!;
     return app.readDb
       .select()
@@ -64,9 +64,9 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(families.organizationId, actor.organizationId), isNull(families.deletedAt)));
   });
 
-  app.post("/", { preHandler: app.authorize(["owner", "assistant"]) }, async (request, reply) => {
+  app.post("/", { preHandler: app.authorizePermissions(["family.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const payload = createFamilySchema.parse(request.body);
+    const payload = parseOrThrowValidation(createFamilySchema.strict(), request.body);
     const familyCode =
       payload.familyCode ?? `FAM-${new Date().getTime().toString(36).slice(-8).toUpperCase()}`;
     const inserted = await app.db
@@ -86,9 +86,9 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(inserted[0]);
   });
 
-  app.get("/:id", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id", { preHandler: app.authorizePermissions(["family.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     const found = await app.readDb
       .select()
       .from(families)
@@ -117,11 +117,10 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
     return { family: found[0], members };
   });
 
-  app.post("/:id/members", { preHandler: app.authorize(["owner", "assistant"]) }, async (request, reply) => {
+  app.post("/:id/members", { preHandler: app.authorizePermissions(["family.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as { patientId: number; relationship?: string | null };
-    assertOrThrow(body?.patientId, 400, "patientId is required");
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(createFamilyMemberSchema, request.body);
 
     const inserted = await app.db
       .insert(familyMembers)

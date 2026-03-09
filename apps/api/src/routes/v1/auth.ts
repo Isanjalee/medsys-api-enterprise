@@ -1,11 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, sql } from "drizzle-orm";
 import { users } from "@medsys/db";
-import { createUserSchema } from "@medsys/validation";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { hasAllPermissions } from "@medsys/types";
+import { authLoginSchema, createUserFrontendSchema, createUserSchema, refreshTokenSchema } from "@medsys/validation";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { rotateRefreshToken, signAccessToken, validateRefreshToken } from "../../lib/auth.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import { buildDisplayName, splitFullName } from "../../lib/names.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
 
 const serializeUser = (row: {
@@ -17,11 +19,18 @@ const serializeUser = (row: {
   organizationId: string;
 }) => ({
   id: row.id,
-  name: `${row.firstName} ${row.lastName}`,
+  name: buildDisplayName(row.firstName, row.lastName),
   email: row.email,
   role: row.role,
   organizationId: row.organizationId
 });
+
+const hasAnyKey = (value: unknown, keys: string[]): boolean =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
 
 const authRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Auth", "AuthController", {
@@ -68,18 +77,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       bodySchema: {
         type: "object",
         additionalProperties: false,
-        required: ["firstName", "lastName", "email", "password", "role"],
+        required: ["name", "email", "password", "role"],
         properties: {
-          firstName: { type: "string", minLength: 1, maxLength: 80 },
-          lastName: { type: "string", minLength: 1, maxLength: 80 },
+          name: { type: "string", minLength: 1, maxLength: 120 },
           email: { type: "string", format: "email", maxLength: 160 },
           password: { type: "string", minLength: 8, maxLength: 128 },
           role: { type: "string", enum: ["owner", "doctor", "assistant"] }
         }
       },
       bodyExample: {
-        firstName: "System",
-        lastName: "Owner",
+        name: "System Owner",
         email: "owner@example.com",
         password: "owner-pass-123",
         role: "owner"
@@ -112,12 +119,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
     },
     async (request, reply) => {
-      const body = request.body as { email: string; password: string; organizationId: string };
-      assertOrThrow(
-        body?.email && body?.password && body?.organizationId,
-        400,
-        "Email, password and organizationId are required"
-      );
+      const body = parseOrThrowValidation(authLoginSchema, request.body);
 
       const found = await app.db
         .select({
@@ -157,8 +159,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   );
 
   app.post("/refresh", async (request, reply) => {
-    const body = request.body as { refreshToken: string };
-    assertOrThrow(body?.refreshToken, 400, "refreshToken is required");
+    const body = parseOrThrowValidation(refreshTokenSchema, request.body);
 
     const payload = app.jwt.verify<{ tokenId: string; sub: string; organizationId: string }>(
       body.refreshToken
@@ -202,7 +203,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
     },
     async (request, reply) => {
-      const payload = createUserSchema.parse(request.body);
+      const useFrontendPayload =
+        hasAnyKey(request.body, ["name", "email", "password", "role"]) &&
+        !hasAnyKey(request.body, ["firstName", "lastName"]);
+      const payload = useFrontendPayload
+        ? (() => {
+            const frontendPayload = parseOrThrowValidation(createUserFrontendSchema, request.body);
+            const nameParts = splitFullName(frontendPayload.name);
+            return {
+              firstName: nameParts.firstName,
+              lastName: nameParts.lastName,
+              email: frontendPayload.email,
+              password: frontendPayload.password,
+              role: frontendPayload.role
+            };
+          })()
+        : parseOrThrowValidation(createUserSchema.strict(), request.body);
       const userCount = await getUserCount();
 
       let organizationId = app.env.ORGANIZATION_ID;
@@ -212,7 +228,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         assertOrThrow(payload.role === "owner", 400, "First registered user must have owner role");
       } else {
         await app.authenticate(request);
-        assertOrThrow(request.actor?.role === "owner", 403, "Forbidden");
+        assertOrThrow(Boolean(request.actor), 401, "Unauthorized");
+        assertOrThrow(hasAllPermissions(request.actor!.role, ["user.write"]), 403, "Forbidden");
         const actor = request.actor!;
         const actorRows = await app.db
           .select({ id: users.id, isActive: users.isActive })

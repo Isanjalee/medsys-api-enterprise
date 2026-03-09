@@ -6,7 +6,7 @@ Current implementation mapping between:
 - Backend domain API: `/v1/...`
 
 Date: March 9, 2026
-Status: Working integration mapping for implementation
+Status: Working integration mapping and implementation status tracker
 
 ## 1. Purpose
 
@@ -17,6 +17,50 @@ The intended near-term architecture is:
 - Next.js `/api/...` remains the compatibility layer
 - Fastify `/v1/...` remains the domain API
 - request and response normalization happens in the BFF layer unless explicitly moved into the backend later
+
+## 1.1 Current Delivery Status
+
+This document also serves as the current backend contract-alignment status tracker.
+
+Status meanings used below:
+
+- `Not Started`: no backend implementation exists yet
+- `In Progress`: implementation exists but does not yet match the frontend contract
+- `Implemented`: backend endpoint exists and works, but contract verification is still incomplete
+- `Blocked`: cannot be completed cleanly without an external dependency or architecture decision
+- `Verified`: endpoint behavior, validation, authorization, and response shape match the frontend contract and are tested
+
+## 1.2 Current Backend Status Summary
+
+| Checklist ID | Capability | Current Status | Notes |
+|---|---|---|---|
+| `BE-001` | `POST /v1/auth/login` | Implemented | Issues tokens correctly, but token claims do not yet include frontend-friendly identity fields like `email` and `name` |
+| `BE-002` | `POST /v1/auth/refresh` | Implemented | Refresh flow works and rotates tokens |
+| `BE-003` | `POST /v1/auth/logout` | Not Started | No backend logout endpoint exists |
+| `BE-004` | `GET /v1/auth/me` | Implemented | Endpoint exists, but response still includes backend-specific `organizationId` |
+| `BE-005` | `GET /v1/patients` | Implemented | Response now returns frontend-compatible patient list shape |
+| `BE-006` | `POST /v1/patients` | Implemented | Route now accepts frontend-compatible patient payloads and still tolerates backend-native payloads |
+| `BE-007` | `GET /v1/patients/:id` | Implemented | Route now returns `{ patient, history }` in the frontend-oriented shape |
+| `BE-008` | `PATCH /v1/patients/:id` | Implemented | Route now accepts frontend-compatible patch fields and returns normalized patient output |
+| `BE-009` | `DELETE /v1/patients/:id` | Implemented | Soft delete exists and returns `{ success: true }` |
+| `BE-010` | `GET /v1/patients/:id/history` | Implemented | Dedicated history resource exists and returns normalized actor metadata |
+| `BE-011` | `POST /v1/patients/:id/history` | Implemented | Dedicated history write flow exists |
+| `BE-012` | `GET /v1/users` | Implemented | Endpoint exists with role filtering and normalized list output |
+| `BE-013` | `POST /v1/users` | Implemented | Route now accepts frontend-compatible `name` payloads and still tolerates backend-native fields |
+| `BE-014` | `POST /v1/auth/register` | Implemented | Route now accepts frontend-compatible `name` payloads and preserves bootstrap-owner behavior |
+| `BE-015` | `GET /v1/clinical/icd10` | Implemented | Backend terminology adapter exists and is provider-backed |
+| `BE-016` | Shared validation layer | In Progress | Frontend-style validation envelopes now cover aligned auth, patient, user, and clinical flows, but are not yet standardized across the whole API |
+| `BE-017` | Shared response mapping | In Progress | Some routes are normalized, but patient and auth alignment is incomplete |
+| `BE-018` | Permission enforcement | Implemented | Shared permission mapping now covers the full `/v1` API surface, including older non-contract routes |
+| `BE-019` | Contract tests | In Progress | Contract tests now cover core auth, patient, user, validation-envelope, and permission-denial paths, but coverage is still not complete across the whole API |
+| `BE-020` | Store replacement | Not Started | No proof here that frontend prototype/store-backed routes are fully retired |
+
+## 1.3 Main Remaining Gaps
+
+The backend is no longer blocked by major missing endpoints. The main remaining work is:
+
+- stable frontend-compatible validation error envelopes
+- broader contract-level test coverage
 
 ## 2. Mapping Rules
 
@@ -116,6 +160,15 @@ Current blocker:
 - backend login does not return user profile fields
 - frontend `me` profile source is not defined yet
 
+Current implementation status:
+
+- `BE-001`: `Implemented`
+
+Remaining blockers and gaps:
+
+- access token claims still do not expose frontend-oriented identity fields such as `email` and `name`
+- error envelope still follows backend conventions rather than the frontend validation envelope
+
 Recommended implementation:
 
 - add backend `GET /v1/auth/me`
@@ -137,6 +190,14 @@ Recommended implementation:
 
 - BFF-only route
 - optional future backend token revocation endpoint if refresh-token revocation is made explicit
+
+Current implementation status:
+
+- `BE-003`: `Not Started`
+
+Current blocker:
+
+- backend logout remains an architecture decision because the current flow is still effectively stateless at the backend API surface
 
 ### 3.3 `GET /api/auth/me`
 
@@ -171,6 +232,15 @@ BFF normalization:
 
 - `name` can pass through directly if backend returns combined display name
 
+Current implementation status:
+
+- `BE-004`: `Implemented`
+
+Remaining blockers and gaps:
+
+- backend response still includes `organizationId`, which is not part of the frontend contract
+- final ownership of identity resolution between token claims and backend profile lookup is still a design choice
+
 ### 3.4 `GET /api/auth/status`
 
 Frontend response:
@@ -191,6 +261,14 @@ Recommended backend behavior:
 - return whether this organization or installation has zero users
 - return current user count visible for bootstrap logic
 
+Current implementation status:
+
+- implemented in backend
+
+Remaining gap:
+
+- not yet formally verified against the frontend BFF flow end-to-end
+
 ### 3.5 `POST /api/auth/register`
 
 Frontend contract:
@@ -206,6 +284,14 @@ Implemented behavior:
 
 - if no users exist for the organization, allow owner bootstrap
 - otherwise require authenticated actor with owner role
+
+Current implementation status:
+
+- `BE-014`: `Implemented`
+
+Remaining blockers and gaps:
+
+- frontend-side cookie/session bootstrap behavior is still owned by the BFF layer
 
 ## 4. Backend Proxy Mapping
 
@@ -262,6 +348,14 @@ Required BFF mapping:
 
 No backend change is required for basic list support if the BFF layer performs mapping.
 
+Current implementation status:
+
+- `BE-005`: `Implemented`
+
+Remaining blockers and gaps:
+
+- not yet verified against the shared frontend validation error envelope
+
 ## 5.2 `POST /api/patients`
 
 Frontend request:
@@ -291,13 +385,11 @@ Current backend requirement:
 
 Current blocker:
 
-- frontend does not supply `gender`
-- frontend sends only a single `name`
+- frontend contract still does not model backend-only clinical demographic fields such as `gender`
 
-Required decision:
+Current decision:
 
-- either expand the frontend create form to capture `firstName`, `lastName`, and `gender`
-- or extend backend with a compatibility create contract
+- backend now supports a compatibility create contract for frontend payloads
 
 Recommended implementation:
 
@@ -311,6 +403,15 @@ Interim fallback if business approves:
 - BFF sends `gender: "other"`
 
 This fallback is operationally weak and should be treated as temporary only.
+
+Current implementation status:
+
+- `BE-006`: `Implemented`
+
+Remaining blockers and gaps:
+
+- frontend-compatible requests are now supported, but the backend still defaults missing clinical-only fields internally
+- validation failures still do not use the final frontend error envelope
 
 ## 5.3 `GET /api/patients/:id`
 
@@ -340,20 +441,23 @@ Recommended mapping:
 - `patient` <- normalized `/v1/patients/:id`
 - `history` <- currently unresolved
 
-Current blocker:
+Current state:
 
-- frontend `history` is simple note history
-- backend timeline is broader and not equivalent
-
-Required decision:
-
-- create a new patient history resource
-- or explicitly redefine frontend `history` to use timeline events
+- frontend `history` is now backed by the dedicated patient history resource
+- timeline remains a separate richer clinical concept
 
 Recommended implementation:
 
 - treat patient history as a new backend resource
 - do not silently alias timeline to history unless the product owner approves the semantic change
+
+Current implementation status:
+
+- `BE-007`: `Implemented`
+
+Remaining blockers and gaps:
+
+- not yet verified against the shared frontend validation and error contract end-to-end
 
 ## 5.4 `PATCH /api/patients/:id`
 
@@ -375,14 +479,22 @@ Mapping:
 - `address` -> `address`
 - `name` requires `firstName` and `lastName` translation
 
-Current blocker:
+Current state:
 
-- same naming issue as patient create
+- route now accepts frontend-compatible patch fields and still supports backend-native fields
 
 Recommended implementation:
 
 - if only `name` is provided, BFF must split it before calling backend
 - longer-term fix is to align frontend and backend patient name fields explicitly
+
+Current implementation status:
+
+- `BE-008`: `Implemented`
+
+Remaining blockers and gaps:
+
+- route now supports frontend-compatible fields, but contract verification is still incomplete for the final error envelope
 
 ## 5.5 `DELETE /api/patients/:id`
 
@@ -403,6 +515,14 @@ Recommended behavior:
 - soft delete via `deletedAt`
 - preserve audit trail
 - exclude deleted patients from standard reads
+
+Current implementation status:
+
+- `BE-009`: `Implemented`
+
+Remaining blocker:
+
+- permission alignment is still role-based rather than frontend permission-string based
 
 ## 5.6 `GET /api/patients/:id/history`
 
@@ -426,6 +546,14 @@ Recommended response:
   ]
 }
 ```
+
+Current implementation status:
+
+- `BE-010`: `Implemented`
+
+Remaining gap:
+
+- not yet verified against the frontend validation and error-envelope contract end-to-end
 
 ## 5.7 `POST /api/patients/:id/history`
 
@@ -452,6 +580,14 @@ Implemented storage fields:
 - optional `updated_at`
 - optional `deleted_at`
 
+Current implementation status:
+
+- `BE-011`: `Implemented`
+
+Remaining gap:
+
+- contract-shape verification and frontend error-envelope alignment are still pending
+
 ## 6. User Management Route Mapping
 
 ## 6.1 `GET /api/users`
@@ -465,6 +601,14 @@ Implemented behavior:
 - owner-only access unless product rules explicitly broaden visibility
 - optional `role` filter
 - return normalized list with combined display name
+
+Current implementation status:
+
+- `BE-012`: `Implemented`
+
+Remaining gap:
+
+- permission mapping is still role-based and not expressed in shared permission terms such as `user.read`
 
 ## 6.2 `POST /api/users`
 
@@ -489,23 +633,36 @@ Frontend compatibility note:
 - frontend currently sends `name`
 - BFF must split `name` unless frontend is updated
 
+Current implementation status:
+
+- `BE-013`: `Implemented`
+
+Remaining blockers and gaps:
+
+- duplicate email behavior exists, but contract-level response verification is still pending
+
 ## 7. Terminology Route Mapping
 
 ## 7.1 `GET /api/clinical/icd10?terms=...`
 
 Backend mapping:
 
-- currently missing
+- implemented as `GET /v1/clinical/icd10?terms=...`
 
-Recommended backend addition:
-
-- `GET /v1/clinical/icd10?terms=...`
-
-Recommended behavior:
+Implemented behavior:
 
 - return empty list if fewer than 2 characters
 - cap input length
-- query ICD10 source table, file, or terminology service
+- query the configured ICD-10 provider via `ICD10_API_BASE_URL`
+
+Current implementation status:
+
+- `BE-015`: `Implemented`
+
+Remaining blockers and gaps:
+
+- provider dependency is now explicit and external
+- latency, stability, and autocomplete ordering still need production verification
 
 ## 8. Implementation Order
 
@@ -529,6 +686,38 @@ Recommended behavior:
 ### Wave 4
 
 - move shared schemas into a common package if the BFF contract becomes stable
+
+## 8.1 Cross-Cutting Status
+
+### Shared validation layer
+
+- `BE-016`: `In Progress`
+- current state: backend now has a shared validation error type and frontend-style `400` envelope for auth, clinical, and the contract-aligned patient and user flows, including auxiliary patient writes such as vitals
+- remaining blocker: validation and unknown-field rejection are still not standardized across every non-contract route in the API
+
+### Shared response mapping
+
+- `BE-017`: `In Progress`
+- current state: some routes already serialize to frontend-like shapes, but patient and auth alignment is incomplete
+- remaining blocker: no shared serializer layer exists across all contract-aligned routes
+
+### Permission enforcement
+
+- `BE-018`: `Implemented`
+- current state: backend now has a shared permission catalog and permission-to-role mapping across the full `/v1` API surface
+- remaining blocker: none at the route-guard level; future work is only permission-model refinement if the frontend needs more explicit capability granularity
+
+### Contract tests
+
+- `BE-019`: `In Progress`
+- current state: backend tests now cover core auth identity, patient response shapes, validation-envelope behavior, and key permission-denial paths
+- remaining blocker: broader coverage is still needed for non-contract routes and full end-to-end frontend integration paths
+
+### Store replacement
+
+- `BE-020`: `Not Started`
+- current state: this backend repo cannot prove the frontend is fully off prototype/store-backed routes
+- remaining blocker: frontend integration evidence is still required
 
 ## 9. Non-Negotiable Decisions
 

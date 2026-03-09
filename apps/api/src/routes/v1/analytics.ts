@@ -13,7 +13,7 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
-  app.get("/overview", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/overview", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const [patientCount, waitingCount, prescriptionCount, lowStockCount] = await Promise.all([
       app.analyticsDb

@@ -29,7 +29,7 @@ This track runs in parallel with the backend phases because the current frontend
 - [x] Add backend users endpoints:
   - [x] `GET /v1/users`
   - [x] `POST /v1/users`
-- [ ] Add backend `GET /v1/clinical/icd10`.
+- [x] Add backend `GET /v1/clinical/icd10`.
 - [ ] Normalize response and validation handling at the BFF layer for mismatched backend shapes.
 
 ### Deliverables

@@ -10,7 +10,7 @@ import {
   prescriptions
 } from "@medsys/db";
 import { dispensePrescriptionSchema, idParamSchema } from "@medsys/validation";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
@@ -70,7 +70,7 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
-  app.get("/", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/", { preHandler: app.authorizePermissions(["prescription.read"]) }, async (request) => {
     const actor = request.actor!;
     return app.readDb
       .select()
@@ -81,7 +81,7 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
 
   app.get(
     "/queue/pending-dispense",
-    { preHandler: app.authorize(["owner", "assistant"]) },
+    { preHandler: app.authorizePermissions(["prescription.dispense"]) },
     async (request) => {
       const actor = request.actor!;
 
@@ -111,9 +111,9 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
-  app.get("/:id", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id", { preHandler: app.authorizePermissions(["prescription.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     const prescriptionRows = await app.readDb
       .select()
       .from(prescriptions)
@@ -147,11 +147,11 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
 
   app.post(
     "/:id/dispense",
-    { preHandler: [app.authorize(["owner", "assistant"])] },
+    { preHandler: [app.authorizePermissions(["prescription.dispense"])] },
     async (request, reply) => {
       const actor = request.actor!;
-      const params = idParamSchema.parse(request.params);
-      const payload = dispensePrescriptionSchema.parse({
+      const params = parseOrThrowValidation(idParamSchema, request.params);
+      const payload = parseOrThrowValidation(dispensePrescriptionSchema, {
         ...(request.body as Record<string, unknown>),
         prescriptionId: params.id
       });

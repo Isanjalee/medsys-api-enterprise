@@ -45,7 +45,6 @@ This should be treated as the immediate implementation priority before starting 
 - user management endpoints compatible with the frontend contract
 - auth register endpoint
 - auth logout matching the frontend contract
-- ICD10 suggestion endpoint
 - frontend validation error envelope
 
 ### 3.3 Biggest integration differences
@@ -74,7 +73,7 @@ This should be treated as the immediate implementation priority before starting 
 | `GET /api/users` | Lists users, optional role filter | Backend now has `GET /v1/users`, with owner-only access and optional role filtering | Partial | BFF still needs to split or compose `name` if it remains the frontend source field |
 | `POST /api/users` | Creates users with `name`, `email`, `password`, `role` | Backend now has `POST /v1/users`, but it expects `firstName` and `lastName` | Partial | BFF must split frontend `name` or frontend schema must change |
 | `POST /api/auth/register` | Bootstrap owner registration, then controlled registration | Backend now has `POST /v1/auth/register` with bootstrap-owner behavior and owner-only post-bootstrap registration | Partial | BFF still needs to map frontend `name` to backend first/last names |
-| `GET /api/clinical/icd10` | Returns ICD10 suggestions | No backend ICD10 endpoint | Missing | Implement backend ICD10 lookup endpoint or separate terminology service |
+| `GET /api/clinical/icd10` | Returns ICD10 suggestions | Backend now has `GET /v1/clinical/icd10`, backed by the NLM Clinical Tables ICD-10-CM API | Aligned | Use backend endpoint as the terminology adapter and keep the provider dependency server-side |
 
 ## 5. Authorization Model Mismatch
 

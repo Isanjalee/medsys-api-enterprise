@@ -6,7 +6,7 @@ Current mapping between:
 - Backend role-based authorization
 
 Date: March 9, 2026
-Status: Initial compatibility mapping
+Status: Shared permission mapping implemented across `/v1`
 
 ## 1. Purpose
 
@@ -20,6 +20,11 @@ The backend currently authorizes API routes using role checks:
 
 This document defines the current best-fit mapping so the frontend and backend can be aligned without pretending they already share a unified authorization model.
 
+Current implementation note:
+
+- shared permission constants and role mappings now exist in `@medsys/types`
+- backend routes now use permission-based checks through `app.authorizePermissions(...)` across the full `/v1` surface
+
 ## 2. Current Backend Roles
 
 Defined in [schema.ts](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/packages/db/src/schema.ts#L18):
@@ -28,7 +33,7 @@ Defined in [schema.ts](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-ent
 - `doctor`
 - `assistant`
 
-Applied in [auth.ts](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/apps/api/src/plugins/auth.ts#L21) via `app.authorize([...roles])`.
+Applied in [auth.ts](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/apps/api/src/plugins/auth.ts#L36) via `app.authorizePermissions([...permissions])`.
 
 ## 3. Proposed Permission-to-Role Matrix
 
@@ -36,12 +41,12 @@ Applied in [auth.ts](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enter
 |---|---|---|---|---|---|
 | `patient.read` | Yes | Yes | Yes | patient list/get/profile routes | Matches current backend behavior |
 | `patient.write` | Yes | No | Yes | patient create/update routes | Frontend meaning must stay scoped to demographics only |
-| `patient.delete` | Yes | No | No | no current backend route | New route should likely be owner-only |
-| `patient.history.read` | Yes | Yes | Yes | no current backend route | Best match is same access as patient read |
-| `patient.history.write` | Yes | Yes | Yes | closest current behavior is timeline create for doctor/assistant | Needs explicit product decision |
-| `user.read` | Yes | No | No | no current backend route | Recommend owner-only |
-| `user.write` | Yes | No | No | no current backend route | Recommend owner-only |
-| `clinical.icd10.read` | Yes | Yes | Yes | no current backend route | Safe default if endpoint is read-only |
+| `patient.delete` | Yes | No | No | patient delete route | Implemented as owner-only soft delete |
+| `patient.history.read` | Yes | Yes | Yes | patient history list route | Implemented and aligned to patient read access |
+| `patient.history.write` | Yes | Yes | Yes | patient history create route | Implemented and aligned to documented contract |
+| `user.read` | Yes | No | No | users list route | Implemented as owner-only |
+| `user.write` | Yes | No | No | users create/register routes | Implemented as owner-only after bootstrap |
+| `clinical.icd10.read` | Yes | Yes | Yes | ICD-10 lookup route | Implemented as read-only backend adapter |
 
 ## 4. Current Backend Route Evidence
 
@@ -83,11 +88,7 @@ This is relevant because frontend permission growth will need more than the curr
 
 ## 5. Known Gaps
 
-### 5.1 No shared authorization source of truth
-
-The frontend and backend do not currently import a shared permission policy package.
-
-### 5.2 Permission granularity mismatch
+### 5.1 Permission granularity mismatch
 
 The frontend permission model is coarse.
 
@@ -96,27 +97,19 @@ The backend role model is route-specific and sometimes domain-specific.
 Examples:
 
 - `patient.write` does not distinguish demographic editing from clinical recording
-- user administration permissions are not implemented in the backend yet
-- patient history permissions do not exist in the backend yet
+- user administration is only one slice of a broader backend permission surface
+- patient history permissions exist now, but the backend also needs explicit permissions for conditions, allergies, vitals, timeline, inventory, families, and dispensing
 
-### 5.3 Missing enforcement for frontend-only permissions
+### 5.2 Remaining frontend-backend mismatch
 
-The following permissions are not yet backed by a corresponding backend endpoint:
-
-- `patient.delete`
-- `patient.history.read`
-- `patient.history.write`
-- `user.read`
-- `user.write`
-- `clinical.icd10.read`
+Most documented frontend permissions are now enforced by backend routes. The remaining mismatch is that the backend permission surface is wider than the current frontend permission catalog.
 
 ## 6. Recommended Direction
 
 ### Short term
 
-- keep backend role-based authorization as-is
-- let the frontend map permissions to visible actions
-- document the mapping explicitly in this file
+- keep the shared permission map as the source of truth for backend route enforcement
+- let the frontend map permissions to visible actions using the same permission names
 
 ### Medium term
 
@@ -151,10 +144,10 @@ If the frontend expands to match the backend domain model, these permissions wil
 
 ## 8. Immediate Implementation Guidance
 
-Until a shared permission package exists, use this operational mapping:
+Current operational state:
 
-- `owner`: all current frontend permissions
-- `doctor`: `patient.read`, `patient.history.read`, `clinical.icd10.read`
-- `assistant`: `patient.read`, `patient.write`, `clinical.icd10.read`
+- `owner`: all backend permissions
+- `doctor`: read-heavy clinical access plus doctor-only clinical writes such as encounter creation and condition/allergy updates
+- `assistant`: operational access such as patient demographics, appointments, vitals, inventory, family membership, and dispensing
 
-Do not infer that this is a final security model. It is only a compatibility baseline for the currently documented frontend routes.
+Do not infer that this is a final product authorization model. It is a backend compatibility layer that now preserves route behavior through named permissions instead of raw role arrays.

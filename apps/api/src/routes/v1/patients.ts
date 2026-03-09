@@ -10,16 +10,40 @@ import {
   users
 } from "@medsys/db";
 import {
+  createPatientAllergySchema,
+  createPatientConditionSchema,
   createPatientHistorySchema,
+  createPatientFrontendSchema,
   createPatientSchema,
+  createPatientTimelineEventSchema,
   createVitalSchema,
   idParamSchema,
+  updatePatientFrontendSchema,
   updatePatientSchema
 } from "@medsys/validation";
 import { calculateAgeFromDob } from "../../lib/date.js";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
+import { splitFullName } from "../../lib/names.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+
+type PatientRow = typeof patients.$inferSelect;
+
+const hasAnyKey = (value: unknown, keys: string[]): boolean =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
+
+const serializePatient = (patient: Pick<PatientRow, "id" | "fullName" | "dob" | "phone" | "address" | "createdAt">) => ({
+  id: patient.id,
+  name: patient.fullName,
+  date_of_birth: patient.dob,
+  phone: patient.phone,
+  address: patient.address,
+  created_at: patient.createdAt
+});
 
 const patientRoutes: FastifyPluginAsync = async (app) => {
   const tag = "Patients";
@@ -247,10 +271,42 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     assertOrThrow(row.length === 1, 404, "Patient not found");
   };
 
+  const readPatientHistory = async (organizationId: string, patientId: number) => {
+    const rows = await app.readDb
+      .select({
+        id: patientHistoryEntries.id,
+        note: patientHistoryEntries.note,
+        createdAt: patientHistoryEntries.createdAt,
+        createdByUserId: patientHistoryEntries.createdByUserId,
+        createdByFirstName: users.firstName,
+        createdByLastName: users.lastName,
+        createdByRole: users.role
+      })
+      .from(patientHistoryEntries)
+      .innerJoin(users, eq(patientHistoryEntries.createdByUserId, users.id))
+      .where(
+        and(
+          eq(patientHistoryEntries.patientId, patientId),
+          eq(patientHistoryEntries.organizationId, organizationId),
+          isNull(patientHistoryEntries.deletedAt)
+        )
+      )
+      .orderBy(desc(patientHistoryEntries.createdAt));
+
+    return rows.map((row) => ({
+      id: row.id,
+      note: row.note,
+      created_at: row.createdAt,
+      created_by_user_id: row.createdByUserId,
+      created_by_name: `${row.createdByFirstName} ${row.createdByLastName}`.trim(),
+      created_by_role: row.createdByRole
+    }));
+  };
+
   app.get(
     "/",
     {
-      preHandler: app.authorize(["owner", "doctor", "assistant"]),
+      preHandler: app.authorizePermissions(["patient.read"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_findAll",
@@ -267,14 +323,14 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         .limit(200);
 
       await writeAuditLog(request, { entityType: "patient", action: "list" });
-      return rows;
+      return { patients: rows.map(serializePatient) };
     }
   );
 
   app.post(
     "/",
     {
-      preHandler: app.authorize(["owner", "assistant"]),
+      preHandler: app.authorizePermissions(["patient.write"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_create",
@@ -283,23 +339,53 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request, reply) => {
       const actor = request.actor!;
-      const payload = createPatientSchema.parse(request.body);
-      const dob = payload.dob ? new Date(payload.dob) : null;
-      const dobAge = dob ? calculateAgeFromDob(dob) : null;
-      const calculatedAge = dobAge ?? payload.age ?? null;
+      const useFrontendPayload =
+        hasAnyKey(request.body, ["name", "dateOfBirth", "phone", "address"]) ||
+        !hasAnyKey(request.body, ["firstName", "lastName", "gender"]);
 
-      if (dobAge != null && payload.age != null) {
-        assertOrThrow(Math.abs(dobAge - payload.age) <= 1, 400, "Age does not match DOB");
-      }
+      let values: {
+        nic?: string | null;
+        firstName: string;
+        lastName: string;
+        fullName: string;
+        dob?: string | null;
+        age?: number | null;
+        gender: "male" | "female" | "other";
+        phone?: string | null;
+        address?: string | null;
+        bloodGroup?: string | null;
+        familyId?: number | null;
+      };
 
-      const inserted = await app.db
-        .insert(patients)
-        .values({
-          organizationId: actor.organizationId,
+      if (useFrontendPayload) {
+        const payload = parseOrThrowValidation(createPatientFrontendSchema, request.body);
+        const nameParts = splitFullName(payload.name);
+        const dob = payload.dateOfBirth ? new Date(payload.dateOfBirth) : null;
+        values = {
+          firstName: nameParts.firstName,
+          lastName: nameParts.lastName,
+          fullName: nameParts.fullName,
+          dob: payload.dateOfBirth ?? null,
+          age: dob ? calculateAgeFromDob(dob) : null,
+          gender: "other",
+          phone: payload.phone ?? null,
+          address: payload.address ?? null
+        };
+      } else {
+        const payload = parseOrThrowValidation(createPatientSchema.strict(), request.body);
+        const dob = payload.dob ? new Date(payload.dob) : null;
+        const dobAge = dob ? calculateAgeFromDob(dob) : null;
+        const calculatedAge = dobAge ?? payload.age ?? null;
+
+        if (dobAge != null && payload.age != null) {
+          assertOrThrow(Math.abs(dobAge - payload.age) <= 1, 400, "Age does not match DOB");
+        }
+
+        values = {
           nic: payload.nic ?? null,
           firstName: payload.firstName,
           lastName: payload.lastName,
-          fullName: `${payload.firstName} ${payload.lastName}`,
+          fullName: [payload.firstName, payload.lastName].filter(Boolean).join(" "),
           dob: payload.dob ?? null,
           age: calculatedAge,
           gender: payload.gender,
@@ -307,6 +393,24 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           address: payload.address ?? null,
           bloodGroup: payload.bloodGroup ?? null,
           familyId: payload.familyId ?? null
+        };
+      }
+
+      const inserted = await app.db
+        .insert(patients)
+        .values({
+          organizationId: actor.organizationId,
+          nic: values.nic ?? null,
+          firstName: values.firstName,
+          lastName: values.lastName,
+          fullName: values.fullName,
+          dob: values.dob ?? null,
+          age: values.age ?? null,
+          gender: values.gender,
+          phone: values.phone ?? null,
+          address: values.address ?? null,
+          bloodGroup: values.bloodGroup ?? null,
+          familyId: values.familyId ?? null
         })
         .returning();
 
@@ -314,15 +418,15 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         entityType: "patient",
         action: "create",
         entityId: inserted[0].id
-      })
-      return reply.code(201).send(inserted[0]);
+      });
+      return reply.code(201).send({ patient: serializePatient(inserted[0]) });
     }
   );
 
   app.get(
     "/:id",
     {
-      preHandler: app.authorize(["owner", "doctor", "assistant"]),
+      preHandler: app.authorizePermissions(["patient.read"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_findOne",
@@ -331,7 +435,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
       const rows = await app.readDb
         .select()
         .from(patients)
@@ -346,14 +450,18 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
 
       assertOrThrow(rows.length === 1, 404, "Patient not found");
       await writeAuditLog(request, { entityType: "patient", entityId: id, action: "read" });
-      return rows[0];
+      const history = await readPatientHistory(actor.organizationId, id);
+      return {
+        patient: serializePatient(rows[0]),
+        history
+      };
     }
   );
 
   app.patch(
     "/:id",
     {
-      preHandler: app.authorize(["owner", "assistant"]),
+      preHandler: app.authorizePermissions(["patient.write"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_update",
@@ -362,59 +470,85 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
-      const payload = updatePatientSchema.parse(request.body);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
+      const useFrontendPayload =
+        hasAnyKey(request.body, ["name", "dateOfBirth", "phone", "address"]) ||
+        !hasAnyKey(request.body, ["firstName", "lastName", "dob", "age", "gender", "bloodGroup", "familyId", "nic"]);
 
-    const updateData: Record<string, unknown> = {
-      updatedAt: new Date()
-    };
+      const updateData: Record<string, unknown> = {
+        updatedAt: new Date()
+      };
 
-    if (payload.firstName !== undefined) {
-      updateData.firstName = payload.firstName;
-    }
-    if (payload.lastName !== undefined) {
-      updateData.lastName = payload.lastName;
-    }
-    if (payload.firstName || payload.lastName) {
-      const existing = await app.db
-        .select({ firstName: patients.firstName, lastName: patients.lastName })
-        .from(patients)
-        .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId)))
-        .limit(1);
-      assertOrThrow(existing.length === 1, 404, "Patient not found");
-      const nextFirst = payload.firstName ?? existing[0].firstName;
-      const nextLast = payload.lastName ?? existing[0].lastName;
-      updateData.fullName = `${nextFirst} ${nextLast}`;
-    }
+      if (useFrontendPayload) {
+        const payload = parseOrThrowValidation(updatePatientFrontendSchema, request.body);
+        if (payload.name !== undefined) {
+          const nameParts = splitFullName(payload.name);
+          updateData.firstName = nameParts.firstName;
+          updateData.lastName = nameParts.lastName;
+          updateData.fullName = nameParts.fullName;
+        }
+        if (payload.dateOfBirth !== undefined) {
+          updateData.dob = payload.dateOfBirth;
+          updateData.age = payload.dateOfBirth
+            ? calculateAgeFromDob(new Date(payload.dateOfBirth))
+            : null;
+        }
+        if (payload.phone !== undefined) {
+          updateData.phone = payload.phone;
+        }
+        if (payload.address !== undefined) {
+          updateData.address = payload.address;
+        }
+      } else {
+        const payload = parseOrThrowValidation(updatePatientSchema.strict(), request.body);
 
-    if (payload.dob !== undefined) {
-      updateData.dob = payload.dob;
-      if (payload.dob) {
-        updateData.age = calculateAgeFromDob(new Date(payload.dob));
+        if (payload.firstName !== undefined) {
+          updateData.firstName = payload.firstName;
+        }
+        if (payload.lastName !== undefined) {
+          updateData.lastName = payload.lastName;
+        }
+        if (payload.firstName || payload.lastName) {
+          const existing = await app.db
+            .select({ firstName: patients.firstName, lastName: patients.lastName })
+            .from(patients)
+            .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId)))
+            .limit(1);
+          assertOrThrow(existing.length === 1, 404, "Patient not found");
+          const nextFirst = payload.firstName ?? existing[0].firstName;
+          const nextLast = payload.lastName ?? existing[0].lastName;
+          updateData.fullName = [nextFirst, nextLast].filter(Boolean).join(" ");
+        }
+
+        if (payload.dob !== undefined) {
+          updateData.dob = payload.dob;
+          if (payload.dob) {
+            updateData.age = calculateAgeFromDob(new Date(payload.dob));
+          }
+        }
+
+        if (payload.age !== undefined) {
+          updateData.age = payload.age;
+        }
+        if (payload.nic !== undefined) {
+          updateData.nic = payload.nic;
+        }
+        if (payload.gender !== undefined) {
+          updateData.gender = payload.gender;
+        }
+        if (payload.phone !== undefined) {
+          updateData.phone = payload.phone;
+        }
+        if (payload.address !== undefined) {
+          updateData.address = payload.address;
+        }
+        if (payload.bloodGroup !== undefined) {
+          updateData.bloodGroup = payload.bloodGroup;
+        }
+        if (payload.familyId !== undefined) {
+          updateData.familyId = payload.familyId;
+        }
       }
-    }
-
-    if (payload.age !== undefined) {
-      updateData.age = payload.age;
-    }
-    if (payload.nic !== undefined) {
-      updateData.nic = payload.nic;
-    }
-    if (payload.gender !== undefined) {
-      updateData.gender = payload.gender;
-    }
-    if (payload.phone !== undefined) {
-      updateData.phone = payload.phone;
-    }
-    if (payload.address !== undefined) {
-      updateData.address = payload.address;
-    }
-    if (payload.bloodGroup !== undefined) {
-      updateData.bloodGroup = payload.bloodGroup;
-    }
-    if (payload.familyId !== undefined) {
-      updateData.familyId = payload.familyId;
-    }
 
       const updated = await app.db
         .update(patients)
@@ -429,14 +563,14 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "update",
         entityId: id
       });
-      return updated[0];
+      return { patient: serializePatient(updated[0]) };
     }
   );
 
   app.delete(
     "/:id",
     {
-      preHandler: app.authorize(["owner"]),
+      preHandler: app.authorizePermissions(["patient.delete"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_delete",
@@ -445,7 +579,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
 
       const deleted = await app.db
         .update(patients)
@@ -478,7 +612,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
   app.get(
     "/:id/history",
     {
-      preHandler: app.authorize(["owner", "doctor", "assistant"]),
+      preHandler: app.authorizePermissions(["patient.history.read"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_listHistory",
@@ -487,39 +621,11 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
       await assertPatientExists(actor.organizationId, id);
 
-      const rows = await app.readDb
-        .select({
-          id: patientHistoryEntries.id,
-          note: patientHistoryEntries.note,
-          createdAt: patientHistoryEntries.createdAt,
-          createdByUserId: patientHistoryEntries.createdByUserId,
-          createdByFirstName: users.firstName,
-          createdByLastName: users.lastName,
-          createdByRole: users.role
-        })
-        .from(patientHistoryEntries)
-        .innerJoin(users, eq(patientHistoryEntries.createdByUserId, users.id))
-        .where(
-          and(
-            eq(patientHistoryEntries.patientId, id),
-            eq(patientHistoryEntries.organizationId, actor.organizationId),
-            isNull(patientHistoryEntries.deletedAt)
-          )
-        )
-        .orderBy(desc(patientHistoryEntries.createdAt));
-
       return {
-        history: rows.map((row) => ({
-          id: row.id,
-          note: row.note,
-          created_at: row.createdAt,
-          created_by_user_id: row.createdByUserId,
-          created_by_name: `${row.createdByFirstName} ${row.createdByLastName}`,
-          created_by_role: row.createdByRole
-        }))
+        history: await readPatientHistory(actor.organizationId, id)
       };
     }
   );
@@ -527,7 +633,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
   app.post(
     "/:id/history",
     {
-      preHandler: app.authorize(["owner", "doctor", "assistant"]),
+      preHandler: app.authorizePermissions(["patient.history.write"]),
       schema: {
         tags: [tag],
         operationId: "PatientsController_addHistory",
@@ -536,9 +642,9 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request, reply) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
       await assertPatientExists(actor.organizationId, id);
-      const payload = createPatientHistorySchema.parse(request.body);
+      const payload = parseOrThrowValidation(createPatientHistorySchema.strict(), request.body);
 
       const inserted = await app.db
         .insert(patientHistoryEntries)
@@ -567,10 +673,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
 
   app.get(
     "/:id/profile",
-    { preHandler: app.authorize(["owner", "doctor", "assistant"]) },
+    { preHandler: app.authorizePermissions(["patient.profile.read"]) },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
 
       const [patient] = await app.readDb
         .select()
@@ -636,9 +742,9 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
-  app.get("/:id/family", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id/family", { preHandler: app.authorizePermissions(["patient.family.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
 
     const row = await app.readDb
       .select({ familyId: patients.familyId })
@@ -652,10 +758,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
 
   app.get(
     "/:id/allergies",
-    { preHandler: app.authorize(["owner", "doctor", "assistant"]) },
+    { preHandler: app.authorizePermissions(["patient.allergy.read"]) },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
       return app.readDb
         .select()
         .from(patientAllergies)
@@ -671,10 +777,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
 
   app.get(
     "/:id/conditions",
-    { preHandler: app.authorize(["owner", "doctor", "assistant"]) },
+    { preHandler: app.authorizePermissions(["patient.condition.read"]) },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
       return app.readDb
         .select()
         .from(patientConditions)
@@ -688,15 +794,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
-  app.post("/:id/conditions", { preHandler: app.authorize(["owner", "doctor"]) }, async (request, reply) => {
+  app.post("/:id/conditions", { preHandler: app.authorizePermissions(["patient.condition.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as {
-      conditionName: string;
-      icd10Code?: string | null;
-      status?: string;
-    };
-    assertOrThrow(Boolean(body?.conditionName), 400, "conditionName is required");
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(createPatientConditionSchema, request.body);
 
     const inserted = await app.db
       .insert(patientConditions)
@@ -716,15 +817,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(inserted[0]);
   });
 
-  app.post("/:id/allergies", { preHandler: app.authorize(["owner", "doctor"]) }, async (request, reply) => {
+  app.post("/:id/allergies", { preHandler: app.authorizePermissions(["patient.allergy.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as {
-      allergyName: string;
-      severity?: "low" | "moderate" | "high" | null;
-      isActive?: boolean;
-    };
-    assertOrThrow(Boolean(body?.allergyName), 400, "allergyName is required");
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(createPatientAllergySchema, request.body);
     const inserted = await app.db
       .insert(patientAllergies)
       .values({
@@ -743,9 +839,9 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(inserted[0]);
   });
 
-  app.get("/:id/vitals", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id/vitals", { preHandler: app.authorizePermissions(["patient.vital.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     return app.readDb
       .select()
       .from(patientVitals)
@@ -759,10 +855,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(patientVitals.recordedAt));
   });
 
-  app.post("/:id/vitals", { preHandler: app.authorize(["doctor", "assistant"]) }, async (request, reply) => {
+  app.post("/:id/vitals", { preHandler: app.authorizePermissions(["patient.vital.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const params = idParamSchema.parse(request.params);
-    const payload = createVitalSchema.parse({
+    const params = parseOrThrowValidation(idParamSchema, request.params);
+    const payload = parseOrThrowValidation(createVitalSchema, {
       ...(request.body as Record<string, unknown>),
       patientId: params.id
     });
@@ -789,9 +885,9 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(inserted[0]);
   });
 
-  app.get("/:id/timeline", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id/timeline", { preHandler: app.authorizePermissions(["patient.timeline.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     return app.readDb
       .select()
       .from(patientTimelineEvents)
@@ -805,20 +901,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(patientTimelineEvents.eventDate));
   });
 
-  app.post("/:id/timeline", { preHandler: app.authorize(["doctor", "assistant"]) }, async (request, reply) => {
+  app.post("/:id/timeline", { preHandler: app.authorizePermissions(["patient.timeline.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as {
-      encounterId?: number | null;
-      eventDate: string;
-      title: string;
-      description?: string | null;
-      eventKind?: string | null;
-      tags?: string[] | null;
-      value?: string | null;
-    };
-    assertOrThrow(Boolean(body?.eventDate), 400, "eventDate is required");
-    assertOrThrow(Boolean(body?.title), 400, "title is required");
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(createPatientTimelineEventSchema, request.body);
 
     const inserted = await app.db
       .insert(patientTimelineEvents)

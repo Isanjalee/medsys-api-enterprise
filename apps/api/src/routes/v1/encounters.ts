@@ -9,7 +9,7 @@ import {
   testOrders
 } from "@medsys/db";
 import { createEncounterBundleSchema, idParamSchema } from "@medsys/validation";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
@@ -126,7 +126,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
-  app.get("/", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/", { preHandler: app.authorizePermissions(["encounter.read"]) }, async (request) => {
     const actor = request.actor!;
     return app.readDb
       .select()
@@ -135,9 +135,9 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(encounters.checkedAt));
   });
 
-  app.post("/", { preHandler: app.authorize(["owner", "doctor"]) }, async (request, reply) => {
+  app.post("/", { preHandler: app.authorizePermissions(["encounter.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const payload = createEncounterBundleSchema.parse(request.body);
+    const payload = parseOrThrowValidation(createEncounterBundleSchema, request.body);
 
     const outcome = await app.db.transaction(async (tx) => {
       const appointmentRows = await tx
@@ -174,9 +174,9 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         .returning();
       const encounter = encounterRows[0];
 
-      if (payload.diagnoses.length > 0) {
+      if ((payload.diagnoses ?? []).length > 0) {
         await tx.insert(encounterDiagnoses).values(
-          payload.diagnoses.map((diagnosis) => ({
+          (payload.diagnoses ?? []).map((diagnosis) => ({
             organizationId: actor.organizationId,
             encounterId: encounter.id,
             icd10Code: diagnosis.icd10Code ?? null,
@@ -185,9 +185,9 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
-      if (payload.tests.length > 0) {
+      if ((payload.tests ?? []).length > 0) {
         await tx.insert(testOrders).values(
-          payload.tests.map((test) => ({
+          (payload.tests ?? []).map((test) => ({
             organizationId: actor.organizationId,
             encounterId: encounter.id,
             testName: test.testName,
@@ -246,10 +246,10 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
   app.get(
     "/:id/diagnoses",
-    { preHandler: app.authorize(["owner", "doctor", "assistant"]) },
+    { preHandler: app.authorizePermissions(["encounter.read"]) },
     async (request) => {
       const actor = request.actor!;
-      const { id } = idParamSchema.parse(request.params);
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
 
       const foundEncounter = await app.readDb
         .select({ id: encounters.id })
@@ -265,18 +265,18 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
-  app.get("/:id/tests", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id/tests", { preHandler: app.authorizePermissions(["encounter.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     return app.readDb
       .select()
       .from(testOrders)
       .where(and(eq(testOrders.encounterId, id), eq(testOrders.organizationId, actor.organizationId)));
   });
 
-  app.get("/:id", { preHandler: app.authorize(["owner", "doctor", "assistant"]) }, async (request) => {
+  app.get("/:id", { preHandler: app.authorizePermissions(["encounter.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
 
     const found = await app.readDb
       .select()

@@ -7,6 +7,10 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_READ_URL: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
+  ICD10_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search"),
   AUDIT_TRANSPORT: z.enum(["auto", "direct", "redis"]).default("auto"),
   AUDIT_QUEUE_KEY: z.string().default("medsys:audit:events"),
   AUDIT_WORKER_BLOCK_SECONDS: z.coerce.number().int().positive().default(5),

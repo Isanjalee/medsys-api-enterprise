@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { inventoryItems, inventoryMovements } from "@medsys/db";
-import { createInventoryItemSchema, idParamSchema } from "@medsys/validation";
-import { assertOrThrow } from "../../lib/http-error.js";
+import { createInventoryItemSchema, createInventoryMovementSchema, idParamSchema, updateInventoryItemSchema } from "@medsys/validation";
+import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
@@ -89,7 +89,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
-  app.get("/", { preHandler: app.authorize(["owner", "assistant", "doctor"]) }, async (request) => {
+  app.get("/", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;
     return app.readDb
       .select()
@@ -98,9 +98,9 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(inventoryItems.name);
   });
 
-  app.post("/", { preHandler: app.authorize(["owner", "assistant"]) }, async (request, reply) => {
+  app.post("/", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const payload = createInventoryItemSchema.parse(request.body);
+    const payload = parseOrThrowValidation(createInventoryItemSchema.strict(), request.body);
     const inserted = await app.db
       .insert(inventoryItems)
       .values({
@@ -109,9 +109,9 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
         name: payload.name,
         category: payload.category,
         unit: payload.unit,
-        stock: payload.stock.toString(),
-        reorderLevel: payload.reorderLevel.toString(),
-        isActive: payload.isActive
+        stock: (payload.stock ?? 0).toString(),
+        reorderLevel: (payload.reorderLevel ?? 0).toString(),
+        isActive: payload.isActive ?? true
       })
       .returning();
 
@@ -123,17 +123,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(inserted[0]);
   });
 
-  app.patch("/:id", { preHandler: app.authorize(["owner", "assistant"]) }, async (request) => {
+  app.patch("/:id", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as Partial<{
-      sku: string | null;
-      name: string;
-      category: "medicine" | "consumable" | "equipment" | "other";
-      unit: string;
-      reorderLevel: number;
-      isActive: boolean;
-    }>;
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(updateInventoryItemSchema, request.body);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.sku !== undefined) patch.sku = body.sku;
@@ -158,18 +151,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     return updated[0];
   });
 
-  app.post("/:id/movements", { preHandler: app.authorize(["owner", "assistant"]) }, async (request, reply) => {
+  app.post("/:id/movements", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request, reply) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
-    const body = request.body as {
-      movementType: "in" | "out" | "adjustment";
-      quantity: number;
-      referenceType?: string | null;
-      referenceId?: number | null;
-    };
-
-    assertOrThrow(body?.quantity && body.quantity > 0, 400, "quantity must be > 0");
-    assertOrThrow(Boolean(body?.movementType), 400, "movementType is required");
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(createInventoryMovementSchema, request.body);
 
     const movement = await app.db.transaction(async (tx) => {
       const item = await tx
@@ -216,9 +201,9 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(movement);
   });
 
-  app.get("/:id/movements", { preHandler: app.authorize(["owner", "assistant", "doctor"]) }, async (request) => {
+  app.get("/:id/movements", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
     return app.readDb
       .select()
       .from(inventoryMovements)

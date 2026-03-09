@@ -64,6 +64,7 @@ npm run dev -w @medsys/worker
 ## API (v1)
 - `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/register`, `/v1/auth/me`, `/v1/auth/status`
 - `/v1/users`
+- `/v1/clinical/icd10`
 - `/v1/patients`, `/v1/patients/:id`, `/v1/patients/:id/history`, `/v1/patients/:id/profile`
 - `/v1/patients/:id/family`, `/v1/patients/:id/allergies`, `/v1/patients/:id/conditions`
 - `/v1/patients/:id/vitals`, `/v1/patients/:id/timeline`
@@ -103,4 +104,5 @@ npm run dev -w @medsys/worker
 - Migration validation now runs in CI via [flyway-validate.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/flyway-validate.yml).
 - Rollback steps for schema releases are documented in [docs/flyway-rollback-playbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/flyway-rollback-playbook.md).
 - `patient_history_entries` is introduced in `V5__add_patient_history.sql` for note-based patient history separate from timeline events.
+- ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
 - Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).

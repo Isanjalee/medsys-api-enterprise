@@ -1,7 +1,7 @@
 import "fastify";
 import type { AppEnv } from "@medsys/config";
 import type { buildDbClient } from "@medsys/db";
-import type { UserRole } from "@medsys/types";
+import type { Permission, UserRole } from "@medsys/types";
 import type { FastifyRequest, preHandlerHookHandler } from "fastify";
 import type { AuditPublisher } from "../lib/audit-publisher.js";
 
@@ -14,6 +14,7 @@ declare module "fastify" {
     auditPublisher: AuditPublisher;
     authenticate: (request: FastifyRequest) => Promise<void>;
     authorize: (roles: UserRole[]) => preHandlerHookHandler;
+    authorizePermissions: (permissions: Permission[]) => preHandlerHookHandler;
   }
 
   interface FastifyRequest {
