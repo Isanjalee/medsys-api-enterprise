@@ -1,5 +1,5 @@
 import type { FastifyRequest } from "fastify";
-import type { AuditEvent } from "./audit-publisher.js";
+import type { AuditEvent } from "@medsys/types";
 
 type AuditInput = {
   entityType: string;

@@ -1,25 +1,15 @@
 import { loadEnv } from "@medsys/config";
 import { auditLogs, buildDbClient } from "@medsys/db";
 import { createClient, type RedisClientType } from "redis";
-
-type AuditQueueEvent = {
-  organizationId: string;
-  actorUserId?: number | null;
-  entityType: string;
-  entityId?: number | null;
-  action: string;
-  requestId?: string | null;
-  payload?: unknown;
-  createdAt: string;
-  ip?: string | null;
-  userAgent?: string | null;
-};
+import type { AuditEvent } from "@medsys/types";
+import { drainDueRetryMessages, handleAuditQueueMessage, resolveAuditQueueKeys } from "./audit-queue.js";
 
 const run = async () => {
   const env = loadEnv();
   const { db, sql } = buildDbClient(env.DATABASE_URL);
   let redisClient: RedisClientType | null = null;
   let running = true;
+  const queueKeys = resolveAuditQueueKeys(env);
 
   const shouldUseRedis =
     env.AUDIT_TRANSPORT === "redis" || (env.AUDIT_TRANSPORT === "auto" && Boolean(env.REDIS_URL));
@@ -53,17 +43,17 @@ const run = async () => {
     );
   }
 
-  const processEvent = async (event: AuditQueueEvent): Promise<void> => {
+  const processEvent = async (event: AuditEvent): Promise<void> => {
     await db.insert(auditLogs).values({
       organizationId: event.organizationId,
-      actorUserId: event.actorUserId ?? null,
+      actorUserId: event.actorUserId,
       entityType: event.entityType,
-      entityId: event.entityId ?? null,
+      entityId: event.entityId,
       action: event.action,
-      ip: event.ip ?? null,
-      userAgent: event.userAgent ?? null,
-      requestId: event.requestId ?? null,
-      payload: event.payload ?? null,
+      ip: event.ip,
+      userAgent: event.userAgent,
+      requestId: event.requestId,
+      payload: event.payload,
       createdAt: new Date(event.createdAt)
     });
   };
@@ -72,7 +62,10 @@ const run = async () => {
   console.log("worker started", {
     nodeEnv: env.NODE_ENV,
     auditTransport: env.AUDIT_TRANSPORT,
-    queue: env.AUDIT_QUEUE_KEY
+    queue: queueKeys.queueKey,
+    retryQueue: queueKeys.retryQueueKey,
+    dlq: queueKeys.dlqKey,
+    maxRetries: env.AUDIT_MAX_RETRIES
   });
 
   const shutdown = async () => {
@@ -89,12 +82,28 @@ const run = async () => {
 
   while (running) {
     try {
-      const message = await redisClient.brPop(env.AUDIT_QUEUE_KEY, env.AUDIT_WORKER_BLOCK_SECONDS);
+      await drainDueRetryMessages(redisClient, queueKeys, Date.now());
+      const message = await redisClient.brPop(queueKeys.queueKey, env.AUDIT_WORKER_BLOCK_SECONDS);
       if (!message) {
         continue;
       }
-      const event = JSON.parse(message.element) as AuditQueueEvent;
-      await processEvent(event);
+      await handleAuditQueueMessage({
+        rawMessage: message.element,
+        redisClient,
+        queueKeys,
+        maxRetries: env.AUDIT_MAX_RETRIES,
+        retryBaseDelayMs: env.AUDIT_RETRY_BASE_DELAY_MS,
+        processEvent,
+        logError: (error, queueMessage) => {
+          // eslint-disable-next-line no-console
+          console.error("Audit worker processing error", {
+            error,
+            entityType: queueMessage.event.entityType,
+            action: queueMessage.event.action,
+            attempt: queueMessage.attempt + 1
+          });
+        }
+      });
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error("Audit worker loop error", error);

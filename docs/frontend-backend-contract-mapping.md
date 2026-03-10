@@ -37,7 +37,7 @@ Status meanings used below:
 | `BE-001` | `POST /v1/auth/login` | Implemented | Issues tokens correctly, but token claims do not yet include frontend-friendly identity fields like `email` and `name` |
 | `BE-002` | `POST /v1/auth/refresh` | Implemented | Refresh flow works and rotates tokens |
 | `BE-003` | `POST /v1/auth/logout` | Implemented | Authenticated logout now revokes active refresh tokens and returns `{ success: true }` |
-| `BE-004` | `GET /v1/auth/me` | Implemented | Endpoint exists, but response still includes backend-specific `organizationId` |
+| `BE-004` | `GET /v1/auth/me` | Implemented | Endpoint returns the frontend-facing identity shape without backend-only fields |
 | `BE-005` | `GET /v1/patients` | Implemented | Response now returns frontend-compatible patient list shape |
 | `BE-006` | `POST /v1/patients` | Implemented | Route now accepts frontend-compatible patient payloads and still tolerates backend-native payloads |
 | `BE-007` | `GET /v1/patients/:id` | Implemented | Route now returns `{ patient, history }` in the frontend-oriented shape |
@@ -47,20 +47,20 @@ Status meanings used below:
 | `BE-011` | `POST /v1/patients/:id/history` | Implemented | Dedicated history write flow exists |
 | `BE-012` | `GET /v1/users` | Implemented | Endpoint exists with role filtering and normalized list output |
 | `BE-013` | `POST /v1/users` | Implemented | Route now accepts frontend-compatible `name` payloads and still tolerates backend-native fields |
-| `BE-014` | `POST /v1/auth/register` | Implemented | Route now accepts frontend-compatible `name` payloads and preserves bootstrap-owner behavior |
+| `BE-014` | `POST /v1/auth/register` | Implemented | Route now accepts frontend-compatible `name` payloads, preserves bootstrap-owner behavior, and returns the normalized created-user shape |
 | `BE-015` | `GET /v1/clinical/icd10` | Implemented | Backend terminology adapter exists and is provider-backed |
 | `BE-016` | Shared validation layer | Implemented | Frontend-style validation envelopes now cover backend request validation across the `/v1` API surface |
-| `BE-017` | Shared response mapping | In Progress | Some routes are normalized, but patient and auth alignment is incomplete |
+| `BE-017` | Shared response mapping | Implemented | Shared serializers now back the contract-aligned auth, patient, user, and history responses |
 | `BE-018` | Permission enforcement | Implemented | Shared permission mapping now covers the full `/v1` API surface, including older non-contract routes |
-| `BE-019` | Contract tests | In Progress | Contract tests now cover auth, patient, user, appointments, families, inventory, clinical validation, and key permission-denial paths, but coverage is still not complete across the whole API |
-| `BE-020` | Store replacement | Blocked | This workspace is backend-only; frontend prototype/store retirement cannot be implemented or verified without the frontend repository |
+| `BE-019` | Contract tests | Implemented | Backend contract tests now cover auth, analytics, patient, user, appointments, families, encounters, prescriptions, inventory, audit, clinical validation, and key permission-denial paths across the implemented `/v1` API surface |
+| `BE-020` | Store replacement | Verified | Frontend evidence now shows prototype/store live-path retirement, backend-backed BFF routes, and authenticated end-to-end verification across the required flows; doctor appointment-create `403` remains a backend permission-policy outcome rather than a frontend integration failure |
 
 ## 1.3 Main Remaining Gaps
 
-The backend is no longer blocked by major missing endpoints. The main remaining work is:
+The backend is no longer blocked by major missing endpoints. The main remaining work is optional follow-up only:
 
-- broader contract-level test coverage
-- frontend repository integration work to retire prototype/store-backed routes outside this repo
+- refine access-token claims if the frontend wants identity fields directly in login tokens instead of resolving them via `/v1/auth/me`
+- revisit appointment-create permission policy if doctors should also be allowed to create appointments
 
 ## 2. Mapping Rules
 
@@ -218,15 +218,14 @@ Backend mapping:
 
 - implemented as `GET /v1/auth/me`
 
-Recommended backend response:
+Implemented backend response:
 
 ```json
 {
   "id": 42,
   "name": "Dr. Jane Doe",
   "email": "doctor@example.com",
-  "role": "doctor",
-  "organizationId": "11111111-1111-1111-1111-111111111111"
+  "role": "doctor"
 }
 ```
 
@@ -240,7 +239,6 @@ Current implementation status:
 
 Remaining blockers and gaps:
 
-- backend response still includes `organizationId`, which is not part of the frontend contract
 - final ownership of identity resolution between token claims and backend profile lookup is still a design choice
 
 ### 3.4 `GET /api/auth/status`
@@ -287,6 +285,20 @@ Implemented behavior:
 - if no users exist for the organization, allow owner bootstrap
 - otherwise require authenticated actor with owner role
 
+Implemented backend response:
+
+```json
+{
+  "user": {
+    "id": 11,
+    "name": "Owner User",
+    "email": "owner@example.com",
+    "role": "owner",
+    "created_at": "2026-03-09T00:00:00.000Z"
+  }
+}
+```
+
 Current implementation status:
 
 - `BE-014`: `Implemented`
@@ -294,6 +306,7 @@ Current implementation status:
 Remaining blockers and gaps:
 
 - frontend-side cookie/session bootstrap behavior is still owned by the BFF layer
+- frontend BFF still needs to clear cookies locally after backend registration/login flows where it owns browser session state
 
 ## 4. Backend Proxy Mapping
 
@@ -699,9 +712,9 @@ Remaining blockers and gaps:
 
 ### Shared response mapping
 
-- `BE-017`: `In Progress`
-- current state: some routes already serialize to frontend-like shapes, but patient and auth alignment is incomplete
-- remaining blocker: no shared serializer layer exists across all contract-aligned routes
+- `BE-017`: `Implemented`
+- current state: backend now uses shared serializers for contract-aligned auth, patient, user, and patient-history responses
+- remaining blocker: none for the backend contract-aligned surface; future work is optional serializer expansion for non-contract route families
 
 ### Permission enforcement
 
@@ -711,15 +724,15 @@ Remaining blockers and gaps:
 
 ### Contract tests
 
-- `BE-019`: `In Progress`
-- current state: backend tests now cover core auth identity, patient response shapes, appointments, families, inventory validation envelopes, and key permission-denial paths including prescriptions, encounters, and audit
-- remaining blocker: broader coverage is still needed for remaining read/write routes and full end-to-end frontend integration paths
+- `BE-019`: `Implemented`
+- current state: backend tests now cover core auth identity, analytics overview, patient response shapes, appointment lifecycle, family membership flow, encounter subresources, prescription queue/detail/dispense flow, inventory lifecycle, audit-log reads, validation envelopes, and key permission-denial paths
+- remaining blocker: none for backend contract coverage of the implemented `/v1` surface; end-to-end frontend integration still remains outside this repo
 
 ### Store replacement
 
-- `BE-020`: `Blocked`
-- current state: this workspace contains only `apps/api` and `apps/worker`; no frontend app or Next.js BFF code is present here
-- remaining blocker: the frontend repository is required to replace prototype/store-backed routes and prove end-to-end backend-only usage
+- `BE-020`: `Verified`
+- current state: frontend evidence now shows that prototype persistence is retired from the live path, browser flows use `/api/...` BFF routes, ICD-10 is backend-aligned, and authenticated end-to-end verification covers auth, patient CRUD/history/delete, users, appointments, encounters, prescription dispense, inventory movement, analytics, and logout
+- remaining blocker: none for frontend store retirement; the only notable live behavior left is that doctor appointment-create returns `403`, which matches the current backend permission policy rather than a BE-020 integration failure
 
 ## 9. Non-Negotiable Decisions
 

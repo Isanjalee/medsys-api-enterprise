@@ -1,7 +1,9 @@
 import fp from "fastify-plugin";
 import { createClient, type RedisClientType } from "redis";
 import { auditLogs } from "@medsys/db";
-import type { AuditEvent, AuditPublisher } from "../lib/audit-publisher.js";
+import type { AuditEvent } from "@medsys/types";
+import type { AuditPublisher } from "../lib/audit-publisher.js";
+import { createAuditQueueMessage } from "../lib/audit-publisher.js";
 
 const auditPublisherPlugin = fp(async (app) => {
   const persistDirect = async (event: AuditEvent): Promise<void> => {
@@ -64,7 +66,7 @@ const auditPublisherPlugin = fp(async (app) => {
   const redisPublisher: AuditPublisher = {
     mode: "redis",
     publish: async (event: AuditEvent) => {
-      await redisClient.rPush(app.env.AUDIT_QUEUE_KEY, JSON.stringify(event));
+      await redisClient.rPush(app.env.AUDIT_QUEUE_KEY, JSON.stringify(createAuditQueueMessage(event)));
     },
     persistDirect
   };

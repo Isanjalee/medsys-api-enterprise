@@ -115,3 +115,73 @@ export type DrugSource = (typeof DRUG_SOURCES)[number];
 
 export const INVENTORY_MOVEMENT_TYPES = ["in", "out", "adjustment"] as const;
 export type InventoryMovementType = (typeof INVENTORY_MOVEMENT_TYPES)[number];
+
+export type AuditEvent = {
+  organizationId: string;
+  actorUserId: number | null;
+  entityType: string;
+  entityId: number | null;
+  action: string;
+  ip: string | null;
+  userAgent: string | null;
+  requestId: string | null;
+  payload: unknown;
+  createdAt: string;
+};
+
+export type AuditQueueMessage = {
+  version: 1;
+  event: AuditEvent;
+  attempt: number;
+  firstQueuedAt: string;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+export const isAuditEvent = (value: unknown): value is AuditEvent =>
+  isRecord(value) &&
+  typeof value.organizationId === "string" &&
+  (typeof value.actorUserId === "number" || value.actorUserId === null) &&
+  typeof value.entityType === "string" &&
+  (typeof value.entityId === "number" || value.entityId === null) &&
+  typeof value.action === "string" &&
+  (typeof value.ip === "string" || value.ip === null) &&
+  (typeof value.userAgent === "string" || value.userAgent === null) &&
+  (typeof value.requestId === "string" || value.requestId === null) &&
+  "payload" in value &&
+  typeof value.createdAt === "string";
+
+export const isAuditQueueMessage = (value: unknown): value is AuditQueueMessage =>
+  isRecord(value) &&
+  value.version === 1 &&
+  typeof value.attempt === "number" &&
+  typeof value.firstQueuedAt === "string" &&
+  (typeof value.lastAttemptAt === "string" || value.lastAttemptAt === null) &&
+  (typeof value.lastError === "string" || value.lastError === null) &&
+  isAuditEvent(value.event);
+
+export const createAuditQueueMessage = (event: AuditEvent): AuditQueueMessage => ({
+  version: 1,
+  event,
+  attempt: 0,
+  firstQueuedAt: event.createdAt,
+  lastAttemptAt: null,
+  lastError: null
+});
+
+export const parseAuditQueueMessage = (raw: string): AuditQueueMessage => {
+  const parsed = JSON.parse(raw) as unknown;
+
+  if (isAuditQueueMessage(parsed)) {
+    return parsed;
+  }
+
+  if (isAuditEvent(parsed)) {
+    return createAuditQueueMessage(parsed);
+  }
+
+  throw new Error("Invalid audit queue message");
+};

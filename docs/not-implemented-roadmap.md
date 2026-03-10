@@ -46,9 +46,9 @@ This track runs in parallel with the backend phases because the current frontend
 
 ## Phase 1: Data Platform Hardening (Priority: P0)
 Target: 1 week
-Status: In progress
+Status: Complete
 
-Phase 1 is complete only after all tasks below are done and the exit criteria are verified on a real database/staging snapshot.
+Phase 1 is complete. Verification evidence is recorded in [phase1-verification.md](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase1-verification.md).
 
 ### Tasks
 - [x] Add monthly partitioning for `appointments` with a safe FK strategy.
@@ -64,20 +64,23 @@ Phase 1 is complete only after all tasks below are done and the exit criteria ar
 - Updated DB docs in README.
 
 ### Exit criteria
-- `appointments` partition pruning confirmed with `EXPLAIN`.
-- Existing clinical writes still pass.
-- Migration and rollback tested on staging snapshot.
+- [x] `appointments` partition pruning confirmed with `EXPLAIN`.
+- [x] Existing clinical writes still pass.
+- [x] Migration and rollback tested on staging snapshot.
 
 ---
 
 ## Phase 2: Async Audit Pipeline (Priority: P0)
 Target: 1 week
+Status: Complete
+
+Phase 2 is complete. Verification evidence is recorded in [phase2-verification.md](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase2-verification.md).
 
 ### Tasks
 - [x] Replace synchronous audit DB writes with async producer path:
   - API publishes audit event
   - Worker consumes and writes to `audit_logs`
-- [ ] Add retry + dead-letter logic for failed audit events.
+- [x] Add retry + dead-letter logic for failed audit events.
 - [x] Keep fallback mode: direct DB write when queue unavailable.
 - [x] Add request-id + actor metadata contract for audit event payload.
 
@@ -87,8 +90,8 @@ Target: 1 week
 - Audit pipeline integration test.
 
 ### Exit criteria
-- Clinical request latency unaffected by audit write load.
-- No audit loss in retry test.
+- [x] Clinical request latency unaffected by audit write load.
+- [x] No audit loss in retry test.
 
 ---
 

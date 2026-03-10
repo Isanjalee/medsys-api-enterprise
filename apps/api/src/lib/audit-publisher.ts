@@ -1,15 +1,13 @@
-export type AuditEvent = {
-  organizationId: string;
-  actorUserId: number | null;
-  entityType: string;
-  entityId: number | null;
-  action: string;
-  ip: string | null;
-  userAgent: string | null;
-  requestId: string | null;
-  payload: unknown;
-  createdAt: string;
-};
+import type { AuditEvent, AuditQueueMessage } from "@medsys/types";
+
+export const createAuditQueueMessage = (event: AuditEvent): AuditQueueMessage => ({
+  version: 1,
+  event,
+  attempt: 0,
+  firstQueuedAt: event.createdAt,
+  lastAttemptAt: null,
+  lastError: null
+});
 
 export type AuditPublisher = {
   mode: "direct" | "redis";

@@ -37,10 +37,6 @@ CREATE TABLE appointments_heap (
   deleted_at TIMESTAMPTZ NULL
 );
 
-CREATE INDEX appointments_status_scheduled_idx ON appointments_heap (status, scheduled_at);
-CREATE INDEX appointments_patient_idx ON appointments_heap (patient_id);
-CREATE INDEX appointments_org_scheduled_idx ON appointments_heap (organization_id, scheduled_at);
-
 INSERT INTO appointments_heap (
   id,
   organization_id,
@@ -72,6 +68,10 @@ FROM appointments;
 
 DROP TABLE appointments;
 ALTER TABLE appointments_heap RENAME TO appointments;
+
+CREATE INDEX appointments_status_scheduled_idx ON appointments (status, scheduled_at);
+CREATE INDEX appointments_patient_idx ON appointments (patient_id);
+CREATE INDEX appointments_org_scheduled_idx ON appointments (organization_id, scheduled_at);
 
 DROP INDEX IF EXISTS encounters_appointment_fk_idx;
 ALTER TABLE encounters DROP COLUMN IF EXISTS appointment_scheduled_at;

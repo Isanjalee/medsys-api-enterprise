@@ -7,12 +7,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
+    "test": "tsx --test test/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"No lint configured\""
   },
   "dependencies": {
     "@medsys/config": "0.1.0",
     "@medsys/db": "0.1.0",
+    "@medsys/types": "0.1.0",
     "redis": "^4.7.0"
   },
   "devDependencies": {

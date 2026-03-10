@@ -103,6 +103,9 @@ npm run dev -w @medsys/worker
   - `AUDIT_TRANSPORT=auto|direct|redis`
   - `auto` uses Redis queue if `REDIS_URL` is set, otherwise direct DB write.
   - API falls back to direct DB write if queue publish fails.
+  - Worker retries failed events using `AUDIT_MAX_RETRIES` and `AUDIT_RETRY_BASE_DELAY_MS`.
+  - Retry messages use `AUDIT_RETRY_QUEUE_KEY` or default to `${AUDIT_QUEUE_KEY}:retry`.
+  - Dead-lettered events use `AUDIT_DLQ_KEY` or default to `${AUDIT_QUEUE_KEY}:dlq`.
 - `audit_logs` is partitioned monthly in `V1__init.sql`.
 - `appointments` is partitioned monthly by `scheduled_at` in `V4__partition_appointments.sql`.
 - Keep future `appointments` partitions warm with [infra/flyway/scripts/maintain_appointments_partitions.sql](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/infra/flyway/scripts/maintain_appointments_partitions.sql).
@@ -111,4 +114,5 @@ npm run dev -w @medsys/worker
 - Rollback steps for schema releases are documented in [docs/flyway-rollback-playbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/flyway-rollback-playbook.md).
 - `patient_history_entries` is introduced in `V5__add_patient_history.sql` for note-based patient history separate from timeline events.
 - ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
+- Phase 2 audit pipeline verification is recorded in [docs/phase2-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase2-verification.md).
 - Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).
