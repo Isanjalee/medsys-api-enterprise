@@ -7,6 +7,9 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_READ_URL: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).optional(),
+  OPENSEARCH_URL: z.string().url().optional(),
+  OPENSEARCH_PATIENT_INDEX: z.string().default("medsys_patients"),
+  OPENSEARCH_DIAGNOSIS_INDEX: z.string().default("medsys_diagnoses"),
   ICD10_API_BASE_URL: z
     .string()
     .url()
@@ -18,6 +21,8 @@ const envSchema = z.object({
   AUDIT_MAX_RETRIES: z.coerce.number().int().positive().default(3),
   AUDIT_RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(250),
   AUDIT_WORKER_BLOCK_SECONDS: z.coerce.number().int().positive().default(5),
+  APPOINTMENT_QUEUE_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(15),
+  PATIENT_PROFILE_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(30),
   JWT_ACCESS_PUBLIC_KEY: z.string().min(1),
   JWT_ACCESS_PRIVATE_KEY: z.string().min(1),
   JWT_REFRESH_PUBLIC_KEY: z.string().min(1),

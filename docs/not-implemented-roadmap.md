@@ -97,25 +97,28 @@ Phase 2 is complete. Verification evidence is recorded in [phase2-verification.m
 
 ## Phase 3: Search + Caching (Priority: P1)
 Target: 2 weeks
+Status: Complete
+
+Phase 3 is complete. Verification evidence is recorded in [phase3-verification.md](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase3-verification.md).
 
 ### Tasks
-- [ ] Add OpenSearch index models for:
+- [x] Add OpenSearch index models for:
   - patients (name/NIC/phone)
   - diagnoses
-- [ ] Implement index sync on create/update flows.
-- [ ] Add `/v1/search/patients` endpoint (fuzzy + pagination).
-- [ ] Add Redis caching for:
+- [x] Implement index sync on create/update flows.
+- [x] Add `/v1/search/patients` endpoint (fuzzy + pagination).
+- [x] Add Redis caching for:
   - appointment queue
   - patient profile hot reads
-- [ ] Add cache invalidation on writes.
+- [x] Add cache invalidation on writes.
 
 ### Deliverables
 - Search endpoints and index mappings.
 - Cache service module + invalidation hooks.
 
 ### Exit criteria
-- Fuzzy patient search under target latency.
-- Cache hit-rate dashboard available.
+- [x] Fuzzy patient search under target latency.
+- [x] Cache hit-rate dashboard available.
 
 ---
 

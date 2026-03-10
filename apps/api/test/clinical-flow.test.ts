@@ -129,6 +129,273 @@ test("analytics overview returns numeric counters for authorized users", async (
   await app.close();
 });
 
+test("analytics cache endpoint exposes cache hit and invalidation counters", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Cache Profile ${Date.now()} Patient`);
+
+  const profileHeaders = {
+    authorization: `Bearer ${ownerLogin.accessToken}`
+  };
+
+  const firstProfile = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${patientId}/profile`,
+    headers: profileHeaders
+  });
+  assert.equal(firstProfile.statusCode, 200);
+
+  const secondProfile = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${patientId}/profile`,
+    headers: profileHeaders
+  });
+  assert.equal(secondProfile.statusCode, 200);
+
+  const updatePatient = await app.inject({
+    method: "PATCH",
+    url: `/v1/patients/${patientId}`,
+    headers: profileHeaders,
+    payload: {
+      address: "Updated Cache Street"
+    }
+  });
+  assert.equal(updatePatient.statusCode, 200);
+
+  const cacheStatsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/analytics/cache",
+    headers: profileHeaders
+  });
+
+  assert.equal(cacheStatsResponse.statusCode, 200);
+  const stats = cacheStatsResponse.json() as {
+    patientProfile: { hits: number; misses: number; invalidations: number; sets: number };
+  };
+  assert.equal(stats.patientProfile.misses >= 1, true);
+  assert.equal(stats.patientProfile.hits >= 1, true);
+  assert.equal(stats.patientProfile.invalidations >= 1, true);
+  assert.equal(stats.patientProfile.sets >= 1, true);
+
+  await app.close();
+});
+
+test("waiting appointment queue uses cache and invalidates on update", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Queue Cache ${Date.now()} Patient`);
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      scheduledAt: "2026-03-15T09:30:00Z",
+      priority: "normal"
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const appointmentId = (createResponse.json() as { id: number }).id;
+
+  const firstQueueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=waiting",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(firstQueueResponse.statusCode, 200);
+
+  const secondQueueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=waiting",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(secondQueueResponse.statusCode, 200);
+
+  const updateResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/appointments/${appointmentId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      status: "completed"
+    }
+  });
+  assert.equal(updateResponse.statusCode, 200);
+
+  const cacheStatsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/analytics/cache",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(cacheStatsResponse.statusCode, 200);
+  const stats = cacheStatsResponse.json() as {
+    appointmentQueue: { hits: number; misses: number; invalidations: number; sets: number };
+  };
+  assert.equal(stats.appointmentQueue.misses >= 1, true);
+  assert.equal(stats.appointmentQueue.hits >= 1, true);
+  assert.equal(stats.appointmentQueue.invalidations >= 1, true);
+
+  const queueAfterUpdate = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=waiting",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(queueAfterUpdate.statusCode, 200);
+  const rows = queueAfterUpdate.json() as Array<{ id: number }>;
+  assert.equal(rows.some((row) => row.id === appointmentId), false);
+  await app.close();
+});
+
+test("patient search supports paginated lookup", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  await createPatientAs(app, ownerLogin.accessToken, `Searchable ${uniqueSuffix} Alpha`);
+  await createPatientAs(app, ownerLogin.accessToken, `Searchable ${uniqueSuffix} Beta`);
+
+  const firstPage = await app.inject({
+    method: "GET",
+    url: `/v1/search/patients?q=${encodeURIComponent(uniqueSuffix)}&page=1&limit=1`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(firstPage.statusCode, 200);
+  const firstPageBody = firstPage.json() as {
+    patients: Array<{ id: number; name: string }>;
+    total: number;
+    page: number;
+    limit: number;
+  };
+  assert.equal(firstPageBody.page, 1);
+  assert.equal(firstPageBody.limit, 1);
+  assert.equal(firstPageBody.total >= 2, true);
+  assert.equal(firstPageBody.patients.length, 1);
+  assert.equal(firstPageBody.patients[0]?.name.includes(uniqueSuffix), true);
+
+  const secondPage = await app.inject({
+    method: "GET",
+    url: `/v1/search/patients?q=${encodeURIComponent(uniqueSuffix)}&page=2&limit=1`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(secondPage.statusCode, 200);
+  const secondPageBody = secondPage.json() as { patients: Array<{ id: number }> };
+  assert.equal(secondPageBody.patients.length, 1);
+  assert.notEqual(secondPageBody.patients[0]?.id, firstPageBody.patients[0]?.id);
+  await app.close();
+});
+
+test("patient and diagnosis writes sync OpenSearch documents when configured", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const originalFetch = globalThis.fetch;
+  const originalOpenSearchUrl = process.env.OPENSEARCH_URL;
+  const calls: Array<{ method: string; url: string }> = [];
+
+  process.env.OPENSEARCH_URL = "http://search.local:9200";
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      method: (init?.method ?? "GET").toUpperCase(),
+      url: input.toString()
+    });
+
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: {
+        "content-type": "application/json"
+      }
+    });
+  };
+
+  const app = await buildApp();
+
+  try {
+    const ownerLogin = await loginAs(app, "owner@medsys.local");
+    const patientResponse = await app.inject({
+      method: "POST",
+      url: "/v1/patients",
+      headers: {
+        authorization: `Bearer ${ownerLogin.accessToken}`
+      },
+      payload: {
+        name: `Indexed ${Date.now()} Patient`
+      }
+    });
+
+    assert.equal(patientResponse.statusCode, 201);
+    const patientId = (patientResponse.json() as { patient: { id: number } }).patient.id;
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: `/v1/patients/${patientId}`,
+      headers: {
+        authorization: `Bearer ${ownerLogin.accessToken}`
+      },
+      payload: {
+        phone: "555-9898"
+      }
+    });
+    assert.equal(updateResponse.statusCode, 200);
+
+    const conditionResponse = await app.inject({
+      method: "POST",
+      url: `/v1/patients/${patientId}/conditions`,
+      headers: {
+        authorization: `Bearer ${ownerLogin.accessToken}`
+      },
+      payload: {
+        conditionName: "Indexed Condition",
+        icd10Code: "B34.9"
+      }
+    });
+    assert.equal(conditionResponse.statusCode, 201);
+
+    assert.equal(calls.some((call) => call.method === "PUT" && call.url.includes("/medsys_patients/_doc/")), true);
+    assert.equal(calls.some((call) => call.method === "POST" && call.url.endsWith("/_bulk")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalOpenSearchUrl === undefined) {
+      delete process.env.OPENSEARCH_URL;
+    } else {
+      process.env.OPENSEARCH_URL = originalOpenSearchUrl;
+    }
+    await app.close();
+  }
+});
+
 test("auth me endpoint requires authentication", async () => {
   if (!process.env.DATABASE_URL) {
     return;

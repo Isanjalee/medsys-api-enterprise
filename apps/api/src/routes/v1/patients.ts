@@ -35,6 +35,9 @@ const hasAnyKey = (value: unknown, keys: string[]): boolean =>
       keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
 
+const patientProfileCacheKey = (organizationId: string, patientId: number): string =>
+  `${organizationId}:${patientId}`;
+
 const patientRoutes: FastifyPluginAsync = async (app) => {
   const tag = "Patients";
   applyRouteDocs(app, tag, "PatientsController", {
@@ -286,6 +289,32 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     return rows.map(serializePatientHistoryEntry);
   };
 
+  const syncPatientSearch = async (row: {
+    id: number;
+    organizationId: string;
+    fullName: string | null;
+    firstName: string;
+    lastName: string;
+    nic: string | null;
+    phone: string | null;
+    dob: string | null;
+    createdAt: Date;
+  }) => {
+    await app.searchService.upsertPatient({
+      id: row.id,
+      organizationId: row.organizationId,
+      name: row.fullName ?? `${row.firstName} ${row.lastName}`.trim(),
+      nic: row.nic,
+      phone: row.phone,
+      dateOfBirth: row.dob,
+      createdAt: row.createdAt.toISOString()
+    });
+  };
+
+  const invalidatePatientProfile = async (organizationId: string, patientId: number): Promise<void> => {
+    await app.cacheService.invalidate("patientProfile", patientProfileCacheKey(organizationId, patientId));
+  };
+
   app.get(
     "/",
     {
@@ -417,6 +446,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "create",
         entityId: inserted[0].id
       });
+      await syncPatientSearch(inserted[0]);
       return reply.code(201).send({ patient: serializePatientSummary(inserted[0]) });
     }
   );
@@ -560,6 +590,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "update",
         entityId: id
       });
+      await syncPatientSearch(updated[0]);
+      await invalidatePatientProfile(actor.organizationId, id);
       return { patient: serializePatientSummary(updated[0]) };
     }
   );
@@ -601,6 +633,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "delete",
         entityId: id
       });
+      await app.searchService.deletePatient(actor.organizationId, id);
+      await invalidatePatientProfile(actor.organizationId, id);
 
       return { success: true };
     }
@@ -674,6 +708,18 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     async (request) => {
       const actor = request.actor!;
       const { id } = parseOrThrowValidation(idParamSchema, request.params);
+      const cacheKey = patientProfileCacheKey(actor.organizationId, id);
+      const cached = await app.cacheService.getJson<{
+        patient: unknown;
+        allergies: unknown[];
+        conditions: unknown[];
+        vitals: unknown[];
+        timeline: unknown[];
+      }>("patientProfile", cacheKey);
+
+      if (cached) {
+        return cached;
+      }
 
       const [patient] = await app.readDb
         .select()
@@ -735,7 +781,14 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           .limit(100)
       ]);
 
-      return { patient, allergies, conditions, vitals, timeline };
+      const payload = { patient, allergies, conditions, vitals, timeline };
+      await app.cacheService.setJson(
+        "patientProfile",
+        cacheKey,
+        payload,
+        app.env.PATIENT_PROFILE_CACHE_TTL_SECONDS
+      );
+      return payload;
     }
   );
 
@@ -811,6 +864,19 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
+    await app.searchService.indexDiagnoses([
+      {
+        id: `condition:${inserted[0].id}`,
+        organizationId: actor.organizationId,
+        encounterId: null,
+        patientId: id,
+        icd10Code: inserted[0].icd10Code,
+        diagnosisName: inserted[0].conditionName,
+        source: "condition",
+        createdAt: inserted[0].createdAt.toISOString()
+      }
+    ]);
+    await invalidatePatientProfile(actor.organizationId, id);
     return reply.code(201).send(inserted[0]);
   });
 
@@ -833,6 +899,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
+    await invalidatePatientProfile(actor.organizationId, id);
     return reply.code(201).send(inserted[0]);
   });
 
@@ -879,6 +946,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
+    await invalidatePatientProfile(actor.organizationId, params.id);
     return reply.code(201).send(inserted[0]);
   });
 
@@ -922,6 +990,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
+    await invalidatePatientProfile(actor.organizationId, id);
     return reply.code(201).send(inserted[0]);
   });
 };

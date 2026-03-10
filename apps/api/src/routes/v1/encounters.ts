@@ -13,6 +13,8 @@ import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
+const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
+
 const encounterRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Encounters", "EncountersController", {
     "GET /": {
@@ -240,6 +242,19 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         hasPrescription: Boolean(outcome.prescriptionId)
       }
     });
+    await app.searchService.indexDiagnoses(
+      (payload.diagnoses ?? []).map((diagnosis, index) => ({
+        id: `encounter:${outcome.encounterId}:${index}`,
+        organizationId: actor.organizationId,
+        encounterId: outcome.encounterId,
+        patientId: payload.patientId,
+        icd10Code: diagnosis.icd10Code ?? null,
+        diagnosisName: diagnosis.diagnosisName,
+        source: "encounter",
+        createdAt: payload.checkedAt
+      }))
+    );
+    await app.cacheService.invalidate("appointmentQueue", appointmentQueueCacheKey(actor.organizationId));
 
     return reply.code(201).send(outcome);
   });

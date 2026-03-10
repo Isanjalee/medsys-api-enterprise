@@ -4,6 +4,8 @@ import type { buildDbClient } from "@medsys/db";
 import type { Permission, UserRole } from "@medsys/types";
 import type { FastifyRequest, preHandlerHookHandler } from "fastify";
 import type { AuditPublisher } from "../lib/audit-publisher.js";
+import type { CacheService } from "../lib/cache-service.js";
+import type { SearchService } from "../lib/search-service.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -12,6 +14,8 @@ declare module "fastify" {
     readDb: ReturnType<typeof buildDbClient>["db"];
     analyticsDb: ReturnType<typeof buildDbClient>["db"];
     auditPublisher: AuditPublisher;
+    cacheService: CacheService;
+    searchService: SearchService;
     authenticate: (request: FastifyRequest) => Promise<void>;
     authorize: (roles: UserRole[]) => preHandlerHookHandler;
     authorizePermissions: (permissions: Permission[]) => preHandlerHookHandler;

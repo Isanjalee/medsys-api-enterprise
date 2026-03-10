@@ -160,6 +160,14 @@ export const listAppointmentsQuerySchema = z
   })
   .strict();
 
+export const searchPatientsQuerySchema = z
+  .object({
+    q: z.string().trim().min(2).max(120),
+    page: z.coerce.number().int().positive().default(1),
+    limit: z.coerce.number().int().positive().max(50).default(20)
+  })
+  .strict();
+
 export const updateAppointmentSchema = z
   .object({
     status: appointmentStatusSchema.optional(),

@@ -5,6 +5,8 @@ import authPlugin from "./plugins/auth.js";
 import docsPlugin from "./plugins/docs.js";
 import rateLimitPlugin from "./plugins/rate-limit.js";
 import auditPublisherPlugin from "./plugins/audit-publisher.js";
+import cachePlugin from "./plugins/cache.js";
+import searchPlugin from "./plugins/search.js";
 import routesPlugin from "./routes/index.js";
 import { ZodError } from "zod";
 import { HttpError, ValidationError, validationIssuesFromZodError } from "./lib/http-error.js";
@@ -60,6 +62,8 @@ export const buildApp = async () => {
   await app.register(environmentPlugin);
   await app.register(databasePlugin);
   await app.register(auditPublisherPlugin);
+  await app.register(cachePlugin);
+  await app.register(searchPlugin);
   await app.register(authPlugin);
   await app.register(rateLimitPlugin);
   await app.register(docsPlugin);

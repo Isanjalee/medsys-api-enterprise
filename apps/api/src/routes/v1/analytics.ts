@@ -8,6 +8,10 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
     "GET /overview": {
       operationId: "AnalyticsController_overview",
       summary: "Get analytics overview counters"
+    },
+    "GET /cache": {
+      operationId: "AnalyticsController_cacheStats",
+      summary: "Get cache hit-rate counters"
     }
   });
 
@@ -40,6 +44,10 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       prescriptions: Number(prescriptionCount[0]?.count ?? 0),
       lowStockItems: Number(lowStockCount[0]?.count ?? 0)
     };
+  });
+
+  app.get("/cache", { preHandler: app.authorizePermissions(["analytics.read"]) }, async () => {
+    return app.cacheService.getStats();
   });
 };
 

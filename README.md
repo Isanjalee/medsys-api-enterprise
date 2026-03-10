@@ -69,6 +69,7 @@ npm run dev -w @medsys/worker
 - `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/register`, `/v1/auth/me`, `/v1/auth/status`
 - `/v1/users`
 - `/v1/clinical/icd10`
+- `/v1/search/patients`
 - `/v1/patients`, `/v1/patients/:id`, `/v1/patients/:id/history`, `/v1/patients/:id/profile`
 - `/v1/patients/:id/family`, `/v1/patients/:id/allergies`, `/v1/patients/:id/conditions`
 - `/v1/patients/:id/vitals`, `/v1/patients/:id/timeline`
@@ -79,6 +80,7 @@ npm run dev -w @medsys/worker
 - `/v1/prescriptions/queue/pending-dispense`
 - `/v1/inventory`, `/v1/inventory/:id/movements`
 - `/v1/analytics/overview`
+- `/v1/analytics/cache`
 - `/v1/audit/logs`
 
 ## Clinical transaction guarantees
@@ -114,5 +116,8 @@ npm run dev -w @medsys/worker
 - Rollback steps for schema releases are documented in [docs/flyway-rollback-playbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/flyway-rollback-playbook.md).
 - `patient_history_entries` is introduced in `V5__add_patient_history.sql` for note-based patient history separate from timeline events.
 - ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
+- Patient search supports OpenSearch-backed fuzzy lookup when `OPENSEARCH_URL` is configured; otherwise it falls back to DB search.
+- Cache stats are available via `/v1/analytics/cache` for the `appointmentQueue` and `patientProfile` namespaces.
 - Phase 2 audit pipeline verification is recorded in [docs/phase2-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase2-verification.md).
+- Phase 3 search and caching verification is recorded in [docs/phase3-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase3-verification.md).
 - Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).

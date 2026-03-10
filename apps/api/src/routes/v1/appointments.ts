@@ -6,6 +6,8 @@ import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
+const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
+
 const appointmentRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Appointments", "AppointmentsController", {
     "GET /": {
@@ -80,11 +82,33 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(listAppointmentsQuerySchema, request.query ?? {});
     const validatedStatus = query.status ?? null;
+    const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
 
     const baseCondition = and(
       eq(appointments.organizationId, actor.organizationId),
       isNull(appointments.deletedAt)
     );
+
+    if (validatedStatus === "waiting") {
+      const cached = await app.cacheService.getJson<Array<Record<string, unknown>>>("appointmentQueue", queueCacheKey);
+      if (cached) {
+        return cached;
+      }
+
+      const rows = await app.readDb
+        .select()
+        .from(appointments)
+        .where(and(baseCondition, eq(appointments.status, validatedStatus)))
+        .orderBy(desc(appointments.scheduledAt));
+      await app.cacheService.setJson(
+        "appointmentQueue",
+        queueCacheKey,
+        rows,
+        app.env.APPOINTMENT_QUEUE_CACHE_TTL_SECONDS
+      );
+      return rows;
+    }
+
     if (!validatedStatus) {
       return app.readDb.select().from(appointments).where(baseCondition).orderBy(desc(appointments.scheduledAt));
     }
@@ -98,6 +122,7 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/", { preHandler: app.authorizePermissions(["appointment.create"]) }, async (request, reply) => {
     const actor = request.actor!;
+    const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
     const payload = parseOrThrowValidation(createAppointmentSchema.strict(), request.body);
     const patientExists = await app.readDb
       .select({ id: patients.id })
@@ -125,6 +150,7 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
+    await app.cacheService.invalidate("appointmentQueue", queueCacheKey);
     return reply.code(201).send(inserted[0]);
   });
 
@@ -150,6 +176,7 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
     const body = parseOrThrowValidation(updateAppointmentSchema, request.body);
+    const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.status !== undefined) {
@@ -183,6 +210,7 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       action: "update",
       entityId: id
     });
+    await app.cacheService.invalidate("appointmentQueue", queueCacheKey);
     return updated[0];
   });
 };
