@@ -13,8 +13,9 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "db:migrate": "flyway -configFiles=infra/flyway/flyway.conf migrate",
-    "db:validate": "flyway -configFiles=infra/flyway/flyway.conf validate"
+    "db:migrate": "node scripts/flyway-docker.cjs migrate",
+    "db:validate": "node scripts/flyway-docker.cjs validate",
+    "db:info": "node scripts/flyway-docker.cjs info"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",

@@ -45,6 +45,10 @@ npm install
 ```bash
 npm run db:migrate
 ```
+Optional migration status:
+```bash
+npm run db:info
+```
 5. Run API:
 ```bash
 npm run dev
@@ -93,6 +97,8 @@ npm run dev -w @medsys/worker
 - PHI redaction paths in structured logs
 
 ## Notes
+- `npm run db:migrate`, `npm run db:validate`, and `npm run db:info` use Dockerized Flyway by default.
+- Override Flyway connection details with `FLYWAY_URL`, `FLYWAY_USER`, `FLYWAY_PASSWORD`, `FLYWAY_IMAGE`, or `FLYWAY_LOCATIONS` when needed.
 - Audit logging now supports async queue mode via Redis:
   - `AUDIT_TRANSPORT=auto|direct|redis`
   - `auto` uses Redis queue if `REDIS_URL` is set, otherwise direct DB write.

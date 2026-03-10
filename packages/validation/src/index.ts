@@ -48,6 +48,11 @@ export const updatePatientSchema = createPatientSchema.partial();
 export const createPatientFrontendSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
+    nic: z.string().max(32).optional().nullable(),
+    age: z.number().int().min(0).max(130).optional(),
+    gender: genderSchema.optional(),
+    mobile: z.string().trim().max(30).optional().nullable(),
+    priority: prioritySchema.optional(),
     dateOfBirth: z.string().date().optional().nullable(),
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(255).optional().nullable()
@@ -57,6 +62,11 @@ export const createPatientFrontendSchema = z
 export const updatePatientFrontendSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
+    nic: z.string().max(32).optional().nullable(),
+    age: z.number().int().min(0).max(130).optional().nullable(),
+    gender: genderSchema.optional().nullable(),
+    mobile: z.string().trim().max(30).optional().nullable(),
+    priority: prioritySchema.optional().nullable(),
     dateOfBirth: z.string().date().optional().nullable(),
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(255).optional().nullable()
@@ -65,6 +75,11 @@ export const updatePatientFrontendSchema = z
   .refine(
     (value) =>
       value.name !== undefined ||
+      value.nic !== undefined ||
+      value.age !== undefined ||
+      value.gender !== undefined ||
+      value.mobile !== undefined ||
+      value.priority !== undefined ||
       value.dateOfBirth !== undefined ||
       value.phone !== undefined ||
       value.address !== undefined,

@@ -109,7 +109,7 @@ export const patients = pgTable(
     nic: varchar("nic", { length: 20 }),
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
-    fullName: varchar("full_name", { length: 170 }).notNull(),
+    fullName: varchar("full_name", { length: 170 }),
     dob: date("dob"),
     age: bigint("age", { mode: "number" }),
     gender: genderEnum("gender").notNull(),

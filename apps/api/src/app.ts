@@ -31,6 +31,32 @@ export const buildApp = async () => {
     requestIdHeader: process.env.REQUEST_ID_HEADER ?? "x-request-id"
   });
 
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser(
+    /^application\/json(?:\s*;.*)?$/i,
+    { parseAs: "string" },
+    (_request, body, done) => {
+      const rawBody = typeof body === "string" ? body : body.toString("utf8");
+
+      if (rawBody.trim() === "") {
+        done(null, {});
+        return;
+      }
+
+      try {
+        done(null, JSON.parse(rawBody));
+      } catch {
+        const error = new Error("Body cannot be parsed as JSON") as Error & {
+          code?: string;
+          statusCode?: number;
+        };
+        error.code = "FST_ERR_CTP_INVALID_JSON_BODY";
+        error.statusCode = 400;
+        done(error, undefined);
+      }
+    }
+  );
+
   await app.register(environmentPlugin);
   await app.register(databasePlugin);
   await app.register(auditPublisherPlugin);

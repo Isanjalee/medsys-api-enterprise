@@ -14,7 +14,9 @@ export type CreatedUserRow = AuthUserRow & {
 
 export type PatientSummaryRow = {
   id: number;
-  fullName: string;
+  fullName: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   dob: string | null;
   phone: string | null;
   address: string | null;
@@ -45,7 +47,7 @@ export const serializeCreatedUser = (row: CreatedUserRow) => ({
 
 export const serializePatientSummary = (patient: PatientSummaryRow) => ({
   id: patient.id,
-  name: patient.fullName,
+  name: patient.fullName ?? buildDisplayName(patient.firstName ?? "", patient.lastName ?? ""),
   date_of_birth: patient.dob,
   phone: patient.phone,
   address: patient.address,

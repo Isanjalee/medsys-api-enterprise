@@ -66,17 +66,21 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       bodySchema: {
         type: "object",
         additionalProperties: false,
-        required: ["movementType", "quantity"],
+        required: ["quantity"],
+        anyOf: [{ required: ["movementType"] }, { required: ["type"] }],
         properties: {
           movementType: { type: "string", enum: ["in", "out", "adjustment"] },
+          type: { type: "string", enum: ["in", "out", "adjustment"] },
           quantity: { type: "number", minimum: 0.01 },
+          note: { type: "string", nullable: true },
           referenceType: { type: "string", nullable: true },
           referenceId: { type: "integer", minimum: 1, nullable: true }
         }
       },
       bodyExample: {
-        movementType: "in",
+        type: "in",
         quantity: 50,
+        note: "Stock adjustment",
         referenceType: "adjustment",
         referenceId: 1
       }
@@ -154,7 +158,13 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
   app.post("/:id/movements", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request, reply) => {
     const actor = request.actor!;
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
-    const body = parseOrThrowValidation(createInventoryMovementSchema, request.body);
+    const rawBody = request.body as Record<string, unknown>;
+    const body = parseOrThrowValidation(createInventoryMovementSchema, {
+      movementType: rawBody?.movementType ?? rawBody?.type,
+      quantity: rawBody?.quantity,
+      referenceType: rawBody?.referenceType,
+      referenceId: rawBody?.referenceId
+    });
 
     const movement = await app.db.transaction(async (tx) => {
       const item = await tx

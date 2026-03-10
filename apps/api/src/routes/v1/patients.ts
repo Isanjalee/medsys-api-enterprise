@@ -330,7 +330,6 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         nic?: string | null;
         firstName: string;
         lastName: string;
-        fullName: string;
         dob?: string | null;
         age?: number | null;
         gender: "male" | "female" | "other";
@@ -344,14 +343,25 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         const payload = parseOrThrowValidation(createPatientFrontendSchema, request.body);
         const nameParts = splitFullName(payload.name);
         const dob = payload.dateOfBirth ? new Date(payload.dateOfBirth) : null;
+        const dobAge = dob ? calculateAgeFromDob(dob) : null;
+
+        if (dobAge != null && payload.age != null && Math.abs(dobAge - payload.age) > 1) {
+          throw validationError([
+            {
+              field: "age",
+              message: "Age does not match DOB."
+            }
+          ]);
+        }
+
         values = {
+          nic: payload.nic ?? null,
           firstName: nameParts.firstName,
           lastName: nameParts.lastName,
-          fullName: nameParts.fullName,
           dob: payload.dateOfBirth ?? null,
-          age: dob ? calculateAgeFromDob(dob) : null,
-          gender: "other",
-          phone: payload.phone ?? null,
+          age: dobAge ?? payload.age ?? null,
+          gender: payload.gender ?? "other",
+          phone: payload.phone ?? payload.mobile ?? null,
           address: payload.address ?? null
         };
       } else {
@@ -375,7 +385,6 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           nic: payload.nic ?? null,
           firstName: payload.firstName,
           lastName: payload.lastName,
-          fullName: [payload.firstName, payload.lastName].filter(Boolean).join(" "),
           dob: payload.dob ?? null,
           age: calculatedAge,
           gender: payload.gender,
@@ -393,7 +402,6 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           nic: values.nic ?? null,
           firstName: values.firstName,
           lastName: values.lastName,
-          fullName: values.fullName,
           dob: values.dob ?? null,
           age: values.age ?? null,
           gender: values.gender,
@@ -475,7 +483,6 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           const nameParts = splitFullName(payload.name);
           updateData.firstName = nameParts.firstName;
           updateData.lastName = nameParts.lastName;
-          updateData.fullName = nameParts.fullName;
         }
         if (payload.dateOfBirth !== undefined) {
           updateData.dob = payload.dateOfBirth;
@@ -483,8 +490,19 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
             ? calculateAgeFromDob(new Date(payload.dateOfBirth))
             : null;
         }
+        if (payload.nic !== undefined) {
+          updateData.nic = payload.nic;
+        }
+        if (payload.age !== undefined && payload.dateOfBirth === undefined) {
+          updateData.age = payload.age;
+        }
+        if (payload.gender !== undefined) {
+          updateData.gender = payload.gender;
+        }
         if (payload.phone !== undefined) {
           updateData.phone = payload.phone;
+        } else if (payload.mobile !== undefined) {
+          updateData.phone = payload.mobile;
         }
         if (payload.address !== undefined) {
           updateData.address = payload.address;
@@ -497,17 +515,6 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         }
         if (payload.lastName !== undefined) {
           updateData.lastName = payload.lastName;
-        }
-        if (payload.firstName || payload.lastName) {
-          const existing = await app.db
-            .select({ firstName: patients.firstName, lastName: patients.lastName })
-            .from(patients)
-            .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId)))
-            .limit(1);
-          assertOrThrow(existing.length === 1, 404, "Patient not found");
-          const nextFirst = payload.firstName ?? existing[0].firstName;
-          const nextLast = payload.lastName ?? existing[0].lastName;
-          updateData.fullName = [nextFirst, nextLast].filter(Boolean).join(" ");
         }
 
         if (payload.dob !== undefined) {
