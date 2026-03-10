@@ -376,10 +376,13 @@ test("owner can register and list users after bootstrap", async () => {
 
   assert.equal(registerResponse.statusCode, 201);
   const registerBody = registerResponse.json() as {
-    user: { email: string; role: string; name: string };
+    user: { id: number; email: string; role: string; name: string; created_at: string };
   };
   assert.equal(registerBody.user.role, "doctor");
   assert.equal(registerBody.user.email, `contract-user-${uniqueSuffix}@medsys.local`);
+  assert.equal(registerBody.user.name, `Contract User${uniqueSuffix}`);
+  assert.equal(typeof registerBody.user.id, "number");
+  assert.equal(typeof registerBody.user.created_at, "string");
 
   const listUsersResponse = await app.inject({
     method: "GET",
@@ -733,12 +736,12 @@ test("auth me returns authenticated identity shape", async () => {
     name: string;
     email: string;
     role: string;
-    organizationId: string;
   };
   assert.equal(typeof body.id, "number");
+  assert.equal(body.name.length > 0, true);
   assert.equal(body.email, "doctor@medsys.local");
   assert.equal(body.role, "doctor");
-  assert.equal(body.organizationId, ORGANIZATION_ID);
+  assert.equal("organizationId" in body, false);
   await app.close();
 });
 

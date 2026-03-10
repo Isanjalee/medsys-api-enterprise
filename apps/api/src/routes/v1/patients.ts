@@ -21,13 +21,12 @@ import {
   updatePatientFrontendSchema,
   updatePatientSchema
 } from "@medsys/validation";
+import { serializePatientHistoryEntry, serializePatientSummary } from "../../lib/api-serializers.js";
 import { calculateAgeFromDob } from "../../lib/date.js";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { splitFullName } from "../../lib/names.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
-
-type PatientRow = typeof patients.$inferSelect;
 
 const hasAnyKey = (value: unknown, keys: string[]): boolean =>
   Boolean(
@@ -35,15 +34,6 @@ const hasAnyKey = (value: unknown, keys: string[]): boolean =>
       typeof value === "object" &&
       keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
-
-const serializePatient = (patient: Pick<PatientRow, "id" | "fullName" | "dob" | "phone" | "address" | "createdAt">) => ({
-  id: patient.id,
-  name: patient.fullName,
-  date_of_birth: patient.dob,
-  phone: patient.phone,
-  address: patient.address,
-  created_at: patient.createdAt
-});
 
 const patientRoutes: FastifyPluginAsync = async (app) => {
   const tag = "Patients";
@@ -293,14 +283,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       )
       .orderBy(desc(patientHistoryEntries.createdAt));
 
-    return rows.map((row) => ({
-      id: row.id,
-      note: row.note,
-      created_at: row.createdAt,
-      created_by_user_id: row.createdByUserId,
-      created_by_name: `${row.createdByFirstName} ${row.createdByLastName}`.trim(),
-      created_by_role: row.createdByRole
-    }));
+    return rows.map(serializePatientHistoryEntry);
   };
 
   app.get(
@@ -323,7 +306,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         .limit(200);
 
       await writeAuditLog(request, { entityType: "patient", action: "list" });
-      return { patients: rows.map(serializePatient) };
+      return { patients: rows.map(serializePatientSummary) };
     }
   );
 
@@ -426,7 +409,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "create",
         entityId: inserted[0].id
       });
-      return reply.code(201).send({ patient: serializePatient(inserted[0]) });
+      return reply.code(201).send({ patient: serializePatientSummary(inserted[0]) });
     }
   );
 
@@ -459,7 +442,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       await writeAuditLog(request, { entityType: "patient", entityId: id, action: "read" });
       const history = await readPatientHistory(actor.organizationId, id);
       return {
-        patient: serializePatient(rows[0]),
+        patient: serializePatientSummary(rows[0]),
         history
       };
     }
@@ -570,7 +553,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "update",
         entityId: id
       });
-      return { patient: serializePatient(updated[0]) };
+      return { patient: serializePatientSummary(updated[0]) };
     }
   );
 

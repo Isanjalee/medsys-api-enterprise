@@ -3,25 +3,11 @@ import { and, desc, eq } from "drizzle-orm";
 import { users } from "@medsys/db";
 import { createUserFrontendSchema, createUserSchema, listUsersQuerySchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
-import { buildDisplayName, splitFullName } from "../../lib/names.js";
+import { serializeCreatedUser } from "../../lib/api-serializers.js";
+import { splitFullName } from "../../lib/names.js";
 import { hashPassword } from "../../lib/password.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
-
-const serializeUser = (row: {
-  id: number;
-  firstName: string;
-  lastName: string;
-  email: string;
-  role: "owner" | "doctor" | "assistant";
-  createdAt: Date;
-}) => ({
-  id: row.id,
-  name: buildDisplayName(row.firstName, row.lastName),
-  email: row.email,
-  role: row.role,
-  created_at: row.createdAt
-});
 
 const hasAnyKey = (value: unknown, keys: string[]): boolean =>
   Boolean(
@@ -92,7 +78,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
         .orderBy(desc(users.createdAt));
 
       await writeAuditLog(request, { entityType: "user", action: "list" });
-      return { users: rows.map(serializeUser) };
+      return { users: rows.map(serializeCreatedUser) };
     }
   );
 
@@ -157,7 +143,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
         entityId: inserted[0].id
       });
 
-      return reply.code(201).send({ user: serializeUser(inserted[0]) });
+      return reply.code(201).send({ user: serializeCreatedUser(inserted[0]) });
     }
   );
 };

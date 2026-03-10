@@ -5,25 +5,11 @@ import { hasAllPermissions } from "@medsys/types";
 import { authLoginSchema, createUserFrontendSchema, createUserSchema, refreshTokenSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { revokeRefreshTokens, rotateRefreshToken, signAccessToken, validateRefreshToken } from "../../lib/auth.js";
+import { serializeAuthUser, serializeCreatedUser } from "../../lib/api-serializers.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
-import { buildDisplayName, splitFullName } from "../../lib/names.js";
+import { splitFullName } from "../../lib/names.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
-
-const serializeUser = (row: {
-  id: number;
-  firstName: string;
-  lastName: string;
-  email: string;
-  role: "owner" | "doctor" | "assistant";
-  organizationId: string;
-}) => ({
-  id: row.id,
-  name: buildDisplayName(row.firstName, row.lastName),
-  email: row.email,
-  role: row.role,
-  organizationId: row.organizationId
-});
 
 const hasAnyKey = (value: unknown, keys: string[]): boolean =>
   Boolean(
@@ -289,7 +275,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
-          organizationId: users.organizationId
+          createdAt: users.createdAt
         });
 
       await writeAuditLog(request, {
@@ -298,7 +284,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         entityId: inserted[0].id
       });
 
-      return reply.code(201).send({ user: serializeUser(inserted[0]) });
+      return reply.code(201).send({ user: serializeCreatedUser(inserted[0]) });
     }
   );
 
@@ -311,7 +297,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
-        organizationId: users.organizationId,
         isActive: users.isActive
       })
       .from(users)
@@ -321,7 +306,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     assertOrThrow(rows.length === 1, 401, "User not found");
     assertOrThrow(rows[0].isActive, 403, "Inactive account");
 
-    return serializeUser(rows[0]);
+    return serializeAuthUser(rows[0]);
   });
 
   app.get("/status", async () => {
