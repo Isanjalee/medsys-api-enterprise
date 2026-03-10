@@ -6,7 +6,7 @@ Current comparison baseline between:
 - Current backend implementation: `/v1/...` routes in `apps/api/src/routes`
 
 Date: March 9, 2026
-Status: Initial integration alignment analysis
+Status: Backend-side alignment largely implemented; frontend migration remains external to this repo
 
 ## 1. Executive Summary
 
@@ -53,6 +53,15 @@ This should be treated as the immediate implementation priority before starting 
 - frontend patient detail returns `history`; backend returns clinical detail through profile/vitals/timeline/conditions/allergies
 - frontend uses permission strings like `patient.read`; backend uses role checks
 - frontend expects normalized validation errors; backend currently returns generic error payloads for most failures
+
+### 3.4 Repository boundary
+
+This workspace contains the backend only:
+
+- `apps/api`
+- `apps/worker`
+
+There is no frontend or Next.js application in this repository. That means BFF migration, prototype-store removal, and end-to-end frontend verification are blocked outside this codebase.
 
 ## 4. Route-by-Route Comparison
 

@@ -62,7 +62,7 @@ npm run dev -w @medsys/worker
 - Password: `ChangeMe123!`
 
 ## API (v1)
-- `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/register`, `/v1/auth/me`, `/v1/auth/status`
+- `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/register`, `/v1/auth/me`, `/v1/auth/status`
 - `/v1/users`
 - `/v1/clinical/icd10`
 - `/v1/patients`, `/v1/patients/:id`, `/v1/patients/:id/history`, `/v1/patients/:id/profile`

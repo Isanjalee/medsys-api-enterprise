@@ -3,8 +3,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { users } from "@medsys/db";
 import { hasAllPermissions } from "@medsys/types";
 import { authLoginSchema, createUserFrontendSchema, createUserSchema, refreshTokenSchema } from "@medsys/validation";
-import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
-import { rotateRefreshToken, signAccessToken, validateRefreshToken } from "../../lib/auth.js";
+import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
+import { revokeRefreshTokens, rotateRefreshToken, signAccessToken, validateRefreshToken } from "../../lib/auth.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { buildDisplayName, splitFullName } from "../../lib/names.js";
@@ -69,6 +69,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       bodyExample: {
         refreshToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
       }
+    },
+    "POST /logout": {
+      operationId: "AuthController_logout",
+      summary: "Revoke active refresh tokens for the authenticated user"
     },
     "POST /register": {
       operationId: "AuthController_register",
@@ -195,6 +199,20 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ accessToken, refreshToken, expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS });
   });
 
+  app.post("/logout", { preHandler: app.authenticate }, async (request) => {
+    const actor = request.actor!;
+
+    await revokeRefreshTokens(app, actor.userId, actor.organizationId);
+
+    await writeAuditLog(request, {
+      entityType: "auth",
+      action: "logout",
+      entityId: actor.userId
+    });
+
+    return { success: true };
+  });
+
   app.post(
     "/register",
     {
@@ -225,7 +243,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       let action = "register_bootstrap";
 
       if (userCount === 0) {
-        assertOrThrow(payload.role === "owner", 400, "First registered user must have owner role");
+        if (payload.role !== "owner") {
+          throw validationError([
+            {
+              field: "role",
+              message: "First registered user must have owner role."
+            }
+          ]);
+        }
       } else {
         await app.authenticate(request);
         assertOrThrow(Boolean(request.actor), 401, "Unauthorized");

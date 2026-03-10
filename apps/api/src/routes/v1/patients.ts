@@ -22,7 +22,7 @@ import {
   updatePatientSchema
 } from "@medsys/validation";
 import { calculateAgeFromDob } from "../../lib/date.js";
-import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
+import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { splitFullName } from "../../lib/names.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
@@ -378,7 +378,14 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         const calculatedAge = dobAge ?? payload.age ?? null;
 
         if (dobAge != null && payload.age != null) {
-          assertOrThrow(Math.abs(dobAge - payload.age) <= 1, 400, "Age does not match DOB");
+          if (Math.abs(dobAge - payload.age) > 1) {
+            throw validationError([
+              {
+                field: "age",
+                message: "Age does not match DOB."
+              }
+            ]);
+          }
         }
 
         values = {

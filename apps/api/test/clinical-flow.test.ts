@@ -22,6 +22,26 @@ const loginAs = async (
   return response.json() as { accessToken: string };
 };
 
+const createPatientAs = async (
+  app: Awaited<ReturnType<typeof buildApp>>,
+  accessToken: string,
+  name: string
+): Promise<number> => {
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    },
+    payload: {
+      name
+    }
+  });
+
+  assert.equal(response.statusCode, 201);
+  return (response.json() as { patient: { id: number } }).patient.id;
+};
+
 test("health endpoint", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -92,6 +112,51 @@ test("auth login rejects unknown fields with validation envelope", async () => {
     error: "Validation failed.",
     issues: [{ field: "extra", message: "Unknown field." }]
   });
+  await app.close();
+});
+
+test("auth logout revokes the current refresh token", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/login",
+    payload: {
+      email: "owner@medsys.local",
+      password: "ChangeMe123!",
+      organizationId: ORGANIZATION_ID
+    }
+  });
+
+  assert.equal(loginResponse.statusCode, 200);
+  const loginBody = loginResponse.json() as {
+    accessToken: string;
+    refreshToken: string;
+  };
+
+  const logoutResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/logout",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(logoutResponse.statusCode, 200);
+  assert.deepEqual(logoutResponse.json(), { success: true });
+
+  const refreshResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/refresh",
+    payload: {
+      refreshToken: loginBody.refreshToken
+    }
+  });
+
+  assert.equal(refreshResponse.statusCode, 401);
   await app.close();
 });
 
@@ -615,6 +680,37 @@ test("patient vitals rejects unknown fields with validation envelope", async () 
   await app.close();
 });
 
+test("patient create rejects mismatched age and DOB with validation envelope", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      firstName: "Mismatch",
+      lastName: "Patient",
+      dob: "1990-06-01",
+      age: 12,
+      gender: "other"
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [{ field: "age", message: "Age does not match DOB." }]
+  });
+  await app.close();
+});
+
 test("auth me returns authenticated identity shape", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -777,6 +873,163 @@ test("doctor cannot access dispense queue without prescription.dispense permissi
   const response = await app.inject({
     method: "GET",
     url: "/v1/prescriptions/queue/pending-dispense",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(response.statusCode, 403);
+  await app.close();
+});
+
+test("appointments list rejects invalid status filter with validation envelope", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "assistant@medsys.local");
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=invalid",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  const body = response.json() as {
+    error: string;
+    issues: Array<{ field: string; message: string }>;
+  };
+  assert.equal(body.error, "Validation failed.");
+  assert.equal(body.issues[0]?.field, "status");
+  await app.close();
+});
+
+test("family member add rejects unknown fields with validation envelope", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Family Patient ${Date.now()}`);
+
+  const createFamilyResponse = await app.inject({
+    method: "POST",
+    url: "/v1/families",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      familyName: `Family ${Date.now()}`
+    }
+  });
+
+  assert.equal(createFamilyResponse.statusCode, 201);
+  const familyId = (createFamilyResponse.json() as { id: number }).id;
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/v1/families/${familyId}/members`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      extra: true
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [{ field: "extra", message: "Unknown field." }]
+  });
+  await app.close();
+});
+
+test("inventory movement rejects unknown fields with validation envelope", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+
+  const createItemResponse = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      name: `Inventory ${Date.now()}`,
+      category: "medicine",
+      unit: "tablet",
+      stock: 10,
+      reorderLevel: 2
+    }
+  });
+
+  assert.equal(createItemResponse.statusCode, 201);
+  const itemId = (createItemResponse.json() as { id: number }).id;
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/v1/inventory/${itemId}/movements`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      movementType: "in",
+      quantity: 5,
+      extra: true
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [{ field: "extra", message: "Unknown field." }]
+  });
+  await app.close();
+});
+
+test("assistant cannot create encounters without encounter.write permission", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "assistant@medsys.local");
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/encounters",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {}
+  });
+
+  assert.equal(response.statusCode, 403);
+  await app.close();
+});
+
+test("assistant cannot access audit logs without audit.read permission", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "assistant@medsys.local");
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/audit/logs",
     headers: {
       authorization: `Bearer ${loginBody.accessToken}`
     }

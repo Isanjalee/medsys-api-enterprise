@@ -22,10 +22,7 @@ export const rotateRefreshToken = async (
   userId: number,
   organizationId: string
 ): Promise<string> => {
-  await app.db
-    .update(refreshTokens)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+  await revokeRefreshTokens(app, userId, organizationId);
 
   const inserted = await app.db
     .insert(refreshTokens)
@@ -45,6 +42,23 @@ export const rotateRefreshToken = async (
       expiresIn: app.env.REFRESH_TOKEN_TTL_SECONDS
     }
   );
+};
+
+export const revokeRefreshTokens = async (
+  app: FastifyInstance,
+  userId: number,
+  organizationId: string
+): Promise<void> => {
+  await app.db
+    .update(refreshTokens)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(refreshTokens.userId, userId),
+        eq(refreshTokens.organizationId, organizationId),
+        isNull(refreshTokens.revokedAt)
+      )
+    );
 };
 
 export const validateRefreshToken = async (
