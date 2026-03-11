@@ -8,9 +8,6 @@ build/
 coverage/
 .DS_Store
 *.log
-pnpm-lock.yaml
-package-lock.json
-yarn.lock
 README.private.md
 docs/private/
 .chrome-headless-profile-client/
