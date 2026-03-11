@@ -1,0 +1,91 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: medsys
+          POSTGRES_USER: medsys
+          POSTGRES_PASSWORD: medsys
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U medsys -d medsys"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate JWT keys for CI
+        run: |
+          openssl genrsa -out access.priv.pem 2048
+          openssl rsa -in access.priv.pem -pubout -out access.pub.pem
+          openssl genrsa -out refresh.priv.pem 2048
+          openssl rsa -in refresh.priv.pem -pubout -out refresh.pub.pem
+
+      - name: Apply migrations and seeds
+        run: |
+          docker run --rm --network host \
+            -v "${{ github.workspace }}:/flyway/project" \
+            -w /flyway/project \
+            redgate/flyway:10-alpine \
+            -url=jdbc:postgresql://127.0.0.1:5432/medsys \
+            -user=medsys \
+            -password=medsys \
+            -locations=filesystem:/flyway/project/infra/flyway/sql \
+            migrate
+
+      - name: Export backend env
+        shell: bash
+        run: |
+          {
+            echo "DATABASE_URL=postgres://medsys:medsys@127.0.0.1:5432/medsys"
+            echo "DATABASE_READ_URL=postgres://medsys:medsys@127.0.0.1:5432/medsys"
+            echo "AUDIT_TRANSPORT=direct"
+            echo "ORGANIZATION_ID=11111111-1111-1111-1111-111111111111"
+            echo "ACCESS_TOKEN_TTL_SECONDS=900"
+            echo "REFRESH_TOKEN_TTL_SECONDS=604800"
+            echo "REQUEST_ID_HEADER=x-request-id"
+            echo "AUTH_LOGIN_MAX_ATTEMPTS=5"
+            echo "AUTH_LOGIN_LOCKOUT_SECONDS=300"
+            echo "SECURITY_SENSITIVE_WINDOW_SECONDS=3600"
+            echo "JWT_ACCESS_PRIVATE_KEY<<EOF"
+            cat access.priv.pem
+            echo "EOF"
+            echo "JWT_ACCESS_PUBLIC_KEY<<EOF"
+            cat access.pub.pem
+            echo "EOF"
+            echo "JWT_REFRESH_PRIVATE_KEY<<EOF"
+            cat refresh.priv.pem
+            echo "EOF"
+            echo "JWT_REFRESH_PUBLIC_KEY<<EOF"
+            cat refresh.pub.pem
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm run test

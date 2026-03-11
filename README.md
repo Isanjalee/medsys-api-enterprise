@@ -129,7 +129,9 @@ npm run dev -w @medsys/worker
 - Login lockout uses `AUTH_LOGIN_MAX_ATTEMPTS` and `AUTH_LOGIN_LOCKOUT_SECONDS`; sensitive throttles use `SECURITY_SENSITIVE_WINDOW_SECONDS`.
 - Backup encryption and restore drills are documented in [docs/backup-encryption-restore-runbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/backup-encryption-restore-runbook.md).
 - Phase 4 observability and security verification is recorded in [docs/phase4-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase4-verification.md).
+- Phase 5 test coverage verification is recorded in [docs/phase5-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase5-verification.md).
 - Security controls are summarized in [docs/security-hardening.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/security-hardening.md).
 - Phase 2 audit pipeline verification is recorded in [docs/phase2-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase2-verification.md).
 - Phase 3 search and caching verification is recorded in [docs/phase3-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase3-verification.md).
 - Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).
+- CI now runs DB-backed backend smoke coverage via [backend-ci.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/backend-ci.yml).

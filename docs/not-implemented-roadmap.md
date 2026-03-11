@@ -124,45 +124,51 @@ Phase 3 is complete. Verification evidence is recorded in [phase3-verification.m
 
 ## Phase 4: Observability + Security Hardening (Priority: P0)
 Target: 2 weeks
+Status: Complete
+
+Phase 4 is complete. Verification evidence is recorded in [phase4-verification.md](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase4-verification.md).
 
 ### Tasks
-- [ ] Add OpenTelemetry instrumentation (HTTP + DB spans).
-- [ ] Export metrics for latency/error/rate.
-- [ ] Add Sentry error tracking with PHI scrubbing.
-- [ ] Enforce PHI-safe structured logging for all routes.
-- [ ] Add refresh-token replay detection and token family revocation.
-- [ ] Add stricter auth controls:
-  - brute-force lockout strategy
-  - per-role sensitive endpoint limits
-- [ ] Add backup encryption and restore drill runbook.
+- [x] Add OpenTelemetry instrumentation (HTTP + DB spans).
+- [x] Export metrics for latency/error/rate.
+- [x] Add Sentry error tracking with PHI scrubbing.
+- [x] Enforce PHI-safe structured logging for all routes.
+- [x] Add refresh-token replay detection and token family revocation.
+- [x] Add stricter auth controls:
+  - [x] brute-force lockout strategy
+  - [x] per-role sensitive endpoint limits
+- [x] Add backup encryption and restore drill runbook.
 
 ### Deliverables
 - Tracing/metrics dashboards.
 - Security hardening doc.
 
 ### Exit criteria
-- Can trace one clinical request end-to-end by request-id.
-- PHI leak checks pass in logs.
+- [x] Can trace one clinical request end-to-end by request-id.
+- [x] PHI leak checks pass in logs.
 
 ---
 
 ## Phase 5: Test Coverage Upgrade (Priority: P0)
 Target: 1 week
+Status: Complete
+
+Phase 5 is complete. Verification evidence is recorded in [phase5-verification.md](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase5-verification.md).
 
 ### Tasks
-- [ ] Add integration tests for critical clinical flows:
-  - appointment -> encounter bundle -> prescription
-  - prescription -> dispense -> inventory movement
-  - role-based access deny/allow matrix
-- [ ] Add migration smoke test in CI.
-- [ ] Add seed data validity test.
+- [x] Add integration tests for critical clinical flows:
+  - [x] appointment -> encounter bundle -> prescription
+  - [x] prescription -> dispense -> inventory movement
+  - [x] role-based access deny/allow matrix
+- [x] Add migration smoke test in CI.
+- [x] Add seed data validity test.
 
 ### Deliverables
 - New `apps/api/test` suites with DB-backed test setup.
 
 ### Exit criteria
-- All critical flows tested in CI.
-- No release without integration test pass.
+- [x] All critical flows tested in CI.
+- [x] No release without integration test pass.
 
 ---
 
