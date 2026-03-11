@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MEDSYS Backend Developer Tracker</title>
+  <style>
+    @page { size: A4; margin: 15mm 12mm; }
+    body { margin: 0; font-family: "Aptos","Segoe UI",Arial,sans-serif; font-size: 11px; line-height: 1.45; color: #1c2c3c; }
+    .page { padding: 26px 30px 30px; page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+    .cover { min-height: 258mm; background: linear-gradient(145deg, rgba(10,95,124,.1), rgba(15,99,78,.04)); }
+    .eyebrow { text-transform: uppercase; letter-spacing: .14em; color: #0a5f7c; font-size: 10px; font-weight: 700; margin-bottom: 12px; }
+    h1,h2,h3 { margin: 0 0 10px; color: #163047; }
+    h1 { font-size: 30px; line-height: 1.08; max-width: 80%; }
+    h2 { font-size: 18px; margin-top: 24px; padding-bottom: 6px; border-bottom: 2px solid #d7e0e8; }
+    h3 { font-size: 13px; margin-top: 16px; }
+    p,li { text-align: justify; }
+    p { margin: 0 0 10px; }
+    ul,ol { margin: 0 0 10px; padding-left: 18px; }
+    li { margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 10px 0 16px; }
+    th,td { border: 1px solid #d7e0e8; padding: 8px; vertical-align: top; text-align: left; }
+    th { background: #eef3f7; text-transform: uppercase; font-size: 10px; color: #334e68; }
+    .meta,.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .meta div,.panel,.callout { border: 1px solid #d7e0e8; background: #f7fafd; padding: 12px; }
+    .meta strong { display: block; text-transform: uppercase; letter-spacing: .08em; color: #5f6c7b; font-size: 10px; margin-bottom: 4px; }
+    .callout { border-left: 5px solid #0a5f7c; margin: 12px 0 14px; }
+    .mono { font-family: Consolas,"Courier New",monospace; font-size: 10px; background: #f1f5f8; padding: 1px 4px; border-radius: 3px; }
+    .good { color: #0d7a5f; font-weight: 700; }
+    .warn { color: #9a6700; font-weight: 700; }
+    .hold { color: #7a2048; font-weight: 700; }
+    .foot { margin-top: 24px; padding-top: 12px; border-top: 1px solid #d7e0e8; color: #5f6c7b; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div class="eyebrow">Developer Internal Tracker</div>
+    <h1>MEDSYS Backend Delivery and Alignment Tracker</h1>
+    <p>Single internal tracking document for implemented and non-implemented backend items, organized by roadmap phase and frontend alignment status.</p>
+    <div class="meta">
+      <div><strong>Document Type</strong>Implementation Tracker and Delivery Register</div>
+      <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
+      <div><strong>Version</strong>2.0</div>
+      <div><strong>Date</strong>March 11, 2026</div>
+      <div><strong>Audience</strong>Backend, Platform, QA, and Integration Teams</div>
+      <div><strong>Scope</strong>Roadmap phases, frontend alignment, and open operational actions</div>
+    </div>
+    <div class="foot">This document replaces the previous phase verification notes and intermediate alignment documents as the main internal status reference.</div>
+  </section>
+
+  <section class="page">
+    <h2>1. Purpose</h2>
+    <p>This tracker records current backend delivery status in one maintainable internal document. It shows what is implemented, what is verified, what remains open, and what is intentionally on hold.</p>
+
+    <h2>2. Status Legend</h2>
+    <table><thead><tr><th style="width:20%">Status</th><th>Meaning</th></tr></thead><tbody>
+      <tr><td class="good">Complete</td><td>Implemented and verified at the repository level for the stated phase or workstream.</td></tr>
+      <tr><td class="warn">In Progress</td><td>Implemented in part or complete in code, but final operational proof or acceptance is still pending.</td></tr>
+      <tr><td class="hold">On Hold</td><td>Work intentionally paused pending external environment, policy, or operational execution.</td></tr>
+    </tbody></table>
+
+    <h2>3. Current Delivery Snapshot</h2>
+    <div class="grid">
+      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, and 7</li><li>Critical backend integration and CI coverage</li></ul></div>
+      <div class="panel"><h3>Open or Held</h3><ul><li>Phase 6 live AWS staging verification</li><li>Optional appointment-create permission review for doctors</li><li>Optional BFF governance wording</li></ul></div>
+    </div>
+    <div class="callout"><strong>Current backend status:</strong> application features are implemented and verified through the core delivery phases. The main remaining backend item is operational infrastructure verification for Phase 6, which is currently on hold.</div>
+
+    <h2>4. Roadmap Phase Status</h2>
+    <table><thead><tr><th style="width:18%">Workstream</th><th style="width:14%">Status</th><th style="width:16%">Priority</th><th>Current State</th></tr></thead><tbody>
+      <tr><td>Frontend Contract Alignment</td><td class="good">Verified</td><td>P0 parallel</td><td>Backend contract alignment is implemented and frontend store retirement has been verified through live BFF-backed flows.</td></tr>
+      <tr><td>Phase 1: Data Platform Hardening</td><td class="good">Complete</td><td>P0</td><td>Appointments partitioning, DB read/write policy, rollback playbook, and verification evidence are complete.</td></tr>
+      <tr><td>Phase 2: Async Audit Pipeline</td><td class="good">Complete</td><td>P0</td><td>Async audit producer/consumer flow, retry, DLQ, and fallback persistence are implemented.</td></tr>
+      <tr><td>Phase 3: Search + Caching</td><td class="good">Complete</td><td>P1</td><td>Patient search, cache service, invalidation, and cache analytics are implemented.</td></tr>
+      <tr><td>Phase 4: Observability + Security Hardening</td><td class="good">Complete</td><td>P0</td><td>Tracing, metrics, PHI-safe logging, lockout, throttles, Sentry support, and token replay protection are implemented.</td></tr>
+      <tr><td>Phase 5: Test Coverage Upgrade</td><td class="good">Complete</td><td>P0</td><td>DB-backed critical-flow tests, seed validity coverage, and CI smoke execution are implemented.</td></tr>
+      <tr><td>Phase 6: Infrastructure Completion</td><td class="hold">On Hold</td><td>P1</td><td>Terraform, deployment workflow, and promotion planning are implemented, but live AWS staging and blue/green verification remain pending.</td></tr>
+      <tr><td>Phase 7: Compliance and Resilience</td><td class="good">Complete</td><td>P1</td><td>Control mapping, DR planning, secrets rotation guidance, and remediation tracking are complete.</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="page">
+    <h2>5. Implemented Items by Phase</h2>
+    <h3>5.1 Frontend Contract Alignment</h3>
+    <ul>
+      <li>Backend endpoints added or aligned for auth, users, patients, patient history, ICD-10 lookup, and logout.</li>
+      <li>Shared validation envelopes, shared serializers, and shared permission mapping are implemented across the <span class="mono">/v1</span> surface.</li>
+      <li>Frontend BFF integration has been verified against the backend through authenticated end-to-end flows, and prototype store retirement is verified.</li>
+    </ul>
+    <h3>5.2 Phase 1</h3>
+    <ul><li>Monthly appointment partitioning and maintenance script.</li><li>Read/write connection split with analytics read support.</li><li>Flyway validation in CI and rollback guidance.</li></ul>
+    <h3>5.3 Phase 2</h3>
+    <ul><li>Async audit publishing and worker consumption.</li><li>Retry queue, exponential backoff, dead-letter queue, and direct-write fallback.</li></ul>
+    <h3>5.4 Phase 3</h3>
+    <ul><li>Patient search endpoint with OpenSearch acceleration and DB fallback.</li><li>Cache service with invalidation hooks for appointments, patients, and encounters.</li><li>Cache statistics endpoint.</li></ul>
+    <h3>5.5 Phase 4</h3>
+    <ul><li>Metrics endpoint, request tracing, authenticated observability summary.</li><li>PHI-safe logging, optional Sentry, login lockout, sensitive-action throttles.</li><li>Refresh-token family tracking and replay-triggered revocation.</li></ul>
+    <h3>5.6 Phase 5</h3>
+    <ul><li>DB-backed critical-flow suites and seed-data validity coverage.</li><li>Backend CI workflow applying migrations and running the test suite.</li></ul>
+    <h3>5.7 Phase 6</h3>
+    <ul><li>Terraform modules for network, data, messaging, search, and app platform.</li><li>Container Dockerfiles and staging deployment workflow.</li><li>Promotion plan and deployment runbook.</li></ul>
+    <h3>5.8 Phase 7</h3>
+    <ul><li>Compliance control mapping, disaster recovery plan, secrets rotation runbook, remediation register.</li><li>JWT key rotation automation script.</li></ul>
+
+    <h2>6. Frontend Alignment Summary</h2>
+    <table><thead><tr><th style="width:16%">Alignment Area</th><th style="width:18%">Status</th><th>Current State</th></tr></thead><tbody>
+      <tr><td>Core endpoint coverage</td><td class="good">Complete</td><td>Backend supports the aligned auth, patient, user, history, clinical lookup, analytics, inventory, encounter, and prescription flows.</td></tr>
+      <tr><td>Validation and response mapping</td><td class="good">Complete</td><td>Shared validation envelope and shared serializers support the aligned backend surface.</td></tr>
+      <tr><td>Permission enforcement</td><td class="good">Complete</td><td>Shared permission catalog and role mapping cover the full implemented API surface.</td></tr>
+      <tr><td>Frontend store retirement</td><td class="good">Verified</td><td>Frontend evidence confirms no live-path prototype persistence and verified BFF-backed journeys.</td></tr>
+      <tr><td>Open governance item</td><td class="warn">Optional</td><td>Long-term ownership of browser-facing normalization between BFF and backend can still be formalized, but it does not block current delivery.</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="page">
+    <h2>7. Current Open Items and Non-Implemented Work</h2>
+    <table><thead><tr><th style="width:22%">Area</th><th style="width:14%">Status</th><th>What Remains</th></tr></thead><tbody>
+      <tr><td>Phase 6 operational closeout</td><td class="hold">On Hold</td><td>Run staging Terraform apply, ECS deployment, and blue/green cutover verification in a real AWS environment.</td></tr>
+      <tr><td>Staging acceptance evidence</td><td class="hold">On Hold</td><td>Capture one-click staging deployment evidence and no-downtime rollout evidence.</td></tr>
+      <tr><td>Doctor appointment-create policy</td><td class="warn">Optional</td><td>Current backend policy allows owners and assistants to create appointments; review if doctors should also be allowed.</td></tr>
+      <tr><td>Frontend/BFF governance wording</td><td class="warn">Optional</td><td>Document final ownership of browser-facing response normalization if stricter architecture wording is desired.</td></tr>
+    </tbody></table>
+
+    <h2>8. Test and Verification Snapshot</h2>
+    <table><thead><tr><th style="width:26%">Surface</th><th style="width:18%">Result</th><th>Evidence</th></tr></thead><tbody>
+      <tr><td>API automated tests</td><td class="good">48 passing</td><td>Includes contract, integration, validation, and deny-path coverage.</td></tr>
+      <tr><td>Worker automated tests</td><td class="good">6 passing</td><td>Covers async audit retry and DLQ behaviors.</td></tr>
+      <tr><td>Frontend alignment verification</td><td class="good">Verified</td><td>Authenticated live BFF flows exercised against the backend.</td></tr>
+      <tr><td>Infrastructure live verification</td><td class="hold">Pending</td><td>Not executable from this workspace due missing AWS credentials and Terraform execution context.</td></tr>
+    </tbody></table>
+
+    <h2>9. Recommended Next Actions</h2>
+    <ol>
+      <li>Resume Phase 6 when AWS credentials and staging environment access are available.</li>
+      <li>Run the staging deployment workflow and capture cutover evidence.</li>
+      <li>Decide whether doctor appointment-create should remain restricted or be expanded.</li>
+      <li>Keep this tracker and the client specification as the only maintained documentation pair.</li>
+    </ol>
+
+    <h2>10. Source Basis</h2>
+    <ul>
+      <li>Repository implementation state as of March 11, 2026.</li>
+      <li>Completed phase verification work through Phases 1, 2, 3, 4, 5, and 7.</li>
+      <li>Frontend alignment evidence confirming BE-020 closure for frontend scope.</li>
+    </ul>
+    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status.</div>
+  </section>
+</body>
+</html>

@@ -119,7 +119,7 @@ npm run dev -w @medsys/worker
 - Keep future `appointments` partitions warm with [infra/flyway/scripts/maintain_appointments_partitions.sql](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/infra/flyway/scripts/maintain_appointments_partitions.sql).
 - `app.db` and `app.readDb` are pinned to `DATABASE_URL` for writes and operational reads; analytics/reporting routes use `app.analyticsDb`, which targets `DATABASE_READ_URL` when configured.
 - Migration validation now runs in CI via [flyway-validate.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/flyway-validate.yml).
-- Rollback steps for schema releases are documented in [docs/flyway-rollback-playbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/flyway-rollback-playbook.md).
+- Consolidated client-facing backend documentation is maintained in [docs/MEDSYS_Backend_Client_Specification.html](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Client_Specification.html) and [docs/MEDSYS_Backend_Client_Specification.pdf](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Client_Specification.pdf).
 - `patient_history_entries` is introduced in `V5__add_patient_history.sql` for note-based patient history separate from timeline events.
 - ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
 - Patient search supports OpenSearch-backed fuzzy lookup when `OPENSEARCH_URL` is configured; otherwise it falls back to DB search.
@@ -127,12 +127,5 @@ npm run dev -w @medsys/worker
 - Observability snapshots are available via `/v1/analytics/observability`.
 - Prometheus-style request metrics are available via `/metrics`.
 - Login lockout uses `AUTH_LOGIN_MAX_ATTEMPTS` and `AUTH_LOGIN_LOCKOUT_SECONDS`; sensitive throttles use `SECURITY_SENSITIVE_WINDOW_SECONDS`.
-- Backup encryption and restore drills are documented in [docs/backup-encryption-restore-runbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/backup-encryption-restore-runbook.md).
-- Phase 4 observability and security verification is recorded in [docs/phase4-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase4-verification.md).
-- Phase 5 test coverage verification is recorded in [docs/phase5-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase5-verification.md).
-- Security controls are summarized in [docs/security-hardening.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/security-hardening.md).
-- Phase 2 audit pipeline verification is recorded in [docs/phase2-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase2-verification.md).
-- Phase 3 search and caching verification is recorded in [docs/phase3-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase3-verification.md).
-- Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).
+- Consolidated developer-facing implementation and roadmap tracking is maintained in [docs/MEDSYS_Backend_Developer_Tracker.html](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Developer_Tracker.html) and [docs/MEDSYS_Backend_Developer_Tracker.pdf](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Developer_Tracker.pdf).
 - CI now runs DB-backed backend smoke coverage via [backend-ci.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/backend-ci.yml).
-- Infrastructure modules, deployment workflow, and promotion docs are recorded in [docs/phase6-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase6-verification.md), [docs/deployment-workflow.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/deployment-workflow.md), and [docs/environment-promotion-plan.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/environment-promotion-plan.md).
