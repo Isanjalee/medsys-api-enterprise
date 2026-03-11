@@ -1,0 +1,8 @@
+node_modules
+dist
+.git
+.turbo
+coverage
+.chrome-headless-profile-client
+medsys-frontend
+medsys-frontend-000

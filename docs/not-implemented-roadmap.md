@@ -174,26 +174,29 @@ Phase 5 is complete. Verification evidence is recorded in [phase5-verification.m
 
 ## Phase 6: Infrastructure Completion (Priority: P1)
 Target: 2-3 weeks
+Status: In progress
+
+Phase 6 implementation artifacts are complete. Verification evidence is recorded in [phase6-verification.md](/d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase6-verification.md).
 
 ### Tasks
-- [ ] Expand Terraform to provision:
-  - VPC/networking basics
-  - ECS service for API + worker
-  - Aurora PostgreSQL (primary + replica)
-  - ElastiCache Redis
-  - SQS queues (+ DLQ)
-  - OpenSearch domain
-  - CloudWatch log groups/alarms
-- [ ] Add blue/green deployment pipeline.
-- [ ] Add environment promotion plan (dev -> staging -> prod).
+- [x] Expand Terraform to provision:
+  - [x] VPC/networking basics
+  - [x] ECS service for API + worker
+  - [x] Aurora PostgreSQL (primary + replica)
+  - [x] ElastiCache Redis
+  - [x] SQS queues (+ DLQ)
+  - [x] OpenSearch domain
+  - [x] CloudWatch log groups/alarms
+- [x] Add blue/green deployment pipeline.
+- [x] Add environment promotion plan (dev -> staging -> prod).
 
 ### Deliverables
 - Full IaC modules and environment tfvars.
 - CI/CD deployment workflow docs.
 
 ### Exit criteria
-- One-click deploy to staging.
-- Rolling/blue-green release verified without downtime.
+- [ ] One-click deploy to staging.
+- [ ] Rolling/blue-green release verified without downtime.
 
 ---
 

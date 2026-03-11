@@ -1,0 +1,159 @@
+name: Deploy Staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-staging:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Bootstrap staging infrastructure
+        working-directory: infra/terraform
+        run: |
+          terraform apply -auto-approve \
+            -var-file=environments/staging.tfvars \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="jwt_access_public_key=${{ secrets.JWT_ACCESS_PUBLIC_KEY }}" \
+            -var="jwt_access_private_key=${{ secrets.JWT_ACCESS_PRIVATE_KEY }}" \
+            -var="jwt_refresh_public_key=${{ secrets.JWT_REFRESH_PUBLIC_KEY }}" \
+            -var="jwt_refresh_private_key=${{ secrets.JWT_REFRESH_PRIVATE_KEY }}" \
+            -var="sentry_dsn=${{ secrets.SENTRY_DSN }}" \
+            -var="api_image=public.ecr.aws/docker/library/node:20-alpine" \
+            -var="worker_image=public.ecr.aws/docker/library/node:20-alpine"
+
+      - name: Capture Terraform outputs
+        id: tf
+        working-directory: infra/terraform
+        run: |
+          echo "api_repo=$(terraform output -raw api_ecr_repository_url)" >> "$GITHUB_OUTPUT"
+          echo "worker_repo=$(terraform output -raw worker_ecr_repository_url)" >> "$GITHUB_OUTPUT"
+          echo "cluster=$(terraform output -raw cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "api_service=$(terraform output -raw api_service_name)" >> "$GITHUB_OUTPUT"
+          echo "worker_service=$(terraform output -raw worker_service_name)" >> "$GITHUB_OUTPUT"
+          echo "codedeploy_app=$(terraform output -raw codedeploy_app_name)" >> "$GITHUB_OUTPUT"
+          echo "codedeploy_group=$(terraform output -raw codedeploy_deployment_group_name)" >> "$GITHUB_OUTPUT"
+          echo "api_family=$(terraform output -raw api_task_family)" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push API image
+        env:
+          API_IMAGE: ${{ steps.tf.outputs.api_repo }}:${{ github.sha }}
+        run: |
+          docker build -f apps/api/Dockerfile -t "$API_IMAGE" .
+          docker push "$API_IMAGE"
+          echo "API_IMAGE=$API_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build and push worker image
+        env:
+          WORKER_IMAGE: ${{ steps.tf.outputs.worker_repo }}:${{ github.sha }}
+        run: |
+          docker build -f apps/worker/Dockerfile -t "$WORKER_IMAGE" .
+          docker push "$WORKER_IMAGE"
+          echo "WORKER_IMAGE=$WORKER_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Update Terraform task definitions
+        working-directory: infra/terraform
+        run: |
+          terraform apply -auto-approve \
+            -var-file=environments/staging.tfvars \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="jwt_access_public_key=${{ secrets.JWT_ACCESS_PUBLIC_KEY }}" \
+            -var="jwt_access_private_key=${{ secrets.JWT_ACCESS_PRIVATE_KEY }}" \
+            -var="jwt_refresh_public_key=${{ secrets.JWT_REFRESH_PUBLIC_KEY }}" \
+            -var="jwt_refresh_private_key=${{ secrets.JWT_REFRESH_PRIVATE_KEY }}" \
+            -var="sentry_dsn=${{ secrets.SENTRY_DSN }}" \
+            -var="api_image=${API_IMAGE}" \
+            -var="worker_image=${WORKER_IMAGE}"
+
+      - name: Register API task definition revision
+        env:
+          API_IMAGE: ${{ env.API_IMAGE }}
+          API_FAMILY: ${{ steps.tf.outputs.api_family }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$API_FAMILY" --query taskDefinition > api-taskdef.json
+          jq --arg IMAGE "$API_IMAGE" '
+            del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )
+            | .containerDefinitions[0].image = $IMAGE
+          ' api-taskdef.json > api-taskdef-updated.json
+          NEW_API_TASK_ARN=$(aws ecs register-task-definition --cli-input-json file://api-taskdef-updated.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "NEW_API_TASK_ARN=$NEW_API_TASK_ARN" >> "$GITHUB_ENV"
+
+      - name: Create CodeDeploy appspec
+        run: |
+          cat > appspec.json <<EOF
+          {
+            "version": 1,
+            "Resources": [
+              {
+                "TargetService": {
+                  "Type": "AWS::ECS::Service",
+                  "Properties": {
+                    "TaskDefinition": "${NEW_API_TASK_ARN}",
+                    "LoadBalancerInfo": {
+                      "ContainerName": "api",
+                      "ContainerPort": 4000
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+      - name: Blue/green deploy API
+        run: |
+          aws deploy create-deployment \
+            --application-name "${{ steps.tf.outputs.codedeploy_app }}" \
+            --deployment-group-name "${{ steps.tf.outputs.codedeploy_group }}" \
+            --revision revisionType=AppSpecContent,appSpecContent="{content=$(cat appspec.json | jq -c .)}"
+
+      - name: Force worker rollout
+        run: |
+          aws ecs update-service \
+            --cluster "${{ steps.tf.outputs.cluster }}" \
+            --service "${{ steps.tf.outputs.worker_service }}" \
+            --force-new-deployment
