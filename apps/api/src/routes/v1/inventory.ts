@@ -155,61 +155,67 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     return updated[0];
   });
 
-  app.post("/:id/movements", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request, reply) => {
-    const actor = request.actor!;
-    const { id } = parseOrThrowValidation(idParamSchema, request.params);
-    const rawBody = request.body as Record<string, unknown>;
-    const body = parseOrThrowValidation(createInventoryMovementSchema, {
-      movementType: rawBody?.movementType ?? rawBody?.type,
-      quantity: rawBody?.quantity,
-      referenceType: rawBody?.referenceType,
-      referenceId: rawBody?.referenceId
-    });
+  app.post(
+    "/:id/movements",
+    {
+      preHandler: [app.authorizePermissions(["inventory.write"]), app.enforceSensitiveRateLimit("inventory.write")]
+    },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
+      const rawBody = request.body as Record<string, unknown>;
+      const body = parseOrThrowValidation(createInventoryMovementSchema, {
+        movementType: rawBody?.movementType ?? rawBody?.type,
+        quantity: rawBody?.quantity,
+        referenceType: rawBody?.referenceType,
+        referenceId: rawBody?.referenceId
+      });
 
-    const movement = await app.db.transaction(async (tx) => {
-      const item = await tx
-        .select({ id: inventoryItems.id, stock: inventoryItems.stock })
-        .from(inventoryItems)
-        .where(and(eq(inventoryItems.id, id), eq(inventoryItems.organizationId, actor.organizationId)))
-        .limit(1);
-      assertOrThrow(item.length === 1, 404, "Inventory item not found");
+      const movement = await app.db.transaction(async (tx) => {
+        const item = await tx
+          .select({ id: inventoryItems.id, stock: inventoryItems.stock })
+          .from(inventoryItems)
+          .where(and(eq(inventoryItems.id, id), eq(inventoryItems.organizationId, actor.organizationId)))
+          .limit(1);
+        assertOrThrow(item.length === 1, 404, "Inventory item not found");
 
-      if (body.movementType === "in") {
-        await tx
-          .update(inventoryItems)
-          .set({ stock: sql`${inventoryItems.stock} + ${body.quantity}`, updatedAt: new Date() })
-          .where(eq(inventoryItems.id, id));
-      } else {
-        const current = Number(item[0].stock);
-        assertOrThrow(current >= body.quantity, 409, "Insufficient stock");
-        await tx
-          .update(inventoryItems)
-          .set({ stock: sql`${inventoryItems.stock} - ${body.quantity}`, updatedAt: new Date() })
-          .where(eq(inventoryItems.id, id));
-      }
+        if (body.movementType === "in") {
+          await tx
+            .update(inventoryItems)
+            .set({ stock: sql`${inventoryItems.stock} + ${body.quantity}`, updatedAt: new Date() })
+            .where(eq(inventoryItems.id, id));
+        } else {
+          const current = Number(item[0].stock);
+          assertOrThrow(current >= body.quantity, 409, "Insufficient stock");
+          await tx
+            .update(inventoryItems)
+            .set({ stock: sql`${inventoryItems.stock} - ${body.quantity}`, updatedAt: new Date() })
+            .where(eq(inventoryItems.id, id));
+        }
 
-      const rows = await tx
-        .insert(inventoryMovements)
-        .values({
-          organizationId: actor.organizationId,
-          inventoryItemId: id,
-          movementType: body.movementType,
-          quantity: body.quantity.toString(),
-          referenceType: body.referenceType ?? null,
-          referenceId: body.referenceId ?? null,
-          createdById: actor.userId
-        })
-        .returning();
-      return rows[0];
-    });
+        const rows = await tx
+          .insert(inventoryMovements)
+          .values({
+            organizationId: actor.organizationId,
+            inventoryItemId: id,
+            movementType: body.movementType,
+            quantity: body.quantity.toString(),
+            referenceType: body.referenceType ?? null,
+            referenceId: body.referenceId ?? null,
+            createdById: actor.userId
+          })
+          .returning();
+        return rows[0];
+      });
 
-    await writeAuditLog(request, {
-      entityType: "inventory_movement",
-      action: "create",
-      entityId: movement.id
-    });
-    return reply.code(201).send(movement);
-  });
+      await writeAuditLog(request, {
+        entityType: "inventory_movement",
+        action: "create",
+        entityId: movement.id
+      });
+      return reply.code(201).send(movement);
+    }
+  );
 
   app.get("/:id/movements", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;

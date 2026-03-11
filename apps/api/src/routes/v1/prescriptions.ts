@@ -147,7 +147,12 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
 
   app.post(
     "/:id/dispense",
-    { preHandler: [app.authorizePermissions(["prescription.dispense"])] },
+    {
+      preHandler: [
+        app.authorizePermissions(["prescription.dispense"]),
+        app.enforceSensitiveRateLimit("prescription.dispense")
+      ]
+    },
     async (request, reply) => {
       const actor = request.actor!;
       const params = parseOrThrowValidation(idParamSchema, request.params);

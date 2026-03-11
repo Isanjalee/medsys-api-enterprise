@@ -8,6 +8,13 @@ export type AccessTokenPayload = {
   organizationId: string;
 };
 
+export type RefreshTokenState = {
+  userId: number;
+  organizationId: string;
+  familyId: string;
+  tokenId: string;
+};
+
 export const signAccessToken = async (
   app: FastifyInstance,
   payload: AccessTokenPayload
@@ -20,15 +27,35 @@ export const signAccessToken = async (
 export const rotateRefreshToken = async (
   app: FastifyInstance,
   userId: number,
-  organizationId: string
+  organizationId: string,
+  previous?: { tokenId: string; familyId: string }
 ): Promise<string> => {
-  await revokeRefreshTokens(app, userId, organizationId);
+  if (!previous) {
+    await revokeRefreshTokens(app, userId, organizationId);
+  } else {
+    await app.db
+      .update(refreshTokens)
+      .set({
+        usedAt: new Date(),
+        revokedAt: new Date()
+      })
+      .where(
+        and(
+          eq(refreshTokens.tokenId, previous.tokenId),
+          eq(refreshTokens.organizationId, organizationId),
+          eq(refreshTokens.userId, userId),
+          isNull(refreshTokens.revokedAt)
+        )
+      );
+  }
 
   const inserted = await app.db
     .insert(refreshTokens)
     .values({
       organizationId,
       userId,
+      familyId: previous?.familyId,
+      parentTokenId: previous?.tokenId ?? null,
       expiresAt: new Date(Date.now() + app.env.REFRESH_TOKEN_TTL_SECONDS * 1000)
     })
     .returning({
@@ -61,14 +88,39 @@ export const revokeRefreshTokens = async (
     );
 };
 
+export const revokeRefreshTokenFamily = async (
+  app: FastifyInstance,
+  familyId: string,
+  organizationId: string
+): Promise<void> => {
+  await app.db
+    .update(refreshTokens)
+    .set({
+      revokedAt: new Date(),
+      replayDetectedAt: new Date()
+    })
+    .where(
+      and(
+        eq(refreshTokens.familyId, familyId),
+        eq(refreshTokens.organizationId, organizationId),
+        isNull(refreshTokens.revokedAt)
+      )
+    );
+};
+
 export const validateRefreshToken = async (
   app: FastifyInstance,
   tokenId: string
-): Promise<{ userId: number; organizationId: string } | null> => {
+): Promise<RefreshTokenState | null> => {
   const rows = await app.db
     .select({
       userId: refreshTokens.userId,
-      organizationId: refreshTokens.organizationId
+      organizationId: refreshTokens.organizationId,
+      familyId: refreshTokens.familyId,
+      tokenId: refreshTokens.tokenId,
+      revokedAt: refreshTokens.revokedAt,
+      usedAt: refreshTokens.usedAt,
+      expiresAt: refreshTokens.expiresAt
     })
     .from(refreshTokens)
     .where(eq(refreshTokens.tokenId, tokenId))
@@ -79,6 +131,15 @@ export const validateRefreshToken = async (
   }
 
   const found = rows[0];
+  if (found.usedAt || found.revokedAt) {
+    await revokeRefreshTokenFamily(app, found.familyId, found.organizationId);
+    return null;
+  }
+
+  if (!(found.expiresAt > new Date())) {
+    return null;
+  }
+
   const activeToken = await app.db
     .select({ id: refreshTokens.id })
     .from(refreshTokens)
@@ -86,6 +147,7 @@ export const validateRefreshToken = async (
       and(
         eq(refreshTokens.tokenId, tokenId),
         isNull(refreshTokens.revokedAt),
+        isNull(refreshTokens.usedAt),
         gt(refreshTokens.expiresAt, new Date())
       )
     )
@@ -95,5 +157,10 @@ export const validateRefreshToken = async (
     return null;
   }
 
-  return found;
+  return {
+    userId: found.userId,
+    organizationId: found.organizationId,
+    familyId: found.familyId,
+    tokenId: found.tokenId
+  };
 };

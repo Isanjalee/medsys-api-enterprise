@@ -18,6 +18,18 @@ const hasAnyKey = (value: unknown, keys: string[]): boolean =>
       keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
 
+const getLoginThrottleKey = (request: {
+  ip: string;
+  body?: unknown;
+}): string => {
+  const body = request.body as Record<string, unknown> | undefined;
+  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "unknown";
+  const organizationId =
+    typeof body?.organizationId === "string" ? body.organizationId.trim() : "unknown";
+
+  return `${organizationId}:${email}:${request.ip}`;
+};
+
 const authRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Auth", "AuthController", {
     "POST /login": {
@@ -110,6 +122,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request, reply) => {
       const body = parseOrThrowValidation(authLoginSchema, request.body);
+      const lockout = await app.securityService.isLoginLocked(getLoginThrottleKey(request));
+      if (lockout.locked) {
+        reply.header("Retry-After", String(lockout.retryAfterSeconds));
+      }
+      assertOrThrow(!lockout.locked, 429, "Too many failed login attempts");
 
       const found = await app.db
         .select({
@@ -123,9 +140,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         .where(and(eq(users.email, body.email), eq(users.organizationId, body.organizationId)))
         .limit(1);
 
-      assertOrThrow(found.length === 1, 401, "Invalid credentials");
+      if (found.length !== 1 || !verifyPassword(body.password, found[0].passwordHash)) {
+        await app.securityService.registerLoginFailure(getLoginThrottleKey(request));
+        assertOrThrow(false, 401, "Invalid credentials");
+      }
+
       assertOrThrow(found[0].isActive, 403, "User is inactive");
-      assertOrThrow(verifyPassword(body.password, found[0].passwordHash), 401, "Invalid credentials");
+      await app.securityService.clearLoginFailures(getLoginThrottleKey(request));
 
       const accessToken = await signAccessToken(app, {
         sub: String(found[0].id),
@@ -158,7 +179,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     const tokenState = await validateRefreshToken(app, payload.tokenId);
     assertOrThrow(tokenState, 401, "Invalid refresh token");
-    const validatedTokenState = tokenState as { userId: number; organizationId: string };
+    const validatedTokenState = tokenState!;
 
     const userRows = await app.db
       .select({
@@ -179,7 +200,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const refreshToken = await rotateRefreshToken(
       app,
       userRows[0].id,
-      validatedTokenState.organizationId
+      validatedTokenState.organizationId,
+      {
+        tokenId: validatedTokenState.tokenId,
+        familyId: validatedTokenState.familyId
+      }
     );
 
     return reply.send({ accessToken, refreshToken, expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS });
@@ -250,6 +275,15 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         assertOrThrow(actorRows.length === 1 && actorRows[0].isActive, 403, "Inactive account");
         organizationId = actor.organizationId;
         action = "register";
+      }
+
+      if (userCount > 0) {
+        const allowed = await app.securityService.consumeSensitiveAction(
+          "user.write",
+          request.actor!.role,
+          `${organizationId}:${request.actor!.userId}`
+        );
+        assertOrThrow(allowed, 429, "Sensitive action rate limit exceeded");
       }
 
       const existing = await app.readDb

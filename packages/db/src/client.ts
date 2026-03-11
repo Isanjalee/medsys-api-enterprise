@@ -1,10 +1,20 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-export const buildDbClient = (databaseUrl: string) => {
+export type DbQueryObserver = (query: string) => void;
+
+export const buildDbClient = (
+  databaseUrl: string,
+  options?: {
+    onQuery?: DbQueryObserver;
+  }
+) => {
   const sql = postgres(databaseUrl, {
     prepare: false,
-    max: 20
+    max: 20,
+    debug(_connection, query) {
+      options?.onQuery?.(query);
+    }
   });
 
   return {

@@ -2,8 +2,18 @@ import fp from "fastify-plugin";
 import { buildDbClient } from "@medsys/db";
 
 const databasePlugin = fp(async (app) => {
-  const writer = buildDbClient(app.env.DATABASE_URL);
-  const reader = buildDbClient(app.env.DATABASE_READ_URL ?? app.env.DATABASE_URL);
+  const writer = buildDbClient(app.env.DATABASE_URL, {
+    onQuery: (query) => app.observability.recordDbQuery("primary", query)
+  });
+  const reader = buildDbClient(app.env.DATABASE_READ_URL ?? app.env.DATABASE_URL, {
+    onQuery: (query) =>
+      app.observability.recordDbQuery(
+        app.env.DATABASE_READ_URL && app.env.DATABASE_READ_URL !== app.env.DATABASE_URL
+          ? "analytics"
+          : "read",
+        query
+      )
+  });
   const analyticsUsesReplica =
     Boolean(app.env.DATABASE_READ_URL) && app.env.DATABASE_READ_URL !== app.env.DATABASE_URL;
 

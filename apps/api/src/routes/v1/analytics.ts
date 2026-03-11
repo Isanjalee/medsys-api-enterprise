@@ -12,6 +12,10 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
     "GET /cache": {
       operationId: "AnalyticsController_cacheStats",
       summary: "Get cache hit-rate counters"
+    },
+    "GET /observability": {
+      operationId: "AnalyticsController_observability",
+      summary: "Get request tracing, metrics, and security telemetry"
     }
   });
 
@@ -48,6 +52,13 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/cache", { preHandler: app.authorizePermissions(["analytics.read"]) }, async () => {
     return app.cacheService.getStats();
+  });
+
+  app.get("/observability", { preHandler: app.authorizePermissions(["analytics.read"]) }, async () => {
+    return {
+      metrics: app.observability.getMetrics(),
+      security: app.securityService.getStats()
+    };
   });
 };
 

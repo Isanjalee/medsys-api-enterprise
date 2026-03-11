@@ -1,6 +1,8 @@
 import Fastify from "fastify";
 import environmentPlugin from "./plugins/environment.js";
+import observabilityPlugin from "./plugins/observability.js";
 import databasePlugin from "./plugins/database.js";
+import securityPlugin from "./plugins/security.js";
 import authPlugin from "./plugins/auth.js";
 import docsPlugin from "./plugins/docs.js";
 import rateLimitPlugin from "./plugins/rate-limit.js";
@@ -10,6 +12,7 @@ import searchPlugin from "./plugins/search.js";
 import routesPlugin from "./routes/index.js";
 import { ZodError } from "zod";
 import { HttpError, ValidationError, validationIssuesFromZodError } from "./lib/http-error.js";
+import { createSafeErrorLog, createSafeRequestLog, scrubPhi } from "./lib/phi-scrub.js";
 
 export const buildApp = async () => {
   const app = Fastify({
@@ -23,11 +26,36 @@ export const buildApp = async () => {
       redact: {
         paths: [
           "req.headers.authorization",
+          "req.headers.cookie",
           "req.body.password",
+          "req.body.refreshToken",
+          "req.body.accessToken",
+          "req.body.nic",
+          "req.body.phone",
+          "req.body.address",
+          "req.body.name",
           "res.body.patient.nic",
-          "res.body.patient.fullName"
+          "res.body.patient.fullName",
+          "res.body.patient.phone",
+          "res.body.patient.address",
+          "res.body.user.email"
         ],
         censor: "[REDACTED]"
+      },
+      serializers: {
+        req(request) {
+          return createSafeRequestLog({
+            id: request.id,
+            method: request.method,
+            url: request.url,
+            ip: request.ip,
+            query: request.query,
+            body: request.body
+          });
+        },
+        err(error) {
+          return createSafeErrorLog(error);
+        }
       }
     },
     requestIdHeader: process.env.REQUEST_ID_HEADER ?? "x-request-id"
@@ -60,7 +88,9 @@ export const buildApp = async () => {
   );
 
   await app.register(environmentPlugin);
+  await app.register(observabilityPlugin);
   await app.register(databasePlugin);
+  await app.register(securityPlugin);
   await app.register(auditPublisherPlugin);
   await app.register(cachePlugin);
   await app.register(searchPlugin);
@@ -91,7 +121,14 @@ export const buildApp = async () => {
     if (error instanceof HttpError) {
       return reply.status(error.statusCode).send({ message: error.message, requestId: request.id });
     }
-    request.log.error({ err: error }, "Unhandled error");
+    request.log.error(
+      {
+        request: createSafeRequestLog(request),
+        traceId: request.traceId,
+        error: createSafeErrorLog(error)
+      },
+      "Unhandled error"
+    );
     return reply.status(500).send({ message: "Internal server error", requestId: request.id });
   });
 
@@ -100,6 +137,22 @@ export const buildApp = async () => {
   });
 
   app.get("/healthz", async () => ({ ok: true }));
+
+  app.get("/metrics", async (_request, reply) => {
+    return reply.type("text/plain; version=0.0.4").send(app.observability.renderPrometheusMetrics());
+  });
+
+  app.get("/security/phi-check", async () => ({
+    scrubbedExample: scrubPhi({
+      patient: {
+        name: "Jane Doe",
+        nic: "991234567V",
+        phone: "+94770000000",
+        address: "42 Main Street"
+      },
+      password: "secret"
+    })
+  }));
 
   return app;
 };

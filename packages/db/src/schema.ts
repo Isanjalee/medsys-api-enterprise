@@ -79,11 +79,18 @@ export const refreshTokens = pgTable(
       .notNull()
       .references(() => users.id),
     tokenId: uuid("token_id").notNull().defaultRandom().unique(),
+    familyId: uuid("family_id").notNull().defaultRandom(),
+    parentTokenId: uuid("parent_token_id"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    replayDetectedAt: timestamp("replay_detected_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [index("refresh_tokens_user_idx").on(table.userId)]
+  (table) => [
+    index("refresh_tokens_user_idx").on(table.userId),
+    index("refresh_tokens_family_idx").on(table.familyId)
+  ]
 );
 
 export const families = pgTable(

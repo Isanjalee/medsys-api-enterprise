@@ -85,7 +85,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
   app.post(
     "/",
     {
-      preHandler: app.authorizePermissions(["user.write"]),
+      preHandler: [app.authorizePermissions(["user.write"]), app.enforceSensitiveRateLimit("user.write")],
       schema: {
         tags: ["Users"],
         operationId: "UsersController_create",

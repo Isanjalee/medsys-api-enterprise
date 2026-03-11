@@ -81,7 +81,9 @@ npm run dev -w @medsys/worker
 - `/v1/inventory`, `/v1/inventory/:id/movements`
 - `/v1/analytics/overview`
 - `/v1/analytics/cache`
+- `/v1/analytics/observability`
 - `/v1/audit/logs`
+- `/metrics`
 
 ## Clinical transaction guarantees
 - Encounter bundle save is atomic:
@@ -91,12 +93,16 @@ npm run dev -w @medsys/worker
 
 ## Security baseline
 - JWT access + refresh rotation
+- Refresh-token replay detection with family revocation
 - Role-based access checks (`owner`, `doctor`, `assistant`)
 - Request ID correlation via `x-request-id`
 - Rate limiting:
   - login: 5/min
   - default authenticated routes: 100/min
-- PHI redaction paths in structured logs
+- brute-force login lockout
+- per-role sensitive action throttles
+- PHI-safe structured logging with scrubbed request/error payloads
+- optional Sentry capture via `SENTRY_DSN`
 
 ## Notes
 - `npm run db:migrate`, `npm run db:validate`, and `npm run db:info` use Dockerized Flyway by default.
@@ -118,6 +124,12 @@ npm run dev -w @medsys/worker
 - ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
 - Patient search supports OpenSearch-backed fuzzy lookup when `OPENSEARCH_URL` is configured; otherwise it falls back to DB search.
 - Cache stats are available via `/v1/analytics/cache` for the `appointmentQueue` and `patientProfile` namespaces.
+- Observability snapshots are available via `/v1/analytics/observability`.
+- Prometheus-style request metrics are available via `/metrics`.
+- Login lockout uses `AUTH_LOGIN_MAX_ATTEMPTS` and `AUTH_LOGIN_LOCKOUT_SECONDS`; sensitive throttles use `SECURITY_SENSITIVE_WINDOW_SECONDS`.
+- Backup encryption and restore drills are documented in [docs/backup-encryption-restore-runbook.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/backup-encryption-restore-runbook.md).
+- Phase 4 observability and security verification is recorded in [docs/phase4-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase4-verification.md).
+- Security controls are summarized in [docs/security-hardening.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/security-hardening.md).
 - Phase 2 audit pipeline verification is recorded in [docs/phase2-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase2-verification.md).
 - Phase 3 search and caching verification is recorded in [docs/phase3-verification.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/phase3-verification.md).
 - Pending implementation plan is tracked in [docs/not-implemented-roadmap.md](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/not-implemented-roadmap.md).
