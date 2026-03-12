@@ -5,6 +5,8 @@ import type { AuditEvent } from "@medsys/types";
 import type { AuditPublisher } from "../lib/audit-publisher.js";
 import { createAuditQueueMessage } from "../lib/audit-publisher.js";
 
+const REDIS_CONNECT_TIMEOUT_MS = 1500;
+
 const auditPublisherPlugin = fp(async (app) => {
   const persistDirect = async (event: AuditEvent): Promise<void> => {
     await app.db.insert(auditLogs).values({
@@ -42,7 +44,8 @@ const auditPublisherPlugin = fp(async (app) => {
   const redisClient: RedisClientType = createClient({
     url: app.env.REDIS_URL,
     socket: {
-      reconnectStrategy: false
+      reconnectStrategy: false,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS
     }
   });
 

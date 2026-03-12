@@ -4,6 +4,8 @@ import { createClient, type RedisClientType } from "redis";
 import type { AuditEvent } from "@medsys/types";
 import { drainDueRetryMessages, handleAuditQueueMessage, resolveAuditQueueKeys } from "./audit-queue.js";
 
+const REDIS_CONNECT_TIMEOUT_MS = 1500;
+
 const run = async () => {
   const env = loadEnv();
   const { db, sql } = buildDbClient(env.DATABASE_URL);
@@ -28,7 +30,8 @@ const run = async () => {
   redisClient = createClient({
     url: env.REDIS_URL,
     socket: {
-      reconnectStrategy: false
+      reconnectStrategy: false,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS
     }
   });
   redisClient.on("error", (error) => {

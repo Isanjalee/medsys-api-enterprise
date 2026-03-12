@@ -2,6 +2,8 @@ import fp from "fastify-plugin";
 import { createClient, type RedisClientType } from "redis";
 import { createMemoryCacheService, createRedisCacheService, type CacheService } from "../lib/cache-service.js";
 
+const REDIS_CONNECT_TIMEOUT_MS = 1500;
+
 const cachePlugin = fp(async (app) => {
   if (!app.env.REDIS_URL) {
     app.decorate("cacheService", createMemoryCacheService());
@@ -11,7 +13,8 @@ const cachePlugin = fp(async (app) => {
   const redisClient: RedisClientType = createClient({
     url: app.env.REDIS_URL,
     socket: {
-      reconnectStrategy: false
+      reconnectStrategy: false,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS
     }
   });
 

@@ -1,4 +1,4 @@
-import { createClient, type RedisClientType } from "redis";
+import { createClient } from "redis";
 import type { AppEnv } from "@medsys/config";
 
 type BucketState = {
@@ -13,6 +13,8 @@ type LoginFailureState = {
 
 type SensitiveAction = "prescription.dispense" | "inventory.write" | "user.write";
 
+const REDIS_CONNECT_TIMEOUT_MS = 1500;
+
 const SENSITIVE_LIMITS: Record<
   SensitiveAction,
   Partial<Record<"owner" | "doctor" | "assistant", number>>
@@ -23,7 +25,7 @@ const SENSITIVE_LIMITS: Record<
 };
 
 export class SecurityService {
-  private redis: RedisClientType | null = null;
+  private redis: ReturnType<typeof createClient> | null = null;
   private readonly memoryBuckets = new Map<string, BucketState>();
   private readonly memoryLockouts = new Map<string, LoginFailureState>();
   private readonly metrics = {
@@ -38,11 +40,24 @@ export class SecurityService {
       return;
     }
 
-    this.redis = createClient({ url: this.env.REDIS_URL });
-    this.redis.on("error", () => {
+    const redis = createClient({
+      url: this.env.REDIS_URL,
+      socket: {
+        reconnectStrategy: false,
+        connectTimeout: REDIS_CONNECT_TIMEOUT_MS
+      }
+    });
+
+    redis.on("error", () => {
       this.redis = null;
     });
-    await this.redis.connect();
+
+    try {
+      await redis.connect();
+      this.redis = redis;
+    } catch {
+      this.redis = null;
+    }
   }
 
   async close(): Promise<void> {
