@@ -46,7 +46,7 @@
       <div><strong>Prepared For</strong>Client Review and Delivery</div>
       <div><strong>Basis</strong>Implemented repository state and verified backend behavior</div>
     </div>
-    <div class="foot">This document describes the implemented backend only. Operational items not yet verified in a live AWS environment are identified as delivery boundaries.</div>
+    <div class="foot">This document describes the implemented backend only. AWS deployment execution is intentionally deferred and is not part of the current delivery acceptance baseline.</div>
   </section>
 
   <section class="page">
@@ -76,10 +76,10 @@
     <h3>2.4 Out of Scope</h3>
     <ul>
       <li>Commercial terms and support arrangements.</li>
-      <li>Unverified live AWS staging outcomes for Phase 6 rollout.</li>
+      <li>Deferred AWS staging rollout and live cloud execution.</li>
       <li>Frontend implementation details beyond backend-aligned interfaces.</li>
     </ul>
-    <div class="callout"><strong>Current delivery status:</strong> backend application functionality is implemented through Phases 1, 2, 3, 4, 5, and 7. Phase 6 infrastructure code exists, but live staging verification remains pending.</div>
+    <div class="callout"><strong>Current delivery status:</strong> backend application functionality is implemented through Phases 1, 2, 3, 4, 5, and 7. Phase 6 infrastructure artifacts exist, but AWS rollout is intentionally deferred.</div>
 
     <h2>3. Executive Summary</h2>
     <p>The backend is delivered as a TypeScript monorepo with a Fastify API, a dedicated worker service, PostgreSQL persistence, Flyway migrations, Redis-backed asynchronous audit transport, OpenSearch-backed search with database fallback, and observability plus security hardening controls.</p>
@@ -186,7 +186,7 @@
       <tr><td class="reqid">NFR-016</td><td>Compliance</td><td>Maintain documented control mappings, secrets rotation guidance, and disaster recovery planning artifacts.</td></tr>
       <tr><td class="reqid">NFR-017</td><td>Testability</td><td>Maintain DB-backed integration coverage for critical clinical flows and seeded-data validity.</td></tr>
       <tr><td class="reqid">NFR-018</td><td>Deployment</td><td>Include infrastructure-as-code and deployment workflow definitions for staged rollout.</td></tr>
-      <tr><td class="reqid">NFR-019</td><td>Boundary</td><td>Live staging deployment verification remains pending even though infrastructure implementation artifacts are present.</td></tr>
+      <tr><td class="reqid">NFR-019</td><td>Boundary</td><td>Live AWS deployment verification is intentionally deferred even though infrastructure implementation artifacts are present.</td></tr>
     </tbody></table>
   </section>
 
@@ -236,7 +236,7 @@
     <ul>
       <li>Mandatory runtime variables include <span class="mono">DATABASE_URL</span>, <span class="mono">ORGANIZATION_ID</span>, and JWT RSA key material.</li>
       <li>Optional features such as Redis queueing, OpenSearch acceleration, Sentry reporting, and replica reads depend on runtime configuration.</li>
-      <li>Infrastructure-as-code and deployment workflows are implemented, but live AWS staging verification remains pending and is not claimed here as operational acceptance.</li>
+      <li>Infrastructure-as-code and deployment workflows are implemented, but live AWS execution is deferred and is not claimed here as operational acceptance.</li>
     </ul>
     <div class="foot">This is the consolidated client-facing backend specification for MEDSYS as of March 11, 2026.</div>
   </section>
