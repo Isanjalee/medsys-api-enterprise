@@ -11,3 +11,4 @@ coverage/
 README.private.md
 docs/private/
 .chrome-headless-profile-client/
+.edge-pdf/

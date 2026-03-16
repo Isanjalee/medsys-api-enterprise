@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigserial,
   bigint,
@@ -116,9 +117,11 @@ export const patients = pgTable(
     nic: varchar("nic", { length: 20 }),
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
-    fullName: varchar("full_name", { length: 170 }),
-    dob: date("dob"),
-    age: bigint("age", { mode: "number" }),
+    fullName: varchar("full_name", { length: 170 })
+      .generatedAlwaysAs(sql`"first_name" || ' ' || "last_name"`)
+      .notNull(),
+    dob: date("dob").notNull(),
+    age: bigint("age", { mode: "number" }).notNull(),
     gender: genderEnum("gender").notNull(),
     phone: varchar("phone", { length: 30 }),
     address: text("address"),

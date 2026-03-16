@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildApp } from "../src/app.js";
 
 const ORGANIZATION_ID = "11111111-1111-1111-1111-111111111111";
+const DEFAULT_PATIENT_DOB = "1990-06-01";
 
 const loginAs = async (
   app: Awaited<ReturnType<typeof buildApp>>,
@@ -34,7 +35,8 @@ const createPatientAs = async (
       authorization: `Bearer ${accessToken}`
     },
     payload: {
-      name
+      name,
+      dateOfBirth: DEFAULT_PATIENT_DOB
     }
   });
 
@@ -350,10 +352,11 @@ test("patient and diagnosis writes sync OpenSearch documents when configured", a
       headers: {
         authorization: `Bearer ${ownerLogin.accessToken}`
       },
-      payload: {
-        name: `Indexed ${Date.now()} Patient`
-      }
-    });
+    payload: {
+      name: `Indexed ${Date.now()} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
+    }
+  });
 
     assert.equal(patientResponse.statusCode, 201);
     const patientId = (patientResponse.json() as { patient: { id: number } }).patient.id;
@@ -500,6 +503,7 @@ test("patient history flow and soft delete work for owner", async () => {
     },
     payload: {
       name: `History${uniqueSuffix} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB,
       phone: "+94770000000",
       address: "Contract Alignment Test"
     }
@@ -714,7 +718,7 @@ test("patient routes expose frontend-compatible list/detail/update shapes", asyn
     },
     payload: {
       name: `Contract ${uniqueSuffix} Patient`,
-      dateOfBirth: "1990-06-01",
+      dateOfBirth: DEFAULT_PATIENT_DOB,
       phone: "555-2222",
       address: "42 Main Street"
     }
@@ -809,6 +813,7 @@ test("patient create accepts compatibility fields used by the frontend BFF", asy
       gender: "female",
       mobile: "555-3000",
       priority: "high",
+      dateOfBirth: DEFAULT_PATIENT_DOB,
       address: "Compat Street"
     }
   });
@@ -1526,6 +1531,7 @@ test("patient create rejects unknown fields with validation envelope", async () 
     },
     payload: {
       name: "Validation Patient",
+      dateOfBirth: DEFAULT_PATIENT_DOB,
       unknownField: "x"
     }
   });
@@ -1555,7 +1561,8 @@ test("patient patch rejects empty body with validation envelope", async () => {
       authorization: `Bearer ${loginBody.accessToken}`
     },
     payload: {
-      name: `Empty Patch ${uniqueSuffix}`
+      name: `Empty Patch ${uniqueSuffix}`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
     }
   });
 
@@ -1596,7 +1603,8 @@ test("patient vitals rejects unknown fields with validation envelope", async () 
       authorization: `Bearer ${ownerLogin.accessToken}`
     },
     payload: {
-      name: `Vitals ${uniqueSuffix} Patient`
+      name: `Vitals ${uniqueSuffix} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
     }
   });
 
@@ -1786,7 +1794,8 @@ test("doctor cannot delete patients without patient.delete permission", async ()
       authorization: `Bearer ${ownerLogin.accessToken}`
     },
     payload: {
-      name: `Protected Patient ${uniqueSuffix}`
+      name: `Protected Patient ${uniqueSuffix}`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
     }
   });
 

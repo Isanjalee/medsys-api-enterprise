@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { refreshTokens } from "@medsys/db";
 import type { FastifyInstance } from "fastify";
@@ -30,6 +31,8 @@ export const rotateRefreshToken = async (
   organizationId: string,
   previous?: { tokenId: string; familyId: string }
 ): Promise<string> => {
+  const familyId = previous?.familyId ?? randomUUID();
+
   if (!previous) {
     await revokeRefreshTokens(app, userId, organizationId);
   } else {
@@ -54,7 +57,7 @@ export const rotateRefreshToken = async (
     .values({
       organizationId,
       userId,
-      familyId: previous?.familyId,
+      familyId,
       parentTokenId: previous?.tokenId ?? null,
       expiresAt: new Date(Date.now() + app.env.REFRESH_TOKEN_TTL_SECONDS * 1000)
     })

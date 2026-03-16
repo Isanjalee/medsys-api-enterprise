@@ -37,6 +37,15 @@ Enterprise-ready healthcare backend scaffold aligned to frontend flows in:
 ```bash
 docker compose -f infra/docker/docker-compose.yml up -d
 ```
+Database web UI:
+```text
+http://localhost:8081
+system: PostgreSQL
+server: postgres
+username: medsys
+password: medsys
+database: medsys
+```
 3. Install dependencies:
 ```bash
 npm install

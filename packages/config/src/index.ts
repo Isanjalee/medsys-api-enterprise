@@ -1,4 +1,59 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, parse } from "node:path";
 import { z } from "zod";
+
+const findUp = (fileName: string, startDir: string): string | null => {
+  let currentDir = startDir;
+  const { root } = parse(startDir);
+
+  while (true) {
+    const candidate = join(currentDir, fileName);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    if (currentDir === root) {
+      return null;
+    }
+
+    currentDir = dirname(currentDir);
+  }
+};
+
+const loadDotEnv = (): void => {
+  const envPath = findUp(".env", process.cwd());
+  if (!envPath) {
+    return;
+  }
+
+  const envContents = readFileSync(envPath, "utf8");
+
+  for (const line of envContents.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmedLine.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = trimmedLine.slice(0, separatorIndex).trim();
+    let value = trimmedLine.slice(separatorIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (!(key in process.env)) {
+      process.env[key] = value.replace(/\\n/g, "\n");
+    }
+  }
+};
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -40,6 +95,7 @@ const envSchema = z.object({
 export type AppEnv = z.infer<typeof envSchema>;
 
 export const loadEnv = (): AppEnv => {
+  loadDotEnv();
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
     throw new Error(`Environment validation failed: ${parsed.error.message}`);

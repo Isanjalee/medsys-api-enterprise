@@ -35,6 +35,35 @@ const hasAnyKey = (value: unknown, keys: string[]): boolean =>
       keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
 
+const assertFrontendNameHasFirstAndLast = (fullName: string): { firstName: string; lastName: string } => {
+  const nameParts = splitFullName(fullName);
+  if (!nameParts.firstName.trim() || !nameParts.lastName.trim()) {
+    throw validationError([
+      {
+        field: "name",
+        message: "First name and last name are required."
+      }
+    ]);
+  }
+  return {
+    firstName: nameParts.firstName,
+    lastName: nameParts.lastName
+  };
+};
+
+const calculateValidatedAge = (dob: string, age?: number): number => {
+  const derivedAge = calculateAgeFromDob(new Date(dob));
+  if (age !== undefined && Math.abs(derivedAge - age) > 1) {
+    throw validationError([
+      {
+        field: "age",
+        message: "Age does not match DOB."
+      }
+    ]);
+  }
+  return derivedAge;
+};
+
 const patientProfileCacheKey = (organizationId: string, patientId: number): string =>
   `${organizationId}:${patientId}`;
 
@@ -51,12 +80,12 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       bodySchema: {
         type: "object",
         additionalProperties: false,
-        required: ["firstName", "lastName", "gender"],
+        required: ["firstName", "lastName", "dob", "gender"],
         properties: {
           nic: { type: "string", nullable: true },
           firstName: { type: "string", minLength: 1, maxLength: 80 },
           lastName: { type: "string", minLength: 1, maxLength: 80 },
-          dob: { type: "string", format: "date", nullable: true },
+          dob: { type: "string", format: "date" },
           age: { type: "integer", minimum: 0, maximum: 130, nullable: true },
           gender: { type: "string", enum: ["male", "female", "other"] },
           phone: { type: "string", nullable: true },
@@ -359,8 +388,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         nic?: string | null;
         firstName: string;
         lastName: string;
-        dob?: string | null;
-        age?: number | null;
+        dob: string;
+        age: number;
         gender: "male" | "female" | "other";
         phone?: string | null;
         address?: string | null;
@@ -370,52 +399,29 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
 
       if (useFrontendPayload) {
         const payload = parseOrThrowValidation(createPatientFrontendSchema, request.body);
-        const nameParts = splitFullName(payload.name);
-        const dob = payload.dateOfBirth ? new Date(payload.dateOfBirth) : null;
-        const dobAge = dob ? calculateAgeFromDob(dob) : null;
-
-        if (dobAge != null && payload.age != null && Math.abs(dobAge - payload.age) > 1) {
-          throw validationError([
-            {
-              field: "age",
-              message: "Age does not match DOB."
-            }
-          ]);
-        }
+        const nameParts = assertFrontendNameHasFirstAndLast(payload.name);
+        const derivedAge = calculateValidatedAge(payload.dateOfBirth, payload.age);
 
         values = {
           nic: payload.nic ?? null,
           firstName: nameParts.firstName,
           lastName: nameParts.lastName,
-          dob: payload.dateOfBirth ?? null,
-          age: dobAge ?? payload.age ?? null,
+          dob: payload.dateOfBirth,
+          age: derivedAge,
           gender: payload.gender ?? "other",
           phone: payload.phone ?? payload.mobile ?? null,
           address: payload.address ?? null
         };
       } else {
         const payload = parseOrThrowValidation(createPatientSchema.strict(), request.body);
-        const dob = payload.dob ? new Date(payload.dob) : null;
-        const dobAge = dob ? calculateAgeFromDob(dob) : null;
-        const calculatedAge = dobAge ?? payload.age ?? null;
-
-        if (dobAge != null && payload.age != null) {
-          if (Math.abs(dobAge - payload.age) > 1) {
-            throw validationError([
-              {
-                field: "age",
-                message: "Age does not match DOB."
-              }
-            ]);
-          }
-        }
+        const derivedAge = calculateValidatedAge(payload.dob, payload.age);
 
         values = {
           nic: payload.nic ?? null,
           firstName: payload.firstName,
           lastName: payload.lastName,
-          dob: payload.dob ?? null,
-          age: calculatedAge,
+          dob: payload.dob,
+          age: derivedAge,
           gender: payload.gender,
           phone: payload.phone ?? null,
           address: payload.address ?? null,
@@ -431,8 +437,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           nic: values.nic ?? null,
           firstName: values.firstName,
           lastName: values.lastName,
-          dob: values.dob ?? null,
-          age: values.age ?? null,
+          dob: values.dob,
+          age: values.age,
           gender: values.gender,
           phone: values.phone ?? null,
           address: values.address ?? null,
@@ -510,15 +516,13 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       if (useFrontendPayload) {
         const payload = parseOrThrowValidation(updatePatientFrontendSchema, request.body);
         if (payload.name !== undefined) {
-          const nameParts = splitFullName(payload.name);
+          const nameParts = assertFrontendNameHasFirstAndLast(payload.name);
           updateData.firstName = nameParts.firstName;
           updateData.lastName = nameParts.lastName;
         }
         if (payload.dateOfBirth !== undefined) {
           updateData.dob = payload.dateOfBirth;
-          updateData.age = payload.dateOfBirth
-            ? calculateAgeFromDob(new Date(payload.dateOfBirth))
-            : null;
+          updateData.age = calculateValidatedAge(payload.dateOfBirth, payload.age);
         }
         if (payload.nic !== undefined) {
           updateData.nic = payload.nic;
@@ -549,12 +553,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
 
         if (payload.dob !== undefined) {
           updateData.dob = payload.dob;
-          if (payload.dob) {
-            updateData.age = calculateAgeFromDob(new Date(payload.dob));
-          }
+          updateData.age = calculateValidatedAge(payload.dob, payload.age);
         }
 
-        if (payload.age !== undefined) {
+        if (payload.age !== undefined && payload.dob === undefined) {
           updateData.age = payload.age;
         }
         if (payload.nic !== undefined) {

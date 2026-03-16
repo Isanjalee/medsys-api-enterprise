@@ -37,6 +37,18 @@ services:
     ports:
       - "6379:6379"
 
+  adminer:
+    image: adminer:4
+    container_name: medsys-adminer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8081:8080"
+
   opensearch:
     image: opensearchproject/opensearch:2.15.0
     container_name: medsys-opensearch

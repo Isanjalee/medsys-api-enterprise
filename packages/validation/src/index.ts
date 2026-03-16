@@ -8,6 +8,7 @@ const DRUG_SOURCES = ["clinical", "outside"] as const;
 
 const nicRegex = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
 const nameRegex = /^[A-Za-z .'-]+$/;
+const patientNameSchema = z.string().trim().min(1).max(80).regex(nameRegex, "Invalid name");
 
 export const userRoleSchema = z.enum(USER_ROLES);
 export const genderSchema = z.enum(GENDERS);
@@ -32,10 +33,10 @@ const dateOfBirthSchema = z
 
 export const createPatientSchema = z.object({
   nic: z.string().regex(nicRegex, "Invalid NIC format").optional().nullable(),
-  firstName: z.string().min(1).max(80).regex(nameRegex, "Invalid first name"),
-  lastName: z.string().min(1).max(80).regex(nameRegex, "Invalid last name"),
-  dob: dateOfBirthSchema.optional().nullable(),
-  age: z.number().int().min(0).max(130).optional().nullable(),
+  firstName: patientNameSchema,
+  lastName: patientNameSchema,
+  dob: dateOfBirthSchema,
+  age: z.number().int().min(0).max(130).optional(),
   gender: genderSchema,
   phone: z.string().min(7).max(30).optional().nullable(),
   address: z.string().max(2000).optional().nullable(),
@@ -53,7 +54,7 @@ export const createPatientFrontendSchema = z
     gender: genderSchema.optional(),
     mobile: z.string().trim().max(30).optional().nullable(),
     priority: prioritySchema.optional(),
-    dateOfBirth: z.string().date().optional().nullable(),
+    dateOfBirth: dateOfBirthSchema,
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(255).optional().nullable()
   })
@@ -63,11 +64,11 @@ export const updatePatientFrontendSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
     nic: z.string().max(32).optional().nullable(),
-    age: z.number().int().min(0).max(130).optional().nullable(),
+    age: z.number().int().min(0).max(130).optional(),
     gender: genderSchema.optional().nullable(),
     mobile: z.string().trim().max(30).optional().nullable(),
     priority: prioritySchema.optional().nullable(),
-    dateOfBirth: z.string().date().optional().nullable(),
+    dateOfBirth: dateOfBirthSchema.optional(),
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(255).optional().nullable()
   })

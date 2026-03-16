@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildApp } from "../src/app.js";
 
 const ORGANIZATION_ID = "11111111-1111-1111-1111-111111111111";
+const DEFAULT_PATIENT_DOB = "1990-06-01";
 
 const loginAs = async (
   app: Awaited<ReturnType<typeof buildApp>>,
@@ -34,7 +35,8 @@ const createPatient = async (
       authorization: `Bearer ${accessToken}`
     },
     payload: {
-      name
+      name,
+      dateOfBirth: DEFAULT_PATIENT_DOB
     }
   });
 
