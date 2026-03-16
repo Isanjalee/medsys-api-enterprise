@@ -1,13 +1,24 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq } from "drizzle-orm";
 import { users } from "@medsys/db";
-import { createUserFrontendSchema, createUserSchema, listUsersQuerySchema } from "@medsys/validation";
+import {
+  createUserFrontendSchema,
+  createUserSchema,
+  idParamSchema,
+  listUsersQuerySchema,
+  updateUserSchema
+} from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { serializeCreatedUser } from "../../lib/api-serializers.js";
 import { splitFullName } from "../../lib/names.js";
 import { hashPassword } from "../../lib/password.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import {
+  assertAssignableExtraPermissions,
+  normalizeStoredExtraPermissions,
+  resolveUserPermissions
+} from "../../lib/user-permissions.js";
 
 const hasAnyKey = (value: unknown, keys: string[]): boolean =>
   Boolean(
@@ -26,7 +37,14 @@ const createUserBodySchema = {
         name: { type: "string", minLength: 1, maxLength: 120 },
         email: { type: "string", format: "email", maxLength: 160 },
         password: { type: "string", minLength: 8, maxLength: 128 },
-        role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+        role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+        extraPermissions: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"]
+          }
+        }
       }
     },
     {
@@ -38,7 +56,14 @@ const createUserBodySchema = {
         lastName: { type: "string", minLength: 1, maxLength: 80 },
         email: { type: "string", format: "email", maxLength: 160 },
         password: { type: "string", minLength: 8, maxLength: 128 },
-        role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+        role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+        extraPermissions: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"]
+          }
+        }
       }
     }
   ],
@@ -49,6 +74,39 @@ const createUserBodySchema = {
     role: "doctor"
   }
 } as const;
+
+const updateUserBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    extraPermissions: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"]
+      },
+      nullable: true
+    },
+    isActive: { type: "boolean" }
+  }
+} as const;
+
+const toSerializedCreatedUser = (row: {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: "owner" | "doctor" | "assistant";
+  extraPermissions: unknown;
+  createdAt: Date;
+}) => {
+  const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
+  return serializeCreatedUser({
+    ...row,
+    extraPermissions,
+    permissions: resolveUserPermissions(row.role, extraPermissions)
+  });
+};
 
 const userRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Users", "UsersController", {
@@ -78,6 +136,36 @@ const userRoutes: FastifyPluginAsync = async (app) => {
             email: "doctor@example.com",
             password: "strong-pass-123",
             role: "doctor"
+          }
+        },
+        doctorWithAssistantSupport: {
+          summary: "Doctor with assistant-support permissions",
+          value: {
+            firstName: "Support",
+            lastName: "Doctor",
+            email: "doctor-support@example.com",
+            password: "strong-pass-123",
+            role: "doctor",
+            extraPermissions: ["appointment.create", "prescription.dispense"]
+          }
+        }
+      }
+    },
+    "PATCH /:id": {
+      operationId: "UsersController_update",
+      summary: "Update user activation or extra permissions",
+      bodySchema: updateUserBodySchema,
+      bodyExamples: {
+        grantAssistantSupport: {
+          summary: "Grant assistant-support permissions",
+          value: {
+            extraPermissions: ["patient.write", "appointment.create", "prescription.dispense"]
+          }
+        },
+        clearExtras: {
+          summary: "Remove all extra permissions",
+          value: {
+            extraPermissions: []
           }
         }
       }
@@ -110,6 +198,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         })
         .from(users)
@@ -117,7 +206,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
         .orderBy(desc(users.createdAt));
 
       await writeAuditLog(request, { entityType: "user", action: "list" });
-      return { users: rows.map(serializeCreatedUser) };
+      return { users: rows.map(toSerializedCreatedUser) };
     }
   );
 
@@ -137,7 +226,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
       const useFrontendPayload =
         hasAnyKey(request.body, ["name", "email", "password", "role"]) &&
         !hasAnyKey(request.body, ["firstName", "lastName"]);
-      const payload = useFrontendPayload
+      const parsedPayload = useFrontendPayload
         ? (() => {
             const frontendPayload = parseOrThrowValidation(createUserFrontendSchema, request.body);
             const nameParts = splitFullName(frontendPayload.name);
@@ -146,10 +235,18 @@ const userRoutes: FastifyPluginAsync = async (app) => {
               lastName: nameParts.lastName,
               email: frontendPayload.email,
               password: frontendPayload.password,
-              role: frontendPayload.role
+              role: frontendPayload.role,
+              extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
         : parseOrThrowValidation(createUserSchema.strict(), request.body);
+      const payload = {
+        ...parsedPayload,
+        extraPermissions: assertAssignableExtraPermissions(
+          parsedPayload.role,
+          parsedPayload.extraPermissions ?? []
+        )
+      };
 
       const existing = await app.readDb
         .select({ id: users.id })
@@ -166,7 +263,8 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           passwordHash: hashPassword(payload.password),
           firstName: payload.firstName,
           lastName: payload.lastName,
-          role: payload.role
+          role: payload.role,
+          extraPermissions: payload.extraPermissions
         })
         .returning({
           id: users.id,
@@ -174,6 +272,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         });
 
@@ -183,7 +282,79 @@ const userRoutes: FastifyPluginAsync = async (app) => {
         entityId: inserted[0].id
       });
 
-      return reply.code(201).send({ user: serializeCreatedUser(inserted[0]) });
+      return reply.code(201).send({ user: toSerializedCreatedUser(inserted[0]) });
+    }
+  );
+
+  app.patch(
+    "/:id",
+    {
+      preHandler: [app.authorizePermissions(["user.write"]), app.enforceSensitiveRateLimit("user.write")],
+      schema: {
+        tags: ["Users"],
+        operationId: "UsersController_update",
+        summary: "Update user activation or extra permissions",
+        body: updateUserBodySchema
+      }
+    },
+    async (request) => {
+      const actor = request.actor!;
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
+      const payload = parseOrThrowValidation(updateUserSchema, request.body);
+
+      const existingRows = await app.readDb
+        .select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+          role: users.role,
+          isActive: users.isActive,
+          extraPermissions: users.extraPermissions,
+          createdAt: users.createdAt
+        })
+        .from(users)
+        .where(and(eq(users.id, id), eq(users.organizationId, actor.organizationId)))
+        .limit(1);
+      assertOrThrow(existingRows.length === 1, 404, "User not found");
+
+      const nextExtraPermissions =
+        payload.extraPermissions === undefined
+          ? normalizeStoredExtraPermissions(existingRows[0].extraPermissions)
+          : assertAssignableExtraPermissions(existingRows[0].role, payload.extraPermissions ?? []);
+
+      const patch: Record<string, unknown> = {
+        updatedAt: new Date()
+      };
+      if (payload.extraPermissions !== undefined) {
+        patch.extraPermissions = nextExtraPermissions;
+      }
+      if (payload.isActive !== undefined) {
+        patch.isActive = payload.isActive;
+      }
+
+      const updated = await app.db
+        .update(users)
+        .set(patch)
+        .where(and(eq(users.id, id), eq(users.organizationId, actor.organizationId)))
+        .returning({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+          role: users.role,
+          extraPermissions: users.extraPermissions,
+          createdAt: users.createdAt
+        });
+      assertOrThrow(updated.length === 1, 404, "User not found");
+
+      await writeAuditLog(request, {
+        entityType: "user",
+        action: "update",
+        entityId: updated[0].id
+      });
+
+      return { user: toSerializedCreatedUser(updated[0]) };
     }
   );
 };

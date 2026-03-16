@@ -1,9 +1,10 @@
 import fp from "fastify-plugin";
+import { and, eq } from "drizzle-orm";
 import fastifyJwt from "@fastify/jwt";
-import { eq } from "drizzle-orm";
 import { users } from "@medsys/db";
-import { hasAllPermissions, type Permission } from "@medsys/types";
+import { hasAllResolvedPermissions, type Permission } from "@medsys/types";
 import { assertOrThrow } from "../lib/http-error.js";
+import { normalizeStoredExtraPermissions, resolveUserPermissions } from "../lib/user-permissions.js";
 
 const authPlugin = fp(async (app) => {
   await app.register(fastifyJwt, {
@@ -18,35 +19,46 @@ const authPlugin = fp(async (app) => {
   app.decorate("authenticate", async (request: any) => {
     await request.jwtVerify();
     const sub = Number(request.user.sub);
-    assertOrThrow(Number.isInteger(sub), 401, "Invalid token subject");
-    const role = request.user.role;
     const organizationId = request.user.organizationId;
-    request.actor = { userId: sub, role, organizationId };
+    assertOrThrow(Number.isInteger(sub), 401, "Invalid token subject");
+    assertOrThrow(typeof organizationId === "string" && organizationId.length > 0, 401, "Invalid organization");
+
+    const actor = await app.db
+      .select({
+        id: users.id,
+        role: users.role,
+        organizationId: users.organizationId,
+        isActive: users.isActive,
+        extraPermissions: users.extraPermissions
+      })
+      .from(users)
+      .where(and(eq(users.id, sub), eq(users.organizationId, organizationId)))
+      .limit(1);
+
+    assertOrThrow(actor.length === 1, 401, "Unauthorized");
+    assertOrThrow(actor[0].isActive, 403, "Inactive account");
+
+    const extraPermissions = normalizeStoredExtraPermissions(actor[0].extraPermissions);
+    request.actor = {
+      userId: actor[0].id,
+      role: actor[0].role,
+      organizationId: actor[0].organizationId,
+      permissions: resolveUserPermissions(actor[0].role, extraPermissions),
+      extraPermissions
+    };
   });
 
   app.decorate("authorize", (roles: Array<"owner" | "doctor" | "assistant">) => {
     return async (request: any) => {
       assertOrThrow(request.actor, 401, "Unauthorized");
       assertOrThrow(roles.includes(request.actor.role), 403, "Forbidden");
-      const actor = await app.db
-        .select({ id: users.id, isActive: users.isActive })
-        .from(users)
-        .where(eq(users.id, request.actor.userId))
-        .limit(1);
-      assertOrThrow(actor.length === 1 && actor[0].isActive, 403, "Inactive account");
     };
   });
 
   app.decorate("authorizePermissions", (permissions: Permission[]) => {
     return async (request: any) => {
       assertOrThrow(request.actor, 401, "Unauthorized");
-      assertOrThrow(hasAllPermissions(request.actor.role, permissions), 403, "Forbidden");
-      const actor = await app.db
-        .select({ id: users.id, isActive: users.isActive })
-        .from(users)
-        .where(eq(users.id, request.actor.userId))
-        .limit(1);
-      assertOrThrow(actor.length === 1 && actor[0].isActive, 403, "Inactive account");
+      assertOrThrow(hasAllResolvedPermissions(request.actor.permissions, permissions), 403, "Forbidden");
     };
   });
 });

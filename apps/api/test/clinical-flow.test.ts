@@ -607,14 +607,76 @@ test("patient delete tolerates an empty JSON body when content-type is set", asy
   await app.close();
 });
 
-test("doctor can create and update patients", async () => {
+test("owner can grant assistant-support permissions to a doctor", async () => {
   if (!process.env.DATABASE_URL) {
     return;
   }
 
   const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
   const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
   const uniqueSuffix = Date.now().toString();
+
+  const deniedBeforeGrant = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      name: `Doctor Created ${uniqueSuffix}`,
+      dateOfBirth: DEFAULT_PATIENT_DOB,
+      gender: "male"
+    }
+  });
+
+  assert.equal(deniedBeforeGrant.statusCode, 403);
+
+  const grantResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/users/${doctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      extraPermissions: ["patient.write", "appointment.create", "prescription.dispense"]
+    }
+  });
+
+  assert.equal(grantResponse.statusCode, 200);
+  const grantedUser = grantResponse.json() as {
+    user: { extra_permissions: string[]; permissions: string[] };
+  };
+  assert.deepEqual(grantedUser.user.extra_permissions, [
+    "appointment.create",
+    "patient.write",
+    "prescription.dispense"
+  ]);
+  assert.equal(grantedUser.user.permissions.includes("patient.write"), true);
+  assert.equal(grantedUser.user.permissions.includes("appointment.create"), true);
+
+  const meResponse = await app.inject({
+    method: "GET",
+    url: "/v1/auth/me",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(meResponse.statusCode, 200);
+  const meBody = meResponse.json() as {
+    role: string;
+    permissions: string[];
+    extra_permissions: string[];
+  };
+  assert.equal(meBody.role, "doctor");
+  assert.equal(meBody.permissions.includes("patient.write"), true);
+  assert.deepEqual(meBody.extra_permissions, [
+    "appointment.create",
+    "patient.write",
+    "prescription.dispense"
+  ]);
 
   const createResponse = await app.inject({
     method: "POST",
@@ -656,6 +718,20 @@ test("doctor can create and update patients", async () => {
   assert.equal(updated.patient.id, created.patient.id);
   assert.equal(updated.patient.address, "Doctor Updated Address");
   assert.equal(updated.patient.phone, "+94770000456");
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      patientId: created.patient.id,
+      scheduledAt: "2026-03-23T09:00:00Z"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
   await app.close();
 });
 
@@ -930,6 +1006,7 @@ test("owner can register and list users after bootstrap", async () => {
   assert.equal(registerBody.user.name, `Contract User${uniqueSuffix}`);
   assert.equal(typeof registerBody.user.id, "number");
   assert.equal(typeof registerBody.user.created_at, "string");
+  assert.deepEqual((registerBody.user as { extra_permissions?: string[] }).extra_permissions, []);
 
   const listUsersResponse = await app.inject({
     method: "GET",
@@ -1431,8 +1508,70 @@ test("users create accepts frontend-compatible name payload", async () => {
       name: `Frontend User ${uniqueSuffix}`,
       email: `frontend-user-${uniqueSuffix}@medsys.local`,
       role: "assistant",
+      permissions: (response.json() as { user: { permissions: string[] } }).user.permissions,
+      extra_permissions: [],
       created_at: (response.json() as { user: { created_at: string } }).user.created_at
     }
+  });
+  const body = response.json() as { user: { permissions: string[] } };
+  assert.equal(body.user.permissions.includes("appointment.create"), true);
+  await app.close();
+});
+
+test("assistant cannot assign extra permissions to users", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const assistantLogin = await loginAs(app, "assistant@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/v1/users/${doctorId}`,
+    headers: {
+      authorization: `Bearer ${assistantLogin.accessToken}`
+    },
+    payload: {
+      extraPermissions: ["patient.write"]
+    }
+  });
+
+  assert.equal(response.statusCode, 403);
+  await app.close();
+});
+
+test("owner cannot grant owner-only permissions as extra doctor permissions", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/v1/users/${doctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      extraPermissions: ["user.write"]
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [
+      {
+        field: "extraPermissions",
+        message: "Only assistant-support permissions can be granted: user.write"
+      }
+    ]
   });
   await app.close();
 });
@@ -1736,11 +1875,16 @@ test("auth me returns authenticated identity shape", async () => {
     name: string;
     email: string;
     role: string;
+    permissions: string[];
+    extra_permissions: string[];
   };
   assert.equal(typeof body.id, "number");
   assert.equal(body.name.length > 0, true);
   assert.equal(body.email, "doctor@medsys.local");
   assert.equal(body.role, "doctor");
+  assert.equal(body.permissions.includes("appointment.read"), true);
+  assert.equal(body.permissions.includes("appointment.create"), false);
+  assert.deepEqual(body.extra_permissions, []);
   assert.equal("organizationId" in body, false);
   await app.close();
 });

@@ -33,6 +33,8 @@ declare module "fastify" {
       userId: number;
       role: UserRole;
       organizationId: string;
+      permissions: Permission[];
+      extraPermissions: Permission[];
     };
     traceId?: string;
   }

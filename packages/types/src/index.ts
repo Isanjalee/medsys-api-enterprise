@@ -40,7 +40,6 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   owner: PERMISSIONS,
   doctor: [
     "patient.read",
-    "patient.write",
     "patient.history.read",
     "patient.history.write",
     "patient.profile.read",
@@ -91,11 +90,37 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   ]
 } as const;
 
+export const ASSISTANT_SUPPORT_PERMISSIONS = [
+  "patient.write",
+  "appointment.create",
+  "family.write",
+  "inventory.write",
+  "prescription.dispense"
+] as const satisfies readonly Permission[];
+
 export const hasPermission = (role: UserRole, permission: Permission): boolean =>
   ROLE_PERMISSIONS[role].includes(permission);
 
 export const hasAllPermissions = (role: UserRole, permissions: readonly Permission[]): boolean =>
   permissions.every((permission) => hasPermission(role, permission));
+
+export const hasAllResolvedPermissions = (
+  effectivePermissions: readonly Permission[],
+  permissions: readonly Permission[]
+): boolean => permissions.every((permission) => effectivePermissions.includes(permission));
+
+export const normalizePermissions = (permissions: readonly Permission[]): Permission[] =>
+  [...new Set(permissions)].sort();
+
+export const resolveEffectivePermissions = (
+  role: UserRole,
+  extraPermissions: readonly Permission[] = []
+): Permission[] => normalizePermissions([...ROLE_PERMISSIONS[role], ...extraPermissions]);
+
+export const canRoleReceiveExtraPermissions = (role: UserRole): boolean => role === "doctor";
+
+export const isAssistantSupportPermission = (permission: Permission): boolean =>
+  (ASSISTANT_SUPPORT_PERMISSIONS as readonly Permission[]).includes(permission);
 
 export const GENDERS = ["male", "female", "other"] as const;
 export type Gender = (typeof GENDERS)[number];

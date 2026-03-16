@@ -2,6 +2,39 @@ import { z } from "zod";
 
 const USER_ROLES = ["owner", "doctor", "assistant"] as const;
 const GENDERS = ["male", "female", "other"] as const;
+const PERMISSIONS = [
+  "patient.read",
+  "patient.write",
+  "patient.delete",
+  "patient.history.read",
+  "patient.history.write",
+  "patient.profile.read",
+  "patient.family.read",
+  "patient.allergy.read",
+  "patient.allergy.write",
+  "patient.condition.read",
+  "patient.condition.write",
+  "patient.vital.read",
+  "patient.vital.write",
+  "patient.timeline.read",
+  "patient.timeline.write",
+  "user.read",
+  "user.write",
+  "clinical.icd10.read",
+  "appointment.read",
+  "appointment.create",
+  "appointment.update",
+  "analytics.read",
+  "audit.read",
+  "encounter.read",
+  "encounter.write",
+  "family.read",
+  "family.write",
+  "inventory.read",
+  "inventory.write",
+  "prescription.read",
+  "prescription.dispense"
+] as const;
 const APPOINTMENT_STATUSES = ["waiting", "in_consultation", "completed", "cancelled"] as const;
 const PRIORITY_LEVELS = ["low", "normal", "high", "critical"] as const;
 const DRUG_SOURCES = ["clinical", "outside"] as const;
@@ -12,6 +45,7 @@ const patientNameSchema = z.string().trim().min(1).max(80).regex(nameRegex, "Inv
 
 export const userRoleSchema = z.enum(USER_ROLES);
 export const genderSchema = z.enum(GENDERS);
+export const permissionSchema = z.enum(PERMISSIONS);
 export const appointmentStatusSchema = z.enum(APPOINTMENT_STATUSES);
 export const prioritySchema = z.enum(PRIORITY_LEVELS);
 export const drugSourceSchema = z.enum(DRUG_SOURCES);
@@ -116,7 +150,8 @@ export const createUserSchema = z.object({
   lastName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid last name"),
   email: z.string().trim().toLowerCase().email().max(160),
   password: z.string().min(8).max(128),
-  role: userRoleSchema
+  role: userRoleSchema,
+  extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional()
 });
 
 export const createUserFrontendSchema = z
@@ -124,9 +159,21 @@ export const createUserFrontendSchema = z
     name: z.string().trim().min(1).max(120),
     email: z.string().trim().toLowerCase().email().max(160),
     password: z.string().min(8).max(128),
-    role: userRoleSchema
+    role: userRoleSchema,
+    extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional()
   })
   .strict();
+
+export const updateUserSchema = z
+  .object({
+    extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional().nullable(),
+    isActive: z.boolean().optional()
+  })
+  .strict()
+  .refine(
+    (value) => value.extraPermissions !== undefined || value.isActive !== undefined,
+    "At least one field must be provided"
+  );
 
 export const listUsersQuerySchema = z.object({
   role: userRoleSchema.optional()

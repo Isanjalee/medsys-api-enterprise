@@ -1,3 +1,4 @@
+import type { Permission } from "@medsys/types";
 import { buildDisplayName } from "./names.js";
 
 export type AuthUserRow = {
@@ -6,6 +7,8 @@ export type AuthUserRow = {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  permissions: Permission[];
+  extraPermissions: Permission[];
 };
 
 export type CreatedUserRow = AuthUserRow & {
@@ -37,7 +40,9 @@ export const serializeAuthUser = (row: AuthUserRow) => ({
   id: row.id,
   name: buildDisplayName(row.firstName, row.lastName),
   email: row.email,
-  role: row.role
+  role: row.role,
+  permissions: row.permissions,
+  extra_permissions: row.extraPermissions
 });
 
 export const serializeCreatedUser = (row: CreatedUserRow) => ({

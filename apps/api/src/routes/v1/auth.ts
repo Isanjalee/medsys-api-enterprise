@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, sql } from "drizzle-orm";
 import { users } from "@medsys/db";
-import { hasAllPermissions } from "@medsys/types";
+import { hasAllResolvedPermissions } from "@medsys/types";
 import { authLoginSchema, createUserFrontendSchema, createUserSchema, refreshTokenSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { revokeRefreshTokens, rotateRefreshToken, signAccessToken, validateRefreshToken } from "../../lib/auth.js";
@@ -10,6 +10,11 @@ import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { splitFullName } from "../../lib/names.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
+import {
+  assertAssignableExtraPermissions,
+  normalizeStoredExtraPermissions,
+  resolveUserPermissions
+} from "../../lib/user-permissions.js";
 
 const hasAnyKey = (value: unknown, keys: string[]): boolean =>
   Boolean(
@@ -17,6 +22,39 @@ const hasAnyKey = (value: unknown, keys: string[]): boolean =>
       typeof value === "object" &&
       keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
+
+const toSerializedUser = (row: {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: "owner" | "doctor" | "assistant";
+  extraPermissions: unknown;
+}) => {
+  const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
+  return serializeAuthUser({
+    ...row,
+    extraPermissions,
+    permissions: resolveUserPermissions(row.role, extraPermissions)
+  });
+};
+
+const toSerializedCreatedUser = (row: {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: "owner" | "doctor" | "assistant";
+  extraPermissions: unknown;
+  createdAt: Date;
+}) => {
+  const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
+  return serializeCreatedUser({
+    ...row,
+    extraPermissions,
+    permissions: resolveUserPermissions(row.role, extraPermissions)
+  });
+};
 
 const getLoginThrottleKey = (request: {
   ip: string;
@@ -86,7 +124,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               name: { type: "string", minLength: 1, maxLength: 120 },
               email: { type: "string", format: "email", maxLength: 160 },
               password: { type: "string", minLength: 8, maxLength: 128 },
-              role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+              role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+              extraPermissions: {
+                type: "array",
+                items: { type: "string", enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"] }
+              }
             }
           },
           {
@@ -98,7 +140,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               lastName: { type: "string", minLength: 1, maxLength: 80 },
               email: { type: "string", format: "email", maxLength: 160 },
               password: { type: "string", minLength: 8, maxLength: 128 },
-              role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+              role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+              extraPermissions: {
+                type: "array",
+                items: { type: "string", enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"] }
+              }
             }
           }
         ]
@@ -106,24 +152,35 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       bodyExamples: {
         frontend: {
           summary: "Frontend-compatible payload",
-          value: {
-            name: "System Owner",
-            email: "owner@example.com",
-            password: "owner-pass-123",
-            role: "owner"
+            value: {
+              name: "System Owner",
+              email: "owner@example.com",
+              password: "owner-pass-123",
+              role: "owner"
           }
         },
         backend: {
           summary: "Direct API payload",
-          value: {
-            firstName: "System",
-            lastName: "Owner",
-            email: "owner@example.com",
-            password: "owner-pass-123",
-            role: "owner"
+            value: {
+              firstName: "System",
+              lastName: "Owner",
+              email: "owner@example.com",
+              password: "owner-pass-123",
+              role: "owner"
+            }
+          },
+          doctorWithAssistantSupport: {
+            summary: "Doctor with assistant-support permissions",
+            value: {
+              firstName: "Support",
+              lastName: "Doctor",
+              email: "doctor-support@example.com",
+              password: "doctor-pass-123",
+              role: "doctor",
+              extraPermissions: ["appointment.create", "prescription.dispense", "inventory.write"]
+            }
           }
         }
-      }
     },
     "GET /me": {
       operationId: "AuthController_me",
@@ -163,7 +220,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         .select({
           id: users.id,
           passwordHash: users.passwordHash,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
           role: users.role,
+          extraPermissions: users.extraPermissions,
           organizationId: users.organizationId,
           isActive: users.isActive
         })
@@ -195,7 +256,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.send({
         accessToken,
         refreshToken,
-        expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS
+        expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS,
+        user: toSerializedUser(found[0])
       });
     }
   );
@@ -215,7 +277,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const userRows = await app.db
       .select({
         id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
         role: users.role,
+        extraPermissions: users.extraPermissions,
         isActive: users.isActive
       })
       .from(users)
@@ -238,7 +304,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
     );
 
-    return reply.send({ accessToken, refreshToken, expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS });
+    return reply.send({
+      accessToken,
+      refreshToken,
+      expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS,
+      user: toSerializedUser(userRows[0])
+    });
   });
 
   app.post("/logout", { preHandler: app.authenticate }, async (request) => {
@@ -266,7 +337,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const useFrontendPayload =
         hasAnyKey(request.body, ["name", "email", "password", "role"]) &&
         !hasAnyKey(request.body, ["firstName", "lastName"]);
-      const payload = useFrontendPayload
+      const parsedPayload = useFrontendPayload
         ? (() => {
             const frontendPayload = parseOrThrowValidation(createUserFrontendSchema, request.body);
             const nameParts = splitFullName(frontendPayload.name);
@@ -275,10 +346,18 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               lastName: nameParts.lastName,
               email: frontendPayload.email,
               password: frontendPayload.password,
-              role: frontendPayload.role
+              role: frontendPayload.role,
+              extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
         : parseOrThrowValidation(createUserSchema.strict(), request.body);
+      const payload = {
+        ...parsedPayload,
+        extraPermissions: assertAssignableExtraPermissions(
+          parsedPayload.role,
+          parsedPayload.extraPermissions ?? []
+        )
+      };
       const userCount = await getUserCount();
 
       let organizationId = app.env.ORGANIZATION_ID;
@@ -296,14 +375,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       } else {
         await app.authenticate(request);
         assertOrThrow(Boolean(request.actor), 401, "Unauthorized");
-        assertOrThrow(hasAllPermissions(request.actor!.role, ["user.write"]), 403, "Forbidden");
+        assertOrThrow(hasAllResolvedPermissions(request.actor!.permissions, ["user.write"]), 403, "Forbidden");
         const actor = request.actor!;
-        const actorRows = await app.db
-          .select({ id: users.id, isActive: users.isActive })
-          .from(users)
-          .where(eq(users.id, actor.userId))
-          .limit(1);
-        assertOrThrow(actorRows.length === 1 && actorRows[0].isActive, 403, "Inactive account");
         organizationId = actor.organizationId;
         action = "register";
       }
@@ -332,7 +405,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           passwordHash: hashPassword(payload.password),
           firstName: payload.firstName,
           lastName: payload.lastName,
-          role: payload.role
+          role: payload.role,
+          extraPermissions: payload.extraPermissions
         })
         .returning({
           id: users.id,
@@ -340,6 +414,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         });
 
@@ -349,7 +424,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         entityId: inserted[0].id
       });
 
-      return reply.code(201).send({ user: serializeCreatedUser(inserted[0]) });
+      return reply.code(201).send({ user: toSerializedCreatedUser(inserted[0]) });
     }
   );
 
@@ -362,6 +437,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
+        extraPermissions: users.extraPermissions,
         isActive: users.isActive
       })
       .from(users)
@@ -371,7 +447,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     assertOrThrow(rows.length === 1, 401, "User not found");
     assertOrThrow(rows[0].isActive, 403, "Inactive account");
 
-    return serializeAuthUser(rows[0]);
+    return toSerializedUser(rows[0]);
   });
 
   app.get("/status", async () => {

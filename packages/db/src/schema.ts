@@ -65,6 +65,7 @@ export const users = pgTable(
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
     role: userRoleEnum("role").notNull(),
+    extraPermissions: jsonb("extra_permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     isActive: boolean("is_active").notNull().default(true),
     ...auditTimestamps
   },
