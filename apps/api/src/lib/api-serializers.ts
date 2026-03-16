@@ -9,6 +9,7 @@ export type AuthUserRow = {
   role: "owner" | "doctor" | "assistant";
   permissions: Permission[];
   extraPermissions: Permission[];
+  createdAt?: Date;
 };
 
 export type CreatedUserRow = AuthUserRow & {
@@ -42,7 +43,8 @@ export const serializeAuthUser = (row: AuthUserRow) => ({
   email: row.email,
   role: row.role,
   permissions: row.permissions,
-  extra_permissions: row.extraPermissions
+  extra_permissions: row.extraPermissions,
+  ...(row.createdAt ? { created_at: row.createdAt } : {})
 });
 
 export const serializeCreatedUser = (row: CreatedUserRow) => ({

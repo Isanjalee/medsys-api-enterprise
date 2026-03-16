@@ -459,7 +459,30 @@ test("auth logout revokes the current refresh token", async () => {
   const loginBody = loginResponse.json() as {
     accessToken: string;
     refreshToken: string;
+    access_token: string;
+    refresh_token: string;
+    expiresIn: number;
+    expires_in: number;
+    tokenType: string;
+    token_type: string;
+    user: {
+      id: number;
+      email: string;
+      role: string;
+      name: string;
+      permissions: string[];
+      extra_permissions: string[];
+      created_at: string;
+    };
   };
+  assert.equal(typeof loginBody.accessToken, "string");
+  assert.equal(loginBody.access_token, loginBody.accessToken);
+  assert.equal(loginBody.refresh_token, loginBody.refreshToken);
+  assert.equal(loginBody.expires_in, loginBody.expiresIn);
+  assert.equal(loginBody.tokenType, "Bearer");
+  assert.equal(loginBody.token_type, "Bearer");
+  assert.equal(loginBody.user.email, "owner@medsys.local");
+  assert.equal(typeof loginBody.user.created_at, "string");
 
   const logoutResponse = await app.inject({
     method: "POST",
@@ -1877,6 +1900,7 @@ test("auth me returns authenticated identity shape", async () => {
     role: string;
     permissions: string[];
     extra_permissions: string[];
+    created_at: string;
   };
   assert.equal(typeof body.id, "number");
   assert.equal(body.name.length > 0, true);
@@ -1885,6 +1909,7 @@ test("auth me returns authenticated identity shape", async () => {
   assert.equal(body.permissions.includes("appointment.read"), true);
   assert.equal(body.permissions.includes("appointment.create"), false);
   assert.deepEqual(body.extra_permissions, []);
+  assert.equal(typeof body.created_at, "string");
   assert.equal("organizationId" in body, false);
   await app.close();
 });

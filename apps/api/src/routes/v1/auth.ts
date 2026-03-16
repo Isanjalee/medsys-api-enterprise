@@ -30,6 +30,7 @@ const toSerializedUser = (row: {
   email: string;
   role: "owner" | "doctor" | "assistant";
   extraPermissions: unknown;
+  createdAt?: Date;
 }) => {
   const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
   return serializeAuthUser({
@@ -38,6 +39,23 @@ const toSerializedUser = (row: {
     permissions: resolveUserPermissions(row.role, extraPermissions)
   });
 };
+
+const buildAuthTokenPayload = (
+  accessToken: string,
+  refreshToken: string,
+  expiresIn: number,
+  user: ReturnType<typeof toSerializedUser>
+) => ({
+  accessToken,
+  refreshToken,
+  expiresIn,
+  access_token: accessToken,
+  refresh_token: refreshToken,
+  expires_in: expiresIn,
+  tokenType: "Bearer" as const,
+  token_type: "Bearer" as const,
+  user
+});
 
 const toSerializedCreatedUser = (row: {
   id: number;
@@ -225,6 +243,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           role: users.role,
           extraPermissions: users.extraPermissions,
+          createdAt: users.createdAt,
           organizationId: users.organizationId,
           isActive: users.isActive
         })
@@ -253,12 +272,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         entityId: found[0].id
       });
 
-      return reply.send({
-        accessToken,
-        refreshToken,
-        expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS,
-        user: toSerializedUser(found[0])
-      });
+      return reply.send(
+        buildAuthTokenPayload(
+          accessToken,
+          refreshToken,
+          app.env.ACCESS_TOKEN_TTL_SECONDS,
+          toSerializedUser(found[0])
+        )
+      );
     }
   );
 
@@ -282,6 +303,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         lastName: users.lastName,
         role: users.role,
         extraPermissions: users.extraPermissions,
+        createdAt: users.createdAt,
         isActive: users.isActive
       })
       .from(users)
@@ -304,12 +326,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
     );
 
-    return reply.send({
-      accessToken,
-      refreshToken,
-      expiresIn: app.env.ACCESS_TOKEN_TTL_SECONDS,
-      user: toSerializedUser(userRows[0])
-    });
+    return reply.send(
+      buildAuthTokenPayload(
+        accessToken,
+        refreshToken,
+        app.env.ACCESS_TOKEN_TTL_SECONDS,
+        toSerializedUser(userRows[0])
+      )
+    );
   });
 
   app.post("/logout", { preHandler: app.authenticate }, async (request) => {
@@ -438,6 +462,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         lastName: users.lastName,
         role: users.role,
         extraPermissions: users.extraPermissions,
+        createdAt: users.createdAt,
         isActive: users.isActive
       })
       .from(users)
