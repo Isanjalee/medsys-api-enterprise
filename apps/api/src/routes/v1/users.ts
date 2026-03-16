@@ -16,6 +16,40 @@ const hasAnyKey = (value: unknown, keys: string[]): boolean =>
       keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
 
+const createUserBodySchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "email", "password", "role"],
+      properties: {
+        name: { type: "string", minLength: 1, maxLength: 120 },
+        email: { type: "string", format: "email", maxLength: 160 },
+        password: { type: "string", minLength: 8, maxLength: 128 },
+        role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+      }
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["firstName", "lastName", "email", "password", "role"],
+      properties: {
+        firstName: { type: "string", minLength: 1, maxLength: 80 },
+        lastName: { type: "string", minLength: 1, maxLength: 80 },
+        email: { type: "string", format: "email", maxLength: 160 },
+        password: { type: "string", minLength: 8, maxLength: 128 },
+        role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+      }
+    }
+  ],
+  example: {
+    name: "Jane Doe",
+    email: "doctor@example.com",
+    password: "strong-pass-123",
+    role: "doctor"
+  }
+} as const;
+
 const userRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Users", "UsersController", {
     "GET /": {
@@ -25,22 +59,27 @@ const userRoutes: FastifyPluginAsync = async (app) => {
     "POST /": {
       operationId: "UsersController_create",
       summary: "Create user",
-      bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "email", "password", "role"],
-        properties: {
-          name: { type: "string", minLength: 1, maxLength: 120 },
-          email: { type: "string", format: "email", maxLength: 160 },
-          password: { type: "string", minLength: 8, maxLength: 128 },
-          role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+      bodySchema: createUserBodySchema,
+      bodyExamples: {
+        frontend: {
+          summary: "Frontend-compatible payload",
+          value: {
+            name: "Jane Doe",
+            email: "doctor@example.com",
+            password: "strong-pass-123",
+            role: "doctor"
+          }
+        },
+        backend: {
+          summary: "Direct API payload",
+          value: {
+            firstName: "Jane",
+            lastName: "Doe",
+            email: "doctor@example.com",
+            password: "strong-pass-123",
+            role: "doctor"
+          }
         }
-      },
-      bodyExample: {
-        name: "Jane Doe",
-        email: "doctor@example.com",
-        password: "strong-pass-123",
-        role: "doctor"
       }
     }
   });
@@ -89,7 +128,8 @@ const userRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ["Users"],
         operationId: "UsersController_create",
-        summary: "Create user"
+        summary: "Create user",
+        body: createUserBodySchema
       }
     },
     async (request, reply) => {

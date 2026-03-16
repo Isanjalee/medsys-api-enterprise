@@ -6,6 +6,30 @@ import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
+const createInventoryItemBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "category", "unit"],
+  properties: {
+    sku: { type: "string", nullable: true },
+    name: { type: "string" },
+    category: { type: "string", enum: ["medicine", "consumable", "equipment", "other"] },
+    unit: { type: "string" },
+    stock: { type: "number", minimum: 0 },
+    reorderLevel: { type: "number", minimum: 0 },
+    isActive: { type: "boolean" }
+  },
+  example: {
+    sku: "PCM-500",
+    name: "Paracetamol 500mg",
+    category: "medicine",
+    unit: "tablet",
+    stock: 100,
+    reorderLevel: 20,
+    isActive: true
+  }
+} as const;
+
 const inventoryRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Inventory", "InventoryController", {
     "GET /": {
@@ -15,29 +39,8 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     "POST /": {
       operationId: "InventoryController_create",
       summary: "Create inventory item",
-      bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "category", "unit"],
-        properties: {
-          sku: { type: "string", nullable: true },
-          name: { type: "string" },
-          category: { type: "string", enum: ["medicine", "consumable", "equipment", "other"] },
-          unit: { type: "string" },
-          stock: { type: "number", minimum: 0 },
-          reorderLevel: { type: "number", minimum: 0 },
-          isActive: { type: "boolean" }
-        }
-      },
-      bodyExample: {
-        sku: "PCM-500",
-        name: "Paracetamol 500mg",
-        category: "medicine",
-        unit: "tablet",
-        stock: 100,
-        reorderLevel: 20,
-        isActive: true
-      }
+      bodySchema: createInventoryItemBodySchema,
+      bodyExample: createInventoryItemBodySchema.example
     },
     "PATCH /:id": {
       operationId: "InventoryController_update",
@@ -77,12 +80,26 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           referenceId: { type: "integer", minimum: 1, nullable: true }
         }
       },
-      bodyExample: {
-        type: "in",
-        quantity: 50,
-        note: "Stock adjustment",
-        referenceType: "adjustment",
-        referenceId: 1
+      bodyExamples: {
+        aliasType: {
+          summary: "Frontend alias payload",
+          value: {
+            type: "in",
+            quantity: 50,
+            note: "Stock adjustment",
+            referenceType: "adjustment",
+            referenceId: 1
+          }
+        },
+        canonical: {
+          summary: "Canonical API payload",
+          value: {
+            movementType: "in",
+            quantity: 50,
+            referenceType: "adjustment",
+            referenceId: 1
+          }
+        }
       }
     },
     "GET /:id/movements": {
@@ -102,10 +119,21 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(inventoryItems.name);
   });
 
-  app.post("/", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request, reply) => {
-    const actor = request.actor!;
-    const payload = parseOrThrowValidation(createInventoryItemSchema.strict(), request.body);
-    const inserted = await app.db
+  app.post(
+    "/",
+    {
+      preHandler: app.authorizePermissions(["inventory.write"]),
+      schema: {
+        tags: ["Inventory"],
+        operationId: "InventoryController_create",
+        summary: "Create inventory item",
+        body: createInventoryItemBodySchema
+      }
+    },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const payload = parseOrThrowValidation(createInventoryItemSchema.strict(), request.body);
+      const inserted = await app.db
       .insert(inventoryItems)
       .values({
         organizationId: actor.organizationId,
@@ -124,8 +152,9 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
-    return reply.code(201).send(inserted[0]);
-  });
+      return reply.code(201).send(inserted[0]);
+    }
+  );
 
   app.patch("/:id", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request) => {
     const actor = request.actor!;

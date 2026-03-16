@@ -15,6 +15,94 @@ import { applyRouteDocs } from "../../lib/route-docs.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
 
+const createEncounterBundleBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["appointmentId", "patientId", "doctorId", "checkedAt"],
+  properties: {
+    appointmentId: { type: "integer", minimum: 1 },
+    patientId: { type: "integer", minimum: 1 },
+    doctorId: { type: "integer", minimum: 1 },
+    checkedAt: { type: "string", format: "date-time" },
+    notes: { type: "string", nullable: true },
+    nextVisitDate: { type: "string", format: "date", nullable: true },
+    diagnoses: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["diagnosisName"],
+        properties: {
+          diagnosisName: { type: "string" },
+          icd10Code: { type: "string", nullable: true }
+        }
+      }
+    },
+    tests: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["testName"],
+        properties: {
+          testName: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["ordered", "in_progress", "completed", "cancelled"]
+          }
+        }
+      }
+    },
+    prescription: {
+      type: "object",
+      nullable: true,
+      additionalProperties: false,
+      required: ["items"],
+      properties: {
+        items: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["drugName", "dose", "frequency", "quantity", "source"],
+            properties: {
+              drugName: { type: "string" },
+              dose: { type: "string" },
+              frequency: { type: "string" },
+              duration: { type: "string", nullable: true },
+              quantity: { type: "number", minimum: 0.01 },
+              source: { type: "string", enum: ["clinical", "outside"] }
+            }
+          }
+        }
+      }
+    }
+  },
+  example: {
+    appointmentId: 10,
+    patientId: 1,
+    doctorId: 2,
+    checkedAt: "2026-03-05T10:30:00Z",
+    notes: "Viral fever suspected",
+    nextVisitDate: "2026-03-12",
+    diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }],
+    tests: [{ testName: "CBC", status: "ordered" }],
+    prescription: {
+      items: [
+        {
+          drugName: "Paracetamol",
+          dose: "500mg",
+          frequency: "TID",
+          duration: "3 days",
+          quantity: 9,
+          source: "clinical"
+        }
+      ]
+    }
+  }
+} as const;
+
 const encounterRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Encounters", "EncountersController", {
     "GET /": {
@@ -24,93 +112,8 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
     "POST /": {
       operationId: "EncountersController_createBundle",
       summary: "Create encounter with diagnoses/tests/prescription atomically",
-      bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["appointmentId", "patientId", "doctorId", "checkedAt"],
-        properties: {
-          appointmentId: { type: "integer", minimum: 1 },
-          patientId: { type: "integer", minimum: 1 },
-          doctorId: { type: "integer", minimum: 1 },
-          checkedAt: { type: "string", format: "date-time" },
-          notes: { type: "string", nullable: true },
-          nextVisitDate: { type: "string", format: "date", nullable: true },
-          diagnoses: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["diagnosisName"],
-              properties: {
-                diagnosisName: { type: "string" },
-                icd10Code: { type: "string", nullable: true }
-              }
-            }
-          },
-          tests: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["testName"],
-              properties: {
-                testName: { type: "string" },
-                status: {
-                  type: "string",
-                  enum: ["ordered", "in_progress", "completed", "cancelled"]
-                }
-              }
-            }
-          },
-          prescription: {
-            type: "object",
-            nullable: true,
-            additionalProperties: false,
-            required: ["items"],
-            properties: {
-              items: {
-                type: "array",
-                minItems: 1,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["drugName", "dose", "frequency", "quantity", "source"],
-                  properties: {
-                    drugName: { type: "string" },
-                    dose: { type: "string" },
-                    frequency: { type: "string" },
-                    duration: { type: "string", nullable: true },
-                    quantity: { type: "number", minimum: 0.01 },
-                    source: { type: "string", enum: ["clinical", "outside"] }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      bodyExample: {
-        appointmentId: 10,
-        patientId: 1,
-        doctorId: 2,
-        checkedAt: "2026-03-05T10:30:00Z",
-        notes: "Viral fever suspected",
-        nextVisitDate: "2026-03-12",
-        diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }],
-        tests: [{ testName: "CBC", status: "ordered" }],
-        prescription: {
-          items: [
-            {
-              drugName: "Paracetamol",
-              dose: "500mg",
-              frequency: "TID",
-              duration: "3 days",
-              quantity: 9,
-              source: "clinical"
-            }
-          ]
-        }
-      }
+      bodySchema: createEncounterBundleBodySchema,
+      bodyExample: createEncounterBundleBodySchema.example
     },
     "GET /:id/diagnoses": {
       operationId: "EncountersController_listDiagnoses",
@@ -137,9 +140,20 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(encounters.checkedAt));
   });
 
-  app.post("/", { preHandler: app.authorizePermissions(["encounter.write"]) }, async (request, reply) => {
-    const actor = request.actor!;
-    const payload = parseOrThrowValidation(createEncounterBundleSchema, request.body);
+  app.post(
+    "/",
+    {
+      preHandler: app.authorizePermissions(["encounter.write"]),
+      schema: {
+        tags: ["Encounters"],
+        operationId: "EncountersController_createBundle",
+        summary: "Create encounter with diagnoses/tests/prescription atomically",
+        body: createEncounterBundleBodySchema
+      }
+    },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const payload = parseOrThrowValidation(createEncounterBundleSchema, request.body);
 
     const outcome = await app.db.transaction(async (tx) => {
       const appointmentRows = await tx
@@ -256,8 +270,9 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
     );
     await app.cacheService.invalidate("appointmentQueue", appointmentQueueCacheKey(actor.organizationId));
 
-    return reply.code(201).send(outcome);
-  });
+      return reply.code(201).send(outcome);
+    }
+  );
 
   app.get(
     "/:id/diagnoses",

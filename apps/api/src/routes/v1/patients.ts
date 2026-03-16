@@ -67,6 +67,51 @@ const calculateValidatedAge = (dob: string, age?: number): number => {
 const patientProfileCacheKey = (organizationId: string, patientId: number): string =>
   `${organizationId}:${patientId}`;
 
+const createPatientBodySchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "dateOfBirth"],
+      properties: {
+        name: { type: "string", minLength: 1, maxLength: 120 },
+        nic: { type: "string", nullable: true },
+        age: { type: "integer", minimum: 0, maximum: 130 },
+        gender: { type: "string", enum: ["male", "female", "other"] },
+        mobile: { type: "string", nullable: true },
+        priority: { type: "string", enum: ["low", "normal", "high", "critical"] },
+        dateOfBirth: { type: "string", format: "date" },
+        phone: { type: "string", nullable: true },
+        address: { type: "string", nullable: true }
+      }
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["firstName", "lastName", "dob", "gender"],
+      properties: {
+        nic: { type: "string", nullable: true },
+        firstName: { type: "string", minLength: 1, maxLength: 80 },
+        lastName: { type: "string", minLength: 1, maxLength: 80 },
+        dob: { type: "string", format: "date" },
+        age: { type: "integer", minimum: 0, maximum: 130, nullable: true },
+        gender: { type: "string", enum: ["male", "female", "other"] },
+        phone: { type: "string", nullable: true },
+        address: { type: "string", nullable: true },
+        bloodGroup: { type: "string", nullable: true },
+        familyId: { type: "integer", minimum: 1, nullable: true }
+      }
+    }
+  ],
+  example: {
+    name: "Kamal Silva",
+    dateOfBirth: "1999-06-10",
+    gender: "male",
+    phone: "+94770000001",
+    address: "Colombo"
+  }
+} as const;
+
 const patientRoutes: FastifyPluginAsync = async (app) => {
   const tag = "Patients";
   applyRouteDocs(app, tag, "PatientsController", {
@@ -77,33 +122,32 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     "POST /": {
       operationId: "PatientsController_create",
       summary: "Create patient",
-      bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["firstName", "lastName", "dob", "gender"],
-        properties: {
-          nic: { type: "string", nullable: true },
-          firstName: { type: "string", minLength: 1, maxLength: 80 },
-          lastName: { type: "string", minLength: 1, maxLength: 80 },
-          dob: { type: "string", format: "date" },
-          age: { type: "integer", minimum: 0, maximum: 130, nullable: true },
-          gender: { type: "string", enum: ["male", "female", "other"] },
-          phone: { type: "string", nullable: true },
-          address: { type: "string", nullable: true },
-          bloodGroup: { type: "string", nullable: true },
-          familyId: { type: "integer", minimum: 1, nullable: true }
+      bodySchema: createPatientBodySchema,
+      bodyExamples: {
+        frontend: {
+          summary: "Frontend-compatible payload",
+          value: {
+            name: "Kamal Silva",
+            dateOfBirth: "1999-06-10",
+            gender: "male",
+            phone: "+94770000001",
+            address: "Colombo"
+          }
+        },
+        backend: {
+          summary: "Direct API payload",
+          value: {
+            nic: "199912345678",
+            firstName: "Kamal",
+            lastName: "Silva",
+            dob: "1999-06-10",
+            gender: "male",
+            phone: "+94770000001",
+            address: "Colombo",
+            bloodGroup: "B+",
+            familyId: 1
+          }
         }
-      },
-      bodyExample: {
-        nic: "199912345678",
-        firstName: "Kamal",
-        lastName: "Silva",
-        dob: "1999-06-10",
-        gender: "male",
-        phone: "+94770000001",
-        address: "Colombo",
-        bloodGroup: "B+",
-        familyId: 1
       }
     },
     "GET /:id": {
@@ -114,24 +158,56 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       operationId: "PatientsController_update",
       summary: "Update patient",
       bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          nic: { type: "string", nullable: true },
-          firstName: { type: "string", minLength: 1, maxLength: 80 },
-          lastName: { type: "string", minLength: 1, maxLength: 80 },
-          dob: { type: "string", format: "date", nullable: true },
-          age: { type: "integer", minimum: 0, maximum: 130, nullable: true },
-          gender: { type: "string", enum: ["male", "female", "other"] },
-          phone: { type: "string", nullable: true },
-          address: { type: "string", nullable: true },
-          bloodGroup: { type: "string", nullable: true },
-          familyId: { type: "integer", minimum: 1, nullable: true }
-        }
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 120 },
+              nic: { type: "string", nullable: true },
+              age: { type: "integer", minimum: 0, maximum: 130 },
+              gender: { type: "string", enum: ["male", "female", "other"], nullable: true },
+              mobile: { type: "string", nullable: true },
+              priority: { type: "string", enum: ["low", "normal", "high", "critical"], nullable: true },
+              dateOfBirth: { type: "string", format: "date" },
+              phone: { type: "string", nullable: true },
+              address: { type: "string", nullable: true }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              nic: { type: "string", nullable: true },
+              firstName: { type: "string", minLength: 1, maxLength: 80 },
+              lastName: { type: "string", minLength: 1, maxLength: 80 },
+              dob: { type: "string", format: "date" },
+              age: { type: "integer", minimum: 0, maximum: 130, nullable: true },
+              gender: { type: "string", enum: ["male", "female", "other"] },
+              phone: { type: "string", nullable: true },
+              address: { type: "string", nullable: true },
+              bloodGroup: { type: "string", nullable: true },
+              familyId: { type: "integer", minimum: 1, nullable: true }
+            }
+          }
+        ]
       },
-      bodyExample: {
-        phone: "+94770000002",
-        address: "No.10, Main Street, Colombo"
+      bodyExamples: {
+        frontend: {
+          summary: "Frontend-compatible payload",
+          value: {
+            address: "No.10, Main Street, Colombo",
+            phone: "+94770000002"
+          }
+        },
+        backend: {
+          summary: "Direct API payload",
+          value: {
+            firstName: "Kamal",
+            lastName: "Perera",
+            bloodGroup: "B+"
+          }
+        }
       }
     },
     "DELETE /:id": {
@@ -375,7 +451,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: [tag],
         operationId: "PatientsController_create",
-        summary: "Create patient"
+        summary: "Create patient",
+        body: createPatientBodySchema
       }
     },
     async (request, reply) => {

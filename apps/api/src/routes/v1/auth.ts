@@ -77,21 +77,52 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       summary: "Register a user or bootstrap the first owner account",
       security: [],
       bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "email", "password", "role"],
-        properties: {
-          name: { type: "string", minLength: 1, maxLength: 120 },
-          email: { type: "string", format: "email", maxLength: 160 },
-          password: { type: "string", minLength: 8, maxLength: 128 },
-          role: { type: "string", enum: ["owner", "doctor", "assistant"] }
-        }
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "email", "password", "role"],
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 120 },
+              email: { type: "string", format: "email", maxLength: 160 },
+              password: { type: "string", minLength: 8, maxLength: 128 },
+              role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["firstName", "lastName", "email", "password", "role"],
+            properties: {
+              firstName: { type: "string", minLength: 1, maxLength: 80 },
+              lastName: { type: "string", minLength: 1, maxLength: 80 },
+              email: { type: "string", format: "email", maxLength: 160 },
+              password: { type: "string", minLength: 8, maxLength: 128 },
+              role: { type: "string", enum: ["owner", "doctor", "assistant"] }
+            }
+          }
+        ]
       },
-      bodyExample: {
-        name: "System Owner",
-        email: "owner@example.com",
-        password: "owner-pass-123",
-        role: "owner"
+      bodyExamples: {
+        frontend: {
+          summary: "Frontend-compatible payload",
+          value: {
+            name: "System Owner",
+            email: "owner@example.com",
+            password: "owner-pass-123",
+            role: "owner"
+          }
+        },
+        backend: {
+          summary: "Direct API payload",
+          value: {
+            firstName: "System",
+            lastName: "Owner",
+            email: "owner@example.com",
+            password: "owner-pass-123",
+            role: "owner"
+          }
+        }
       }
     },
     "GET /me": {

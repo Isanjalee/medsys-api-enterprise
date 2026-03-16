@@ -8,6 +8,33 @@ import { applyRouteDocs } from "../../lib/route-docs.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
 
+const createAppointmentBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["patientId", "scheduledAt"],
+  properties: {
+    patientId: { type: "integer", minimum: 1 },
+    doctorId: { type: "integer", minimum: 1, nullable: true },
+    assistantId: { type: "integer", minimum: 1, nullable: true },
+    scheduledAt: { type: "string", format: "date-time" },
+    status: {
+      type: "string",
+      enum: ["waiting", "in_consultation", "completed", "cancelled"]
+    },
+    reason: { type: "string", nullable: true },
+    priority: { type: "string", enum: ["low", "normal", "high", "critical"] }
+  },
+  example: {
+    patientId: 1,
+    doctorId: 2,
+    assistantId: 3,
+    scheduledAt: "2026-03-05T10:00:00Z",
+    status: "waiting",
+    reason: "Fever and cough",
+    priority: "normal"
+  }
+} as const;
+
 const appointmentRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Appointments", "AppointmentsController", {
     "GET /": {
@@ -17,32 +44,8 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     "POST /": {
       operationId: "AppointmentsController_create",
       summary: "Create appointment",
-      bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["patientId", "scheduledAt"],
-        properties: {
-          patientId: { type: "integer", minimum: 1 },
-          doctorId: { type: "integer", minimum: 1, nullable: true },
-          assistantId: { type: "integer", minimum: 1, nullable: true },
-          scheduledAt: { type: "string", format: "date-time" },
-          status: {
-            type: "string",
-            enum: ["waiting", "in_consultation", "completed", "cancelled"]
-          },
-          reason: { type: "string", nullable: true },
-          priority: { type: "string", enum: ["low", "normal", "high", "critical"] }
-        }
-      },
-      bodyExample: {
-        patientId: 1,
-        doctorId: 2,
-        assistantId: 3,
-        scheduledAt: "2026-03-05T10:00:00Z",
-        status: "waiting",
-        reason: "Fever and cough",
-        priority: "normal"
-      }
+      bodySchema: createAppointmentBodySchema,
+      bodyExample: createAppointmentBodySchema.example
     },
     "GET /:id": {
       operationId: "AppointmentsController_findOne",
@@ -120,10 +123,21 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(appointments.scheduledAt));
   });
 
-  app.post("/", { preHandler: app.authorizePermissions(["appointment.create"]) }, async (request, reply) => {
-    const actor = request.actor!;
-    const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
-    const payload = parseOrThrowValidation(createAppointmentSchema.strict(), request.body);
+  app.post(
+    "/",
+    {
+      preHandler: app.authorizePermissions(["appointment.create"]),
+      schema: {
+        tags: ["Appointments"],
+        operationId: "AppointmentsController_create",
+        summary: "Create appointment",
+        body: createAppointmentBodySchema
+      }
+    },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
+      const payload = parseOrThrowValidation(createAppointmentSchema.strict(), request.body);
     const patientExists = await app.readDb
       .select({ id: patients.id })
       .from(patients)
@@ -151,8 +165,9 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       entityId: inserted[0].id
     });
     await app.cacheService.invalidate("appointmentQueue", queueCacheKey);
-    return reply.code(201).send(inserted[0]);
-  });
+      return reply.code(201).send(inserted[0]);
+    }
+  );
 
   app.get("/:id", { preHandler: app.authorizePermissions(["appointment.read"]) }, async (request) => {
     const actor = request.actor!;

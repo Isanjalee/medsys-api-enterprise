@@ -5,6 +5,7 @@ type RouteDoc = {
   summary?: string;
   bodySchema?: Record<string, unknown>;
   bodyExample?: unknown;
+  bodyExamples?: Record<string, { summary?: string; value: unknown }>;
   security?: unknown[];
 };
 
@@ -18,6 +19,16 @@ type ParsedRouteDoc = {
 
 const methodFromRoute = (method: RouteOptions["method"]): string =>
   (Array.isArray(method) ? method[0] : method).toUpperCase();
+
+const normalizeRoutePath = (path: string): string => {
+  if (!path || path === "") {
+    return "/";
+  }
+  if (path.length > 1 && path.endsWith("/")) {
+    return path.slice(0, -1);
+  }
+  return path;
+};
 
 const buildDefaultOperationId = (controller: string, method: string, url: string): string => {
   const cleanPath = url
@@ -45,11 +56,18 @@ export const applyRouteDocs = (
 
   app.addHook("onRoute", (routeOptions) => {
     const method = methodFromRoute(routeOptions.method);
-    const routePath = routeOptions.url;
-    const exact = parsedDocs.find((entry) => entry.method === method && entry.path === routePath);
+    const routePath = normalizeRoutePath(
+      typeof routeOptions.routePath === "string" ? routeOptions.routePath : routeOptions.url
+    );
+    const exact = parsedDocs.find(
+      (entry) => entry.method === method && normalizeRoutePath(entry.path) === routePath
+    );
     const fallback = parsedDocs
-      .filter((entry) => entry.method === method && routePath.endsWith(entry.path))
-      .sort((a, b) => b.path.length - a.path.length)[0];
+      .filter((entry) => {
+        const docPath = normalizeRoutePath(entry.path);
+        return entry.method === method && routePath.endsWith(docPath);
+      })
+      .sort((a, b) => normalizeRoutePath(b.path).length - normalizeRoutePath(a.path).length)[0];
     const doc = exact?.doc ?? fallback?.doc ?? {};
     const schema = (routeOptions.schema ?? {}) as Record<string, unknown>;
 
@@ -64,10 +82,12 @@ export const applyRouteDocs = (
       security: schema.security ?? doc.security
     };
 
-    if (!schema.body && (doc.bodySchema || doc.bodyExample !== undefined)) {
+    if (schema.body || doc.bodySchema || doc.bodyExample !== undefined || doc.bodyExamples !== undefined) {
+      const existingBody =
+        schema.body && typeof schema.body === "object" ? { ...(schema.body as Record<string, unknown>) } : undefined;
       const body: Record<string, unknown> = doc.bodySchema
-        ? { ...doc.bodySchema }
-        : {
+        ? { ...(existingBody ?? {}), ...doc.bodySchema }
+        : existingBody ?? {
             type: "object",
             additionalProperties: true
           };
@@ -78,6 +98,20 @@ export const applyRouteDocs = (
         }
         if (body.examples === undefined) {
           body.examples = [doc.bodyExample];
+        }
+      }
+
+      if (doc.bodyExamples !== undefined) {
+        const exampleValues = Object.values(doc.bodyExamples).map((example) => example.value);
+
+        if (body.examples === undefined) {
+          body.examples = exampleValues;
+        }
+        if (body.example === undefined) {
+          const firstExample = exampleValues[0];
+          if (firstExample) {
+            body.example = firstExample;
+          }
         }
       }
 

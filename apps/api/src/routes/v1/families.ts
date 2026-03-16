@@ -6,6 +6,22 @@ import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
+const createFamilyBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["familyName"],
+  properties: {
+    familyCode: { type: "string", maxLength: 30 },
+    familyName: { type: "string", minLength: 1, maxLength: 120 },
+    assigned: { type: "boolean" }
+  },
+  example: {
+    familyCode: "FAM-1001",
+    familyName: "Silva Family",
+    assigned: false
+  }
+} as const;
+
 const familiesRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Families", "FamiliesController", {
     "GET /": {
@@ -15,16 +31,7 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
     "POST /": {
       operationId: "FamiliesController_create",
       summary: "Create family",
-      bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["familyName"],
-        properties: {
-          familyCode: { type: "string", maxLength: 30 },
-          familyName: { type: "string", minLength: 1, maxLength: 120 },
-          assigned: { type: "boolean" }
-        }
-      },
+      bodySchema: createFamilyBodySchema,
       bodyExample: {
         familyCode: "FAM-1001",
         familyName: "Silva Family",
@@ -64,10 +71,21 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(families.organizationId, actor.organizationId), isNull(families.deletedAt)));
   });
 
-  app.post("/", { preHandler: app.authorizePermissions(["family.write"]) }, async (request, reply) => {
-    const actor = request.actor!;
-    const payload = parseOrThrowValidation(createFamilySchema.strict(), request.body);
-    const familyCode =
+  app.post(
+    "/",
+    {
+      preHandler: app.authorizePermissions(["family.write"]),
+      schema: {
+        tags: ["Families"],
+        operationId: "FamiliesController_create",
+        summary: "Create family",
+        body: createFamilyBodySchema
+      }
+    },
+    async (request, reply) => {
+      const actor = request.actor!;
+      const payload = parseOrThrowValidation(createFamilySchema.strict(), request.body);
+      const familyCode =
       payload.familyCode ?? `FAM-${new Date().getTime().toString(36).slice(-8).toUpperCase()}`;
     const inserted = await app.db
       .insert(families)
@@ -83,8 +101,9 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
       action: "create",
       entityId: inserted[0].id
     });
-    return reply.code(201).send(inserted[0]);
-  });
+      return reply.code(201).send(inserted[0]);
+    }
+  );
 
   app.get("/:id", { preHandler: app.authorizePermissions(["family.read"]) }, async (request) => {
     const actor = request.actor!;
