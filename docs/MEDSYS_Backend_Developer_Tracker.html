@@ -41,8 +41,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>Implementation Tracker and Delivery Register</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.0</div>
-      <div><strong>Date</strong>March 11, 2026</div>
+      <div><strong>Version</strong>2.1</div>
+      <div><strong>Date</strong>March 16, 2026</div>
       <div><strong>Audience</strong>Backend, Platform, QA, and Integration Teams</div>
       <div><strong>Scope</strong>Roadmap phases, frontend alignment, and open operational actions</div>
     </div>
@@ -62,7 +62,7 @@
 
     <h2>3. Current Delivery Snapshot</h2>
     <div class="grid">
-      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, and 7</li><li>Critical backend integration and CI coverage</li></ul></div>
+      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, and 7</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening and doctor patient-write alignment</li></ul></div>
       <div class="panel"><h3>Open or Held</h3><ul><li>Phase 6 AWS rollout is deferred</li><li>Optional appointment-create permission review for doctors</li><li>Optional BFF governance wording</li></ul></div>
     </div>
     <div class="callout"><strong>Current backend status:</strong> application features are implemented and verified through the core delivery phases. Phase 6 infrastructure artifacts are complete in code, and live AWS rollout is intentionally deferred.</div>
@@ -85,7 +85,7 @@
     <h3>5.1 Frontend Contract Alignment</h3>
     <ul>
       <li>Backend endpoints added or aligned for auth, users, patients, patient history, ICD-10 lookup, and logout.</li>
-      <li>Shared validation envelopes, shared serializers, and shared permission mapping are implemented across the <span class="mono">/v1</span> surface.</li>
+      <li>Shared validation envelopes, shared serializers, shared permission mapping, and Swagger request-body examples are implemented across the <span class="mono">/v1</span> surface.</li>
       <li>Frontend BFF integration has been verified against the backend through authenticated end-to-end flows, and prototype store retirement is verified.</li>
     </ul>
     <h3>5.2 Phase 1</h3>
@@ -124,7 +124,7 @@
 
     <h2>8. Test and Verification Snapshot</h2>
     <table><thead><tr><th style="width:26%">Surface</th><th style="width:18%">Result</th><th>Evidence</th></tr></thead><tbody>
-      <tr><td>API automated tests</td><td class="good">48 passing</td><td>Includes contract, integration, validation, and deny-path coverage.</td></tr>
+      <tr><td>API automated tests</td><td class="good">49 passing</td><td>Includes contract, integration, validation, deny-path coverage, and doctor patient create/update coverage.</td></tr>
       <tr><td>Worker automated tests</td><td class="good">6 passing</td><td>Covers async audit retry and DLQ behaviors.</td></tr>
       <tr><td>Frontend alignment verification</td><td class="good">Verified</td><td>Authenticated live BFF flows exercised against the backend.</td></tr>
       <tr><td>Infrastructure live verification</td><td class="hold">On Hold</td><td>Deferred intentionally because AWS rollout is not currently planned.</td></tr>
@@ -140,11 +140,12 @@
 
     <h2>10. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 11, 2026.</li>
+      <li>Repository implementation state as of March 16, 2026.</li>
       <li>Completed phase verification work through Phases 1, 2, 3, 4, 5, and 7.</li>
       <li>Frontend alignment evidence confirming BE-020 closure for frontend scope.</li>
+      <li>Post-March 11 updates including patient required-field enforcement, seeded relational demo data, and refreshed client documentation.</li>
     </ul>
-    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status.</div>
+    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status as of March 16, 2026.</div>
   </section>
 </body>
 </html>

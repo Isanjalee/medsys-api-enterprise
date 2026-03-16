@@ -38,9 +38,9 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built relational database dictionary</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>1.0</div>
-      <div><strong>Date</strong>March 15, 2026</div>
-      <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, and V6</div>
+      <div><strong>Version</strong>1.1</div>
+      <div><strong>Date</strong>March 16, 2026</div>
+      <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, and V8</div>
       <div><strong>Audience</strong>Developers, QA, BA, reviewers, and client stakeholders</div>
     </div>
     <div class="foot">Prepared from the current repository schema migrations. This document describes the implemented database design, not a proposed future-state model.</div>
@@ -49,7 +49,7 @@
   <section class="page">
     <h2>1. Scope and Reading Guide</h2>
     <p>This document provides a field-level dictionary for the MEDSYS PostgreSQL schema. It focuses on database-enforced validation and structure: data type, required versus nullable, default values, generated values, primary keys, unique constraints, foreign keys, indexes, and check constraints.</p>
-    <div class="callout"><strong>Important:</strong> application-level validations may be stricter than the database. This document records what the database itself enforces.</div>
+    <div class="callout"><strong>Important:</strong> application-level validations may be stricter than the database. This document records what the database itself enforces. Migration <span class="mono">V8</span> adds client/demo seed data and does not change structural constraints.</div>
 
     <h2>2. Global Design Rules</h2>
     <ul>
@@ -166,8 +166,8 @@
         <tr><td><span class="mono">first_name</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required.</td></tr>
         <tr><td><span class="mono">last_name</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required.</td></tr>
         <tr><td><span class="mono">full_name</span></td><td>VARCHAR(170)</td><td>Yes</td><td>Generated stored</td><td><span class="mono">first_name || ' ' || last_name</span>.</td></tr>
-        <tr><td><span class="mono">dob</span></td><td>DATE</td><td>No</td><td>None</td><td>Optional date of birth.</td></tr>
-        <tr><td><span class="mono">age</span></td><td>SMALLINT</td><td>No</td><td>None</td><td>Optional explicit age snapshot.</td></tr>
+        <tr><td><span class="mono">dob</span></td><td>DATE</td><td>Yes</td><td>None</td><td>Required date of birth; set <span class="mono">NOT NULL</span> in <span class="mono">V7</span>.</td></tr>
+        <tr><td><span class="mono">age</span></td><td>SMALLINT</td><td>Yes</td><td>None</td><td>Required explicit age snapshot; set <span class="mono">NOT NULL</span> in <span class="mono">V7</span>.</td></tr>
         <tr><td><span class="mono">gender</span></td><td>gender</td><td>Yes</td><td>None</td><td>Enum constrained.</td></tr>
         <tr><td><span class="mono">phone</span></td><td>VARCHAR(30)</td><td>No</td><td>None</td><td>Optional phone.</td></tr>
         <tr><td><span class="mono">address</span></td><td>TEXT</td><td>No</td><td>None</td><td>Optional address.</td></tr>
@@ -179,7 +179,7 @@
         <tr><td><span class="mono">deleted_at</span></td><td>TIMESTAMPTZ</td><td>No</td><td>None</td><td>Soft delete marker.</td></tr>
       </tbody>
     </table>
-    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">uuid</span>; unique <span class="mono">patients_org_nic_unique</span> on <span class="mono">(organization_id, nic)</span>; foreign key <span class="mono">family_id -&gt; families.id</span>. <strong>Indexes:</strong> <span class="mono">patients_org_full_name_idx</span>, <span class="mono">patients_org_family_idx</span>.</p>
+    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">uuid</span>; unique <span class="mono">patients_org_nic_unique</span> on <span class="mono">(organization_id, nic)</span>; foreign key <span class="mono">family_id -&gt; families.id</span>; <span class="mono">full_name</span>, <span class="mono">dob</span>, and <span class="mono">age</span> are <span class="mono">NOT NULL</span> after <span class="mono">V7</span>. <strong>Indexes:</strong> <span class="mono">patients_org_full_name_idx</span>, <span class="mono">patients_org_family_idx</span>.</p>
 
     <h3>6.3 family_members</h3>
     <table class="small">
@@ -485,7 +485,7 @@
 
     <h2>12. Constraint and Validation Highlights</h2>
     <ul>
-      <li><strong>NOT NULL enforcement:</strong> identity, relationship, and workflow-critical fields are mandatory in the schema.</li>
+      <li><strong>NOT NULL enforcement:</strong> identity, relationship, and workflow-critical fields are mandatory in the schema, including <span class="mono">patients.first_name</span>, <span class="mono">patients.last_name</span>, <span class="mono">patients.full_name</span>, <span class="mono">patients.dob</span>, and <span class="mono">patients.age</span>.</li>
       <li><strong>Unique keys:</strong> used for deduplication and natural identifiers such as user email per organization, patient NIC per organization, token id, family code, and SKU.</li>
       <li><strong>Foreign keys:</strong> enforce patient, appointment, encounter, prescription, inventory, and actor relationships.</li>
       <li><strong>Enum validation:</strong> several status and category fields are strictly database-constrained enums.</li>
@@ -500,6 +500,8 @@
       <li><span class="mono">infra/flyway/sql/V4__partition_appointments.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V5__add_patient_history.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V6__phase4_observability_security.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V7__enforce_patient_required_fields.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V8__seed_additional_patients.sql</span></li>
     </ul>
 
     <div class="foot">This dictionary is intended for review, onboarding, QA, and client walkthroughs. When the schema changes, update this document alongside the relevant Flyway migration.</div>

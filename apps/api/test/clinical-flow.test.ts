@@ -607,6 +607,58 @@ test("patient delete tolerates an empty JSON body when content-type is set", asy
   await app.close();
 });
 
+test("doctor can create and update patients", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      name: `Doctor Created ${uniqueSuffix}`,
+      dateOfBirth: DEFAULT_PATIENT_DOB,
+      gender: "male",
+      phone: "+94770000123"
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const created = createResponse.json() as {
+    patient: { id: number; name: string; phone: string | null };
+  };
+  assert.equal(created.patient.name, `Doctor Created ${uniqueSuffix}`);
+  assert.equal(created.patient.phone, "+94770000123");
+
+  const updateResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/patients/${created.patient.id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      address: "Doctor Updated Address",
+      phone: "+94770000456"
+    }
+  });
+
+  assert.equal(updateResponse.statusCode, 200);
+  const updated = updateResponse.json() as {
+    patient: { id: number; address: string | null; phone: string | null };
+  };
+  assert.equal(updated.patient.id, created.patient.id);
+  assert.equal(updated.patient.address, "Doctor Updated Address");
+  assert.equal(updated.patient.phone, "+94770000456");
+  await app.close();
+});
+
 test("appointments create, read, and update flows work with stable shapes", async () => {
   if (!process.env.DATABASE_URL) {
     return;
