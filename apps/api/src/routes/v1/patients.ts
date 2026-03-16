@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import {
+  families,
+  familyMembers,
   patientAllergies,
   patientConditions,
   patientHistoryEntries,
@@ -64,6 +66,54 @@ const calculateValidatedAge = (dob: string, age?: number): number => {
   return derivedAge;
 };
 
+const buildPatientCode = (): string => {
+  const timePart = Date.now().toString(36).toUpperCase();
+  const randomPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `P-${timePart}-${randomPart}`;
+};
+
+type PatientWriteValues = {
+  nic?: string | null;
+  firstName: string;
+  lastName: string;
+  dob: string;
+  age: number;
+  gender: "male" | "female" | "other";
+  phone?: string | null;
+  address?: string | null;
+  bloodGroup?: string | null;
+  familyId?: number | null;
+  guardianPatientId?: number | null;
+  guardianName?: string | null;
+  guardianNic?: string | null;
+  guardianPhone?: string | null;
+  guardianRelationship?: string | null;
+};
+
+const ensureMinorGuardianDetails = (values: PatientWriteValues): void => {
+  if (values.age >= 18 || values.nic) {
+    return;
+  }
+
+  if (!values.guardianPatientId && !values.guardianName) {
+    throw validationError([
+      {
+        field: "guardianName",
+        message: "Guardian details are required for minors without an NIC."
+      }
+    ]);
+  }
+
+  if (!values.guardianPatientId && !values.guardianNic && !values.guardianPhone) {
+    throw validationError([
+      {
+        field: "guardianNic",
+        message: "Guardian NIC or phone is required for minors without an NIC."
+      }
+    ]);
+  }
+};
+
 const patientProfileCacheKey = (organizationId: string, patientId: number): string =>
   `${organizationId}:${patientId}`;
 
@@ -82,7 +132,13 @@ const createPatientBodySchema = {
         priority: { type: "string", enum: ["low", "normal", "high", "critical"] },
         dateOfBirth: { type: "string", format: "date" },
         phone: { type: "string", nullable: true },
-        address: { type: "string", nullable: true }
+        address: { type: "string", nullable: true },
+        familyId: { type: "integer", minimum: 1, nullable: true },
+        guardianPatientId: { type: "integer", minimum: 1, nullable: true },
+        guardianName: { type: "string", nullable: true },
+        guardianNic: { type: "string", nullable: true },
+        guardianPhone: { type: "string", nullable: true },
+        guardianRelationship: { type: "string", nullable: true }
       }
     },
     {
@@ -99,7 +155,12 @@ const createPatientBodySchema = {
         phone: { type: "string", nullable: true },
         address: { type: "string", nullable: true },
         bloodGroup: { type: "string", nullable: true },
-        familyId: { type: "integer", minimum: 1, nullable: true }
+        familyId: { type: "integer", minimum: 1, nullable: true },
+        guardianPatientId: { type: "integer", minimum: 1, nullable: true },
+        guardianName: { type: "string", nullable: true },
+        guardianNic: { type: "string", nullable: true },
+        guardianPhone: { type: "string", nullable: true },
+        guardianRelationship: { type: "string", nullable: true }
       }
     }
   ],
@@ -145,7 +206,9 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
             phone: "+94770000001",
             address: "Colombo",
             bloodGroup: "B+",
-            familyId: 1
+            familyId: 1,
+            guardianPatientId: 2,
+            guardianRelationship: "mother"
           }
         }
       }
@@ -171,7 +234,13 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
               priority: { type: "string", enum: ["low", "normal", "high", "critical"], nullable: true },
               dateOfBirth: { type: "string", format: "date" },
               phone: { type: "string", nullable: true },
-              address: { type: "string", nullable: true }
+              address: { type: "string", nullable: true },
+              familyId: { type: "integer", minimum: 1, nullable: true },
+              guardianPatientId: { type: "integer", minimum: 1, nullable: true },
+              guardianName: { type: "string", nullable: true },
+              guardianNic: { type: "string", nullable: true },
+              guardianPhone: { type: "string", nullable: true },
+              guardianRelationship: { type: "string", nullable: true }
             }
           },
           {
@@ -187,7 +256,12 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
               phone: { type: "string", nullable: true },
               address: { type: "string", nullable: true },
               bloodGroup: { type: "string", nullable: true },
-              familyId: { type: "integer", minimum: 1, nullable: true }
+              familyId: { type: "integer", minimum: 1, nullable: true },
+              guardianPatientId: { type: "integer", minimum: 1, nullable: true },
+              guardianName: { type: "string", nullable: true },
+              guardianNic: { type: "string", nullable: true },
+              guardianPhone: { type: "string", nullable: true },
+              guardianRelationship: { type: "string", nullable: true }
             }
           }
         ]
@@ -394,23 +468,143 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     return rows.map(serializePatientHistoryEntry);
   };
 
+  const assertFamilyExists = async (organizationId: string, familyId: number): Promise<void> => {
+    const row = await app.readDb
+      .select({ id: families.id })
+      .from(families)
+      .where(and(eq(families.id, familyId), eq(families.organizationId, organizationId), isNull(families.deletedAt)))
+      .limit(1);
+
+    assertOrThrow(row.length === 1, 404, "Family not found");
+  };
+
+  const resolveGuardianValues = async (
+    organizationId: string,
+    patientId: number | null,
+    values: PatientWriteValues
+  ): Promise<PatientWriteValues> => {
+    ensureMinorGuardianDetails(values);
+
+    if (values.guardianPatientId) {
+      const guardianRows = await app.readDb
+        .select({
+          id: patients.id,
+          familyId: patients.familyId,
+          firstName: patients.firstName,
+          lastName: patients.lastName,
+          nic: patients.nic,
+          phone: patients.phone
+        })
+        .from(patients)
+        .where(
+          and(
+            eq(patients.id, values.guardianPatientId),
+            eq(patients.organizationId, organizationId),
+            isNull(patients.deletedAt)
+          )
+        )
+        .limit(1);
+
+      assertOrThrow(guardianRows.length === 1, 404, "Guardian patient not found");
+      const guardian = guardianRows[0];
+      assertOrThrow(patientId === null || guardian.id !== patientId, 400, "Patient cannot be their own guardian");
+
+      if (values.familyId && guardian.familyId && values.familyId !== guardian.familyId) {
+        throw validationError([
+          {
+            field: "familyId",
+            message: "Guardian patient must belong to the same family."
+          }
+        ]);
+      }
+
+      const effectiveFamilyId = values.familyId ?? guardian.familyId ?? null;
+      if (!effectiveFamilyId) {
+        throw validationError([
+          {
+            field: "familyId",
+            message: "Guardian-linked patients must be assigned to a family."
+          }
+        ]);
+      }
+
+      return {
+        ...values,
+        familyId: effectiveFamilyId,
+        guardianName: values.guardianName ?? `${guardian.firstName} ${guardian.lastName}`.trim(),
+        guardianNic: values.guardianNic ?? guardian.nic ?? null,
+        guardianPhone: values.guardianPhone ?? guardian.phone ?? null
+      };
+    }
+
+    return values;
+  };
+
+  const ensureFamilyMembership = async (
+    organizationId: string,
+    familyId: number | null | undefined,
+    patientId: number,
+    relationship: string | null
+  ): Promise<void> => {
+    if (!familyId) {
+      return;
+    }
+
+    const existing = await app.readDb
+      .select({ id: familyMembers.id, relationship: familyMembers.relationship })
+      .from(familyMembers)
+      .where(
+        and(
+          eq(familyMembers.organizationId, organizationId),
+          eq(familyMembers.familyId, familyId),
+          eq(familyMembers.patientId, patientId)
+        )
+      )
+      .limit(1);
+
+    if (existing.length === 0) {
+      await app.db.insert(familyMembers).values({
+        organizationId,
+        familyId,
+        patientId,
+        relationship
+      });
+      return;
+    }
+
+    if (relationship && existing[0].relationship !== relationship) {
+      await app.db
+        .update(familyMembers)
+        .set({ relationship, updatedAt: new Date() })
+        .where(eq(familyMembers.id, existing[0].id));
+    }
+  };
+
   const syncPatientSearch = async (row: {
     id: number;
     organizationId: string;
+    patientCode: string | null;
     fullName: string | null;
     firstName: string;
     lastName: string;
     nic: string | null;
     phone: string | null;
+    guardianName: string | null;
+    guardianNic: string | null;
+    guardianPhone: string | null;
     dob: string | null;
     createdAt: Date;
   }) => {
     await app.searchService.upsertPatient({
       id: row.id,
       organizationId: row.organizationId,
+      patientCode: row.patientCode,
       name: row.fullName ?? `${row.firstName} ${row.lastName}`.trim(),
       nic: row.nic,
       phone: row.phone,
+      guardianName: row.guardianName,
+      guardianNic: row.guardianNic,
+      guardianPhone: row.guardianPhone,
       dateOfBirth: row.dob,
       createdAt: row.createdAt.toISOString()
     });
@@ -461,18 +655,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         hasAnyKey(request.body, ["name", "dateOfBirth", "phone", "address"]) ||
         !hasAnyKey(request.body, ["firstName", "lastName", "gender"]);
 
-      let values: {
-        nic?: string | null;
-        firstName: string;
-        lastName: string;
-        dob: string;
-        age: number;
-        gender: "male" | "female" | "other";
-        phone?: string | null;
-        address?: string | null;
-        bloodGroup?: string | null;
-        familyId?: number | null;
-      };
+      let values: PatientWriteValues;
 
       if (useFrontendPayload) {
         const payload = parseOrThrowValidation(createPatientFrontendSchema, request.body);
@@ -487,7 +670,13 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           age: derivedAge,
           gender: payload.gender ?? "other",
           phone: payload.phone ?? payload.mobile ?? null,
-          address: payload.address ?? null
+          address: payload.address ?? null,
+          familyId: payload.familyId ?? null,
+          guardianPatientId: payload.guardianPatientId ?? null,
+          guardianName: payload.guardianName ?? null,
+          guardianNic: payload.guardianNic ?? null,
+          guardianPhone: payload.guardianPhone ?? null,
+          guardianRelationship: payload.guardianRelationship ?? null
         };
       } else {
         const payload = parseOrThrowValidation(createPatientSchema.strict(), request.body);
@@ -503,14 +692,25 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           phone: payload.phone ?? null,
           address: payload.address ?? null,
           bloodGroup: payload.bloodGroup ?? null,
-          familyId: payload.familyId ?? null
+          familyId: payload.familyId ?? null,
+          guardianPatientId: payload.guardianPatientId ?? null,
+          guardianName: payload.guardianName ?? null,
+          guardianNic: payload.guardianNic ?? null,
+          guardianPhone: payload.guardianPhone ?? null,
+          guardianRelationship: payload.guardianRelationship ?? null
         };
+      }
+
+      values = await resolveGuardianValues(actor.organizationId, null, values);
+      if (values.familyId) {
+        await assertFamilyExists(actor.organizationId, values.familyId);
       }
 
       const inserted = await app.db
         .insert(patients)
         .values({
           organizationId: actor.organizationId,
+          patientCode: buildPatientCode(),
           nic: values.nic ?? null,
           firstName: values.firstName,
           lastName: values.lastName,
@@ -520,9 +720,21 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           phone: values.phone ?? null,
           address: values.address ?? null,
           bloodGroup: values.bloodGroup ?? null,
-          familyId: values.familyId ?? null
+          familyId: values.familyId ?? null,
+          guardianPatientId: values.guardianPatientId ?? null,
+          guardianName: values.guardianName ?? null,
+          guardianNic: values.guardianNic ?? null,
+          guardianPhone: values.guardianPhone ?? null,
+          guardianRelationship: values.guardianRelationship ?? null
         })
         .returning();
+
+      await ensureFamilyMembership(
+        actor.organizationId,
+        values.familyId,
+        inserted[0].id,
+        values.age < 18 ? "child" : values.guardianRelationship ?? null
+      );
 
       await writeAuditLog(request, {
         entityType: "patient",
@@ -584,7 +796,28 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       const { id } = parseOrThrowValidation(idParamSchema, request.params);
       const useFrontendPayload =
         hasAnyKey(request.body, ["name", "dateOfBirth", "phone", "address"]) ||
-        !hasAnyKey(request.body, ["firstName", "lastName", "dob", "age", "gender", "bloodGroup", "familyId", "nic"]);
+        !hasAnyKey(request.body, [
+          "firstName",
+          "lastName",
+          "dob",
+          "age",
+          "gender",
+          "bloodGroup",
+          "familyId",
+          "nic",
+          "guardianPatientId",
+          "guardianName",
+          "guardianNic",
+          "guardianPhone",
+          "guardianRelationship"
+        ]);
+
+      const [existingPatient] = await app.readDb
+        .select()
+        .from(patients)
+        .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
+        .limit(1);
+      assertOrThrow(existingPatient, 404, "Patient not found");
 
       const updateData: Record<string, unknown> = {
         updatedAt: new Date()
@@ -618,8 +851,26 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         if (payload.address !== undefined) {
           updateData.address = payload.address;
         }
+        if (payload.familyId !== undefined) {
+          updateData.familyId = payload.familyId;
+        }
+        if (payload.guardianPatientId !== undefined) {
+          updateData.guardianPatientId = payload.guardianPatientId;
+        }
+        if (payload.guardianName !== undefined) {
+          updateData.guardianName = payload.guardianName;
+        }
+        if (payload.guardianNic !== undefined) {
+          updateData.guardianNic = payload.guardianNic;
+        }
+        if (payload.guardianPhone !== undefined) {
+          updateData.guardianPhone = payload.guardianPhone;
+        }
+        if (payload.guardianRelationship !== undefined) {
+          updateData.guardianRelationship = payload.guardianRelationship;
+        }
       } else {
-        const payload = parseOrThrowValidation(updatePatientSchema.strict(), request.body);
+        const payload = parseOrThrowValidation(updatePatientSchema, request.body);
 
         if (payload.firstName !== undefined) {
           updateData.firstName = payload.firstName;
@@ -654,12 +905,58 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         if (payload.familyId !== undefined) {
           updateData.familyId = payload.familyId;
         }
+        if (payload.guardianPatientId !== undefined) {
+          updateData.guardianPatientId = payload.guardianPatientId;
+        }
+        if (payload.guardianName !== undefined) {
+          updateData.guardianName = payload.guardianName;
+        }
+        if (payload.guardianNic !== undefined) {
+          updateData.guardianNic = payload.guardianNic;
+        }
+        if (payload.guardianPhone !== undefined) {
+          updateData.guardianPhone = payload.guardianPhone;
+        }
+        if (payload.guardianRelationship !== undefined) {
+          updateData.guardianRelationship = payload.guardianRelationship;
+        }
       }
+
+      const resolvedValues = await resolveGuardianValues(actor.organizationId, id, {
+        nic: (updateData.nic as string | null | undefined) ?? existingPatient.nic,
+        firstName: (updateData.firstName as string | undefined) ?? existingPatient.firstName,
+        lastName: (updateData.lastName as string | undefined) ?? existingPatient.lastName,
+        dob: (updateData.dob as string | undefined) ?? existingPatient.dob,
+        age: (updateData.age as number | undefined) ?? existingPatient.age,
+        gender: (updateData.gender as "male" | "female" | "other" | undefined) ?? existingPatient.gender,
+        phone: (updateData.phone as string | null | undefined) ?? existingPatient.phone,
+        address: (updateData.address as string | null | undefined) ?? existingPatient.address,
+        bloodGroup: (updateData.bloodGroup as string | null | undefined) ?? existingPatient.bloodGroup,
+        familyId: (updateData.familyId as number | null | undefined) ?? existingPatient.familyId,
+        guardianPatientId:
+          (updateData.guardianPatientId as number | null | undefined) ?? existingPatient.guardianPatientId,
+        guardianName: (updateData.guardianName as string | null | undefined) ?? existingPatient.guardianName,
+        guardianNic: (updateData.guardianNic as string | null | undefined) ?? existingPatient.guardianNic,
+        guardianPhone: (updateData.guardianPhone as string | null | undefined) ?? existingPatient.guardianPhone,
+        guardianRelationship:
+          (updateData.guardianRelationship as string | null | undefined) ?? existingPatient.guardianRelationship
+      });
+
+      if (resolvedValues.familyId) {
+        await assertFamilyExists(actor.organizationId, resolvedValues.familyId);
+      }
+
+      updateData.familyId = resolvedValues.familyId ?? null;
+      updateData.guardianPatientId = resolvedValues.guardianPatientId ?? null;
+      updateData.guardianName = resolvedValues.guardianName ?? null;
+      updateData.guardianNic = resolvedValues.guardianNic ?? null;
+      updateData.guardianPhone = resolvedValues.guardianPhone ?? null;
+      updateData.guardianRelationship = resolvedValues.guardianRelationship ?? null;
 
       const updated = await app.db
         .update(patients)
         .set(updateData)
-        .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId)))
+        .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
         .returning();
 
       assertOrThrow(updated.length === 1, 404, "Patient not found");
@@ -669,6 +966,12 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         action: "update",
         entityId: id
       });
+      await ensureFamilyMembership(
+        actor.organizationId,
+        resolvedValues.familyId,
+        id,
+        resolvedValues.age < 18 ? "child" : resolvedValues.guardianRelationship ?? null
+      );
       await syncPatientSearch(updated[0]);
       await invalidatePatientProfile(actor.organizationId, id);
       return { patient: serializePatientSummary(updated[0]) };
@@ -876,13 +1179,66 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
 
     const row = await app.readDb
-      .select({ familyId: patients.familyId })
+      .select({
+        familyId: patients.familyId,
+        guardianPatientId: patients.guardianPatientId,
+        guardianRelationship: patients.guardianRelationship
+      })
       .from(patients)
-      .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId)))
+      .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
       .limit(1);
     assertOrThrow(row.length === 1, 404, "Patient not found");
 
-    return { familyId: row[0].familyId };
+    if (!row[0].familyId) {
+      return {
+        familyId: null,
+        family: null,
+        guardianPatientId: row[0].guardianPatientId,
+        guardianRelationship: row[0].guardianRelationship,
+        members: []
+      };
+    }
+
+    const [family, members] = await Promise.all([
+      app.readDb
+        .select({ id: families.id, familyCode: families.familyCode, familyName: families.familyName })
+        .from(families)
+        .where(
+          and(
+            eq(families.id, row[0].familyId),
+            eq(families.organizationId, actor.organizationId),
+            isNull(families.deletedAt)
+          )
+        )
+        .limit(1),
+      app.readDb
+        .select({
+          membershipId: familyMembers.id,
+          patientId: patients.id,
+          patientCode: patients.patientCode,
+          firstName: patients.firstName,
+          lastName: patients.lastName,
+          nic: patients.nic,
+          relationship: familyMembers.relationship
+        })
+        .from(familyMembers)
+        .innerJoin(patients, eq(familyMembers.patientId, patients.id))
+        .where(
+          and(
+            eq(familyMembers.familyId, row[0].familyId),
+            eq(familyMembers.organizationId, actor.organizationId),
+            isNull(patients.deletedAt)
+          )
+        )
+    ]);
+
+    return {
+      familyId: row[0].familyId,
+      family: family[0] ?? null,
+      guardianPatientId: row[0].guardianPatientId,
+      guardianRelationship: row[0].guardianRelationship,
+      members
+    };
   });
 
   app.get(

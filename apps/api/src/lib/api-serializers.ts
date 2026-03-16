@@ -18,12 +18,15 @@ export type CreatedUserRow = AuthUserRow & {
 
 export type PatientSummaryRow = {
   id: number;
+  patientCode?: string | null;
   fullName: string | null;
   firstName?: string | null;
   lastName?: string | null;
   dob: string | null;
   phone: string | null;
   address: string | null;
+  familyId?: number | null;
+  guardianPatientId?: number | null;
   createdAt: Date;
 };
 
@@ -54,10 +57,13 @@ export const serializeCreatedUser = (row: CreatedUserRow) => ({
 
 export const serializePatientSummary = (patient: PatientSummaryRow) => ({
   id: patient.id,
+  patient_code: patient.patientCode ?? null,
   name: patient.fullName ?? buildDisplayName(patient.firstName ?? "", patient.lastName ?? ""),
   date_of_birth: patient.dob,
   phone: patient.phone,
   address: patient.address,
+  family_id: patient.familyId ?? null,
+  guardian_patient_id: patient.guardianPatientId ?? null,
   created_at: patient.createdAt
 });
 

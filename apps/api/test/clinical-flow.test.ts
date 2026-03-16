@@ -1115,6 +1115,149 @@ test("family create and member read flow returns the linked patient", async () =
   await app.close();
 });
 
+test("minor patients can link to a guardian patient and be found by guardian NIC", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createFamilyResponse = await app.inject({
+    method: "POST",
+    url: "/v1/families",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      familyName: `Guardian Family ${uniqueSuffix}`,
+      assigned: true
+    }
+  });
+
+  assert.equal(createFamilyResponse.statusCode, 201);
+  const createdFamily = createFamilyResponse.json() as { id: number };
+
+  const guardianResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      firstName: "Guardian",
+      lastName: uniqueSuffix,
+      dob: "1988-02-10",
+      gender: "female",
+      nic: `2000${uniqueSuffix.slice(-8)}`,
+      phone: "+94771112233",
+      familyId: createdFamily.id
+    }
+  });
+
+  assert.equal(guardianResponse.statusCode, 201);
+  const guardianBody = guardianResponse.json() as { patient: { id: number; patient_code: string | null } };
+  assert.equal(typeof guardianBody.patient.patient_code, "string");
+
+  const addGuardianToFamilyResponse = await app.inject({
+    method: "POST",
+    url: `/v1/families/${createdFamily.id}/members`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      patientId: guardianBody.patient.id,
+      relationship: "mother"
+    }
+  });
+
+  assert.equal(addGuardianToFamilyResponse.statusCode, 201);
+
+  const childResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      firstName: "Child",
+      lastName: uniqueSuffix,
+      dob: "2016-05-20",
+      gender: "male",
+      familyId: createdFamily.id,
+      guardianPatientId: guardianBody.patient.id,
+      guardianRelationship: "mother"
+    }
+  });
+
+  assert.equal(childResponse.statusCode, 201);
+  const childBody = childResponse.json() as { patient: { id: number; patient_code: string | null } };
+  assert.equal(typeof childBody.patient.patient_code, "string");
+
+  const profileResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${childBody.patient.id}/profile`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(profileResponse.statusCode, 200);
+  const profileBody = profileResponse.json() as {
+    patient: {
+      familyId: number | null;
+      guardianPatientId: number | null;
+      guardianNic: string | null;
+      guardianRelationship: string | null;
+    };
+  };
+  assert.equal(profileBody.patient.familyId, createdFamily.id);
+  assert.equal(profileBody.patient.guardianPatientId, guardianBody.patient.id);
+  assert.equal(profileBody.patient.guardianRelationship, "mother");
+
+  const searchResponse = await app.inject({
+    method: "GET",
+    url: `/v1/search/patients?q=${encodeURIComponent(`2000${uniqueSuffix.slice(-8)}`)}`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(searchResponse.statusCode, 200);
+  const searchBody = searchResponse.json() as {
+    patients: Array<{ id: number; guardian_nic: string | null; patient_code: string | null }>;
+  };
+  assert.equal(searchBody.patients.some((patient) => patient.id === childBody.patient.id), true);
+  assert.equal(
+    searchBody.patients.some((patient) => patient.id === childBody.patient.id && patient.guardian_nic !== null),
+    true
+  );
+
+  const patientFamilyResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${childBody.patient.id}/family`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(patientFamilyResponse.statusCode, 200);
+  const patientFamilyBody = patientFamilyResponse.json() as {
+    familyId: number | null;
+    guardianPatientId: number | null;
+    members: Array<{ patientId: number; patientCode: string | null; relationship: string | null }>;
+  };
+  assert.equal(patientFamilyBody.familyId, createdFamily.id);
+  assert.equal(patientFamilyBody.guardianPatientId, guardianBody.patient.id);
+  assert.equal(
+    patientFamilyBody.members.some((member) => member.patientId === childBody.patient.id && member.relationship === "child"),
+    true
+  );
+
+  await app.close();
+});
+
 test("encounter bundle and prescription detail flows remain consistent", async () => {
   if (!process.env.DATABASE_URL) {
     return;

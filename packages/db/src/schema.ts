@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigserial,
   bigint,
   boolean,
@@ -115,6 +116,7 @@ export const patients = pgTable(
     id: bigserial("id", { mode: "number" }).primaryKey(),
     organizationId: uuid("organization_id").notNull(),
     uuid: uuid("uuid").notNull().defaultRandom().unique(),
+    patientCode: varchar("patient_code", { length: 24 }).notNull(),
     nic: varchar("nic", { length: 20 }),
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
@@ -128,14 +130,23 @@ export const patients = pgTable(
     address: text("address"),
     bloodGroup: varchar("blood_group", { length: 5 }),
     familyId: bigint("family_id", { mode: "number" }).references(() => families.id),
+    guardianPatientId: bigint("guardian_patient_id", { mode: "number" }).references((): AnyPgColumn => patients.id),
+    guardianName: varchar("guardian_name", { length: 120 }),
+    guardianNic: varchar("guardian_nic", { length: 20 }),
+    guardianPhone: varchar("guardian_phone", { length: 30 }),
+    guardianRelationship: varchar("guardian_relationship", { length: 40 }),
     isActive: boolean("is_active").notNull().default(true),
     ...auditTimestamps,
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
   (table) => [
     unique("patients_org_nic_unique").on(table.organizationId, table.nic),
+    unique("patients_org_patient_code_unique").on(table.organizationId, table.patientCode),
     index("patients_org_full_name_idx").on(table.organizationId, table.fullName),
-    index("patients_org_family_idx").on(table.organizationId, table.familyId)
+    index("patients_org_family_idx").on(table.organizationId, table.familyId),
+    index("patients_org_patient_code_idx").on(table.organizationId, table.patientCode),
+    index("patients_org_guardian_patient_idx").on(table.organizationId, table.guardianPatientId),
+    index("patients_org_guardian_nic_idx").on(table.organizationId, table.guardianNic)
   ]
 );
 

@@ -119,8 +119,10 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
       .select({
         membershipId: familyMembers.id,
         patientId: patients.id,
+        patientCode: patients.patientCode,
         firstName: patients.firstName,
         lastName: patients.lastName,
+        nic: patients.nic,
         relationship: familyMembers.relationship
       })
       .from(familyMembers)

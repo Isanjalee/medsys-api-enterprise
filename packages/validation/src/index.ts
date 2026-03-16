@@ -42,6 +42,8 @@ const DRUG_SOURCES = ["clinical", "outside"] as const;
 const nicRegex = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
 const nameRegex = /^[A-Za-z .'-]+$/;
 const patientNameSchema = z.string().trim().min(1).max(80).regex(nameRegex, "Invalid name");
+const guardianNameSchema = z.string().trim().min(1).max(120);
+const guardianRelationshipSchema = z.string().trim().min(1).max(40);
 
 export const userRoleSchema = z.enum(USER_ROLES);
 export const genderSchema = z.enum(GENDERS);
@@ -75,10 +77,35 @@ export const createPatientSchema = z.object({
   phone: z.string().min(7).max(30).optional().nullable(),
   address: z.string().max(2000).optional().nullable(),
   bloodGroup: z.string().max(5).optional().nullable(),
-  familyId: z.number().int().positive().optional().nullable()
+  familyId: z.number().int().positive().optional().nullable(),
+  guardianPatientId: z.number().int().positive().optional().nullable(),
+  guardianName: guardianNameSchema.optional().nullable(),
+  guardianNic: z.string().regex(nicRegex, "Invalid NIC format").optional().nullable(),
+  guardianPhone: z.string().min(7).max(30).optional().nullable(),
+  guardianRelationship: guardianRelationshipSchema.optional().nullable()
 });
 
-export const updatePatientSchema = createPatientSchema.partial();
+export const updatePatientSchema = createPatientSchema
+  .partial()
+  .refine(
+    (value) =>
+      value.nic !== undefined ||
+      value.firstName !== undefined ||
+      value.lastName !== undefined ||
+      value.dob !== undefined ||
+      value.age !== undefined ||
+      value.gender !== undefined ||
+      value.phone !== undefined ||
+      value.address !== undefined ||
+      value.bloodGroup !== undefined ||
+      value.familyId !== undefined ||
+      value.guardianPatientId !== undefined ||
+      value.guardianName !== undefined ||
+      value.guardianNic !== undefined ||
+      value.guardianPhone !== undefined ||
+      value.guardianRelationship !== undefined,
+    "At least one field must be provided"
+  );
 
 export const createPatientFrontendSchema = z
   .object({
@@ -90,7 +117,13 @@ export const createPatientFrontendSchema = z
     priority: prioritySchema.optional(),
     dateOfBirth: dateOfBirthSchema,
     phone: z.string().trim().max(30).optional().nullable(),
-    address: z.string().trim().max(255).optional().nullable()
+    address: z.string().trim().max(255).optional().nullable(),
+    familyId: z.number().int().positive().optional().nullable(),
+    guardianPatientId: z.number().int().positive().optional().nullable(),
+    guardianName: guardianNameSchema.optional().nullable(),
+    guardianNic: z.string().regex(nicRegex, "Invalid NIC format").optional().nullable(),
+    guardianPhone: z.string().min(7).max(30).optional().nullable(),
+    guardianRelationship: guardianRelationshipSchema.optional().nullable()
   })
   .strict();
 
@@ -104,7 +137,13 @@ export const updatePatientFrontendSchema = z
     priority: prioritySchema.optional().nullable(),
     dateOfBirth: dateOfBirthSchema.optional(),
     phone: z.string().trim().max(30).optional().nullable(),
-    address: z.string().trim().max(255).optional().nullable()
+    address: z.string().trim().max(255).optional().nullable(),
+    familyId: z.number().int().positive().optional().nullable(),
+    guardianPatientId: z.number().int().positive().optional().nullable(),
+    guardianName: guardianNameSchema.optional().nullable(),
+    guardianNic: z.string().regex(nicRegex, "Invalid NIC format").optional().nullable(),
+    guardianPhone: z.string().min(7).max(30).optional().nullable(),
+    guardianRelationship: guardianRelationshipSchema.optional().nullable()
   })
   .strict()
   .refine(
@@ -117,7 +156,13 @@ export const updatePatientFrontendSchema = z
       value.priority !== undefined ||
       value.dateOfBirth !== undefined ||
       value.phone !== undefined ||
-      value.address !== undefined,
+      value.address !== undefined ||
+      value.familyId !== undefined ||
+      value.guardianPatientId !== undefined ||
+      value.guardianName !== undefined ||
+      value.guardianNic !== undefined ||
+      value.guardianPhone !== undefined ||
+      value.guardianRelationship !== undefined,
     "At least one field must be provided"
   );
 

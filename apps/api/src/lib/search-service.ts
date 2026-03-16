@@ -6,9 +6,13 @@ type DbClient = ReturnType<typeof buildDbClient>["db"];
 
 export type PatientSearchHit = {
   id: number;
+  patient_code: string | null;
   name: string;
   nic: string | null;
   phone: string | null;
+  guardian_name: string | null;
+  guardian_nic: string | null;
+  guardian_phone: string | null;
   date_of_birth: string | null;
   created_at: string;
   score: number | null;
@@ -24,9 +28,13 @@ export type PatientSearchResult = {
 export type PatientSearchDoc = {
   id: number;
   organizationId: string;
+  patientCode: string | null;
   name: string;
   nic: string | null;
   phone: string | null;
+  guardianName: string | null;
+  guardianNic: string | null;
+  guardianPhone: string | null;
   dateOfBirth: string | null;
   createdAt: string;
 };
@@ -57,18 +65,26 @@ const buildSearchDocId = (organizationId: string, entityId: string | number): st
 
 const toPatientSearchHit = (row: {
   id: number;
+  patientCode: string | null;
   fullName: string | null;
   firstName: string;
   lastName: string;
   nic: string | null;
   phone: string | null;
+  guardianName: string | null;
+  guardianNic: string | null;
+  guardianPhone: string | null;
   dob: string | null;
   createdAt: Date;
 }): PatientSearchHit => ({
   id: row.id,
+  patient_code: row.patientCode,
   name: row.fullName ?? `${row.firstName} ${row.lastName}`.trim(),
   nic: row.nic,
   phone: row.phone,
+  guardian_name: row.guardianName,
+  guardian_nic: row.guardianNic,
+  guardian_phone: row.guardianPhone,
   date_of_birth: row.dob,
   created_at: row.createdAt.toISOString(),
   score: null
@@ -83,8 +99,12 @@ const createDbFallbackSearchService = (db: DbClient): SearchService => ({
       isNull(patients.deletedAt),
       or(
         ilike(patients.fullName, pattern),
+        ilike(patients.patientCode, pattern),
         ilike(patients.nic, pattern),
-        ilike(patients.phone, pattern)
+        ilike(patients.phone, pattern),
+        ilike(patients.guardianName, pattern),
+        ilike(patients.guardianNic, pattern),
+        ilike(patients.guardianPhone, pattern)
       )
     );
     const offset = (page - 1) * limit;
@@ -93,11 +113,15 @@ const createDbFallbackSearchService = (db: DbClient): SearchService => ({
       db
         .select({
           id: patients.id,
+          patientCode: patients.patientCode,
           fullName: patients.fullName,
           firstName: patients.firstName,
           lastName: patients.lastName,
           nic: patients.nic,
           phone: patients.phone,
+          guardianName: patients.guardianName,
+          guardianNic: patients.guardianNic,
+          guardianPhone: patients.guardianPhone,
           dob: patients.dob,
           createdAt: patients.createdAt
         })
@@ -170,9 +194,13 @@ const createOpenSearchService = (
       properties: {
         organizationId: { type: "keyword" },
         patientId: { type: "long" },
+        patientCode: { type: "keyword", normalizer: "keyword_lowercase" },
         name: { type: "text" },
         nic: { type: "keyword", normalizer: "keyword_lowercase" },
         phone: { type: "keyword", normalizer: "keyword_lowercase" },
+        guardianName: { type: "text" },
+        guardianNic: { type: "keyword", normalizer: "keyword_lowercase" },
+        guardianPhone: { type: "keyword", normalizer: "keyword_lowercase" },
         dateOfBirth: { type: "date", format: "strict_date_optional_time||strict_date" },
         createdAt: { type: "date" }
       }
@@ -211,7 +239,7 @@ const createOpenSearchService = (
                   {
                     multi_match: {
                       query,
-                      fields: ["name^3", "nic^2", "phone^2"],
+                      fields: ["name^3", "patientCode^4", "nic^3", "phone^2", "guardianName^2", "guardianNic^3", "guardianPhone^2"],
                       fuzziness: "AUTO",
                       operator: "and"
                     }
@@ -228,9 +256,13 @@ const createOpenSearchService = (
               _score?: number;
               _source?: {
                 patientId: number;
+                patientCode?: string | null;
                 name: string;
                 nic?: string | null;
                 phone?: string | null;
+                guardianName?: string | null;
+                guardianNic?: string | null;
+                guardianPhone?: string | null;
                 dateOfBirth?: string | null;
                 createdAt: string;
               };
@@ -242,9 +274,13 @@ const createOpenSearchService = (
           patients:
             body.hits?.hits?.map((hit) => ({
               id: Number(hit._source?.patientId ?? 0),
+              patient_code: hit._source?.patientCode ?? null,
               name: hit._source?.name ?? "",
               nic: hit._source?.nic ?? null,
               phone: hit._source?.phone ?? null,
+              guardian_name: hit._source?.guardianName ?? null,
+              guardian_nic: hit._source?.guardianNic ?? null,
+              guardian_phone: hit._source?.guardianPhone ?? null,
               date_of_birth: hit._source?.dateOfBirth ?? null,
               created_at: hit._source?.createdAt ?? new Date(0).toISOString(),
               score: hit._score ?? null
@@ -265,9 +301,13 @@ const createOpenSearchService = (
           body: JSON.stringify({
             organizationId: doc.organizationId,
             patientId: doc.id,
+            patientCode: doc.patientCode,
             name: doc.name,
             nic: doc.nic,
             phone: doc.phone,
+            guardianName: doc.guardianName,
+            guardianNic: doc.guardianNic,
+            guardianPhone: doc.guardianPhone,
             dateOfBirth: doc.dateOfBirth,
             createdAt: doc.createdAt
           })
