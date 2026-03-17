@@ -40,6 +40,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   owner: PERMISSIONS,
   doctor: [
     "patient.read",
+    "patient.write",
     "patient.history.read",
     "patient.history.write",
     "patient.profile.read",
@@ -54,6 +55,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "patient.timeline.write",
     "clinical.icd10.read",
     "appointment.read",
+    "appointment.create",
     "appointment.update",
     "analytics.read",
     "encounter.read",

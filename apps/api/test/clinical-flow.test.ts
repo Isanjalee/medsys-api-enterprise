@@ -641,21 +641,6 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
   const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
   const uniqueSuffix = Date.now().toString();
 
-  const deniedBeforeGrant = await app.inject({
-    method: "POST",
-    url: "/v1/patients",
-    headers: {
-      authorization: `Bearer ${doctorLogin.accessToken}`
-    },
-    payload: {
-      name: `Doctor Created ${uniqueSuffix}`,
-      dateOfBirth: DEFAULT_PATIENT_DOB,
-      gender: "male"
-    }
-  });
-
-  assert.equal(deniedBeforeGrant.statusCode, 403);
-
   const grantResponse = await app.inject({
     method: "PATCH",
     url: `/v1/users/${doctorId}`,
@@ -663,7 +648,7 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
       authorization: `Bearer ${ownerLogin.accessToken}`
     },
     payload: {
-      extraPermissions: ["patient.write", "appointment.create", "prescription.dispense"]
+      extraPermissions: ["prescription.dispense"]
     }
   });
 
@@ -671,11 +656,7 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
   const grantedUser = grantResponse.json() as {
     user: { extra_permissions: string[]; permissions: string[] };
   };
-  assert.deepEqual(grantedUser.user.extra_permissions, [
-    "appointment.create",
-    "patient.write",
-    "prescription.dispense"
-  ]);
+  assert.deepEqual(grantedUser.user.extra_permissions, ["prescription.dispense"]);
   assert.equal(grantedUser.user.permissions.includes("patient.write"), true);
   assert.equal(grantedUser.user.permissions.includes("appointment.create"), true);
 
@@ -695,11 +676,8 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
   };
   assert.equal(meBody.role, "doctor");
   assert.equal(meBody.permissions.includes("patient.write"), true);
-  assert.deepEqual(meBody.extra_permissions, [
-    "appointment.create",
-    "patient.write",
-    "prescription.dispense"
-  ]);
+  assert.equal(meBody.permissions.includes("appointment.create"), true);
+  assert.deepEqual(meBody.extra_permissions, ["prescription.dispense"]);
 
   const createResponse = await app.inject({
     method: "POST",

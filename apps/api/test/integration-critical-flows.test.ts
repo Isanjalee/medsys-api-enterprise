@@ -353,7 +353,7 @@ test("role access matrix enforces critical allow and deny paths", async () => {
         expectedStatus: 201
       },
       {
-        name: "doctor cannot create appointments under current policy",
+        name: "doctor can create appointments under self-service policy",
         accessToken: doctor.accessToken,
         method: "POST" as const,
         url: "/v1/appointments",
@@ -361,7 +361,7 @@ test("role access matrix enforces critical allow and deny paths", async () => {
           patientId,
           scheduledAt: "2026-03-22T09:15:00Z"
         },
-        expectedStatus: 403
+        expectedStatus: 201
       },
       {
         name: "assistant cannot create encounters",
