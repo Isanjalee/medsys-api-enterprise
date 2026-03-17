@@ -2030,7 +2030,9 @@ test("auth me returns authenticated identity shape", async () => {
   assert.equal(body.email, "doctor@medsys.local");
   assert.equal(body.role, "doctor");
   assert.equal(body.permissions.includes("appointment.read"), true);
-  assert.equal(body.permissions.includes("appointment.create"), false);
+  assert.equal(body.permissions.includes("appointment.create"), true);
+  assert.equal(body.permissions.includes("patient.write"), true);
+  assert.equal(body.permissions.includes("prescription.dispense"), true);
   assert.deepEqual(body.extra_permissions, []);
   assert.equal(typeof body.created_at, "string");
   assert.equal("organizationId" in body, false);

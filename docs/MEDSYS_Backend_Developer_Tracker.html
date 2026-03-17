@@ -62,8 +62,8 @@
 
     <h2>3. Current Delivery Snapshot</h2>
     <div class="grid">
-      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, and 7</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening and effective permission override model for selected doctors</li></ul></div>
-      <div class="panel"><h3>Open or Held</h3><ul><li>Phase 6 AWS rollout is deferred</li><li>Optional assistant-support bundle expansion review</li><li>Optional BFF governance wording</li></ul></div>
+      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, and 7</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening and doctor self-service workflow permissions for registration, appointments, and dispense</li></ul></div>
+      <div class="panel"><h3>Open or Held</h3><ul><li>Phase 6 AWS rollout is deferred</li><li>Optional remaining doctor extra-permission bundle review</li><li>Optional BFF governance wording</li></ul></div>
     </div>
     <div class="callout"><strong>Current backend status:</strong> application features are implemented and verified through the core delivery phases. Phase 6 infrastructure artifacts are complete in code, and live AWS rollout is intentionally deferred.</div>
 
@@ -108,7 +108,7 @@
     <table><thead><tr><th style="width:16%">Alignment Area</th><th style="width:18%">Status</th><th>Current State</th></tr></thead><tbody>
       <tr><td>Core endpoint coverage</td><td class="good">Complete</td><td>Backend supports the aligned auth, patient, guardian-aware patient search/profile, user, history, clinical lookup, analytics, inventory, encounter, and prescription flows.</td></tr>
       <tr><td>Validation and response mapping</td><td class="good">Complete</td><td>Shared validation envelope and shared serializers support the aligned backend surface, including patient summary responses, search responses, and guardian-linked detail flows.</td></tr>
-      <tr><td>Permission enforcement</td><td class="good">Complete</td><td>Shared permission catalog and centralized effective-permission resolution cover the full implemented API surface, including user-level doctor overrides.</td></tr>
+      <tr><td>Permission enforcement</td><td class="good">Complete</td><td>Shared permission catalog and centralized effective-permission resolution cover the full implemented API surface, including the default doctor self-service workflow and user-level doctor overrides.</td></tr>
       <tr><td>Frontend store retirement</td><td class="good">Verified</td><td>Frontend evidence confirms no live-path prototype persistence and verified BFF-backed journeys.</td></tr>
       <tr><td>Open governance item</td><td class="warn">Optional</td><td>Long-term ownership of browser-facing normalization between BFF and backend can still be formalized, but it does not block current delivery.</td></tr>
     </tbody></table>
@@ -119,13 +119,13 @@
     <table><thead><tr><th style="width:22%">Area</th><th style="width:14%">Status</th><th>What Remains</th></tr></thead><tbody>
       <tr><td>Phase 6 operational closeout</td><td class="hold">On Hold</td><td>Resume only if AWS rollout becomes an approved workstream again.</td></tr>
       <tr><td>Staging acceptance evidence</td><td class="hold">On Hold</td><td>Deferred with AWS rollout; no current execution target.</td></tr>
-      <tr><td>Assistant-support bundle review</td><td class="warn">Optional</td><td>Current backend policy allows owners to grant a small assistant-support subset to selected doctors; expand only if new operational scenarios require it.</td></tr>
+      <tr><td>Remaining doctor extra-permission bundle review</td><td class="warn">Optional</td><td>Current backend policy keeps <span class="mono">family.write</span> and <span class="mono">inventory.write</span> as optional doctor-specific extras; expand only if new operational scenarios require it.</td></tr>
       <tr><td>Frontend/BFF governance wording</td><td class="warn">Optional</td><td>Document final ownership of browser-facing response normalization if stricter architecture wording is desired.</td></tr>
     </tbody></table>
 
     <h2>8. Test and Verification Snapshot</h2>
     <table><thead><tr><th style="width:26%">Surface</th><th style="width:18%">Result</th><th>Evidence</th></tr></thead><tbody>
-      <tr><td>API automated tests</td><td class="good">51 passing</td><td>Includes contract, integration, validation, deny-path coverage, and doctor extra-permission assignment and assistant-support coverage.</td></tr>
+      <tr><td>API automated tests</td><td class="good">52 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, and remaining doctor extra-permission assignment coverage.</td></tr>
       <tr><td>Worker automated tests</td><td class="good">6 passing</td><td>Covers async audit retry and DLQ behaviors.</td></tr>
       <tr><td>Frontend alignment verification</td><td class="good">Verified</td><td>Authenticated live BFF flows exercised against the backend.</td></tr>
       <tr><td>Infrastructure live verification</td><td class="hold">On Hold</td><td>Deferred intentionally because AWS rollout is not currently planned.</td></tr>
@@ -135,13 +135,13 @@
     <ol>
       <li>Keep Phase 6 marked deferred until cloud rollout becomes part of the delivery plan again.</li>
       <li>Maintain infrastructure code without treating live AWS execution as a current blocker.</li>
-      <li>Review the assistant-support permission bundle only if operations need more than the current controlled subset.</li>
+      <li>Review the remaining doctor extra-permission bundle only if operations need more than the current default doctor workflow plus optional family or inventory additions.</li>
       <li>Keep this tracker and the client specification as the only maintained documentation pair.</li>
     </ol>
 
     <h2>10. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 16, 2026.</li>
+      <li>Repository implementation state as of March 17, 2026.</li>
       <li>Completed phase verification work through Phases 1, 2, 3, 4, 5, and 7.</li>
       <li>Frontend alignment evidence confirming BE-020 closure for frontend scope.</li>
       <li>Post-March 11 updates including patient required-field enforcement, seeded relational demo data, user-level effective permission overrides, and refreshed client documentation.</li>

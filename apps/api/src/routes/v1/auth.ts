@@ -195,7 +195,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: "doctor-support@example.com",
               password: "doctor-pass-123",
               role: "doctor",
-              extraPermissions: ["appointment.create", "prescription.dispense", "inventory.write"]
+              extraPermissions: ["inventory.write"]
             }
           }
         }

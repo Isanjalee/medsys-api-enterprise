@@ -84,18 +84,15 @@
     <h3>3.1 Effective Permission Resolution</h3>
     <p>The backend resolves a user's effective permissions centrally as:</p>
     <p><span class="mono">effective permissions = role base permissions + extra_permissions</span></p>
-    <p>This means a doctor can stay a doctor while receiving a controlled assistant-support subset of additional actions. The system does not model this as two concurrent roles.</p>
+    <p>This means a doctor can stay a doctor while receiving controlled per-user permission additions on top of the base doctor workflow. The system does not model this as two concurrent roles.</p>
 
     <h3>3.2 Assistant-Support Permission Subset</h3>
     <p>Owners can currently grant the following extra permissions to doctor accounts:</p>
     <ul>
-      <li><span class="mono">patient.write</span></li>
-      <li><span class="mono">appointment.create</span></li>
       <li><span class="mono">family.write</span></li>
       <li><span class="mono">inventory.write</span></li>
-      <li><span class="mono">prescription.dispense</span></li>
     </ul>
-    <p>Owner-only permissions such as user administration or audit access are not part of this bundle and should not be expected on doctor accounts.</p>
+    <p>Doctors now receive <span class="mono">patient.write</span>, <span class="mono">appointment.create</span>, and <span class="mono">prescription.dispense</span> by default as part of the base doctor workflow. Owner-only permissions such as user administration or audit access are not part of this model and should not be expected on doctor accounts.</p>
   </section>
 
   <section class="page">
@@ -110,7 +107,7 @@
         <tr><td><span class="mono">GET /v1/auth/me</span></td><td>Load current session profile</td><td>Frontend should call this after app bootstrap or session restore and treat it as the source of truth for permissions.</td></tr>
         <tr><td><span class="mono">POST /v1/auth/logout</span></td><td>Revoke active refresh tokens</td><td>Authenticated route.</td></tr>
         <tr><td><span class="mono">GET /v1/auth/status</span></td><td>Bootstrap status</td><td>Unauthenticated helper for initial setup state.</td></tr>
-        <tr><td><span class="mono">POST /v1/auth/register</span></td><td>Create a user or bootstrap first owner</td><td>Supports standard user creation and also doctor accounts with allowed <span class="mono">extraPermissions</span>.</td></tr>
+        <tr><td><span class="mono">POST /v1/auth/register</span></td><td>Create a user or bootstrap first owner</td><td>Supports standard user creation and doctor accounts with optional extra permissions beyond the default doctor workflow.</td></tr>
       </tbody>
     </table>
 
@@ -125,27 +122,25 @@
     "email": "doctor-support@example.com",
     "role": "doctor",
     "permissions": [
-      "appointment.create",
       "appointment.read",
+      "appointment.create",
       "appointment.update",
       "encounter.read",
       "encounter.write",
       "inventory.read",
-      "inventory.write",
       "patient.read",
       "patient.write",
-      "prescription.read"
+      "prescription.read",
+      "prescription.dispense"
     ],
     "extra_permissions": [
-      "appointment.create",
-      "inventory.write",
-      "patient.write"
+      "inventory.write"
     ]
   }
 }</pre>
 
     <h3>4.2 Frontend Authorization Rule</h3>
-    <p>Frontend clients should render actions based on the returned <span class="mono">permissions</span> array. A doctor with assistant-support permissions must still appear as a doctor in identity displays, but assistant actions should be shown when the required permission is present.</p>
+    <p>Frontend clients should render actions based on the returned <span class="mono">permissions</span> array. A doctor must still appear as a doctor in identity displays, and optional extra permissions should only expand that base workflow.</p>
 
     <h2>5. User Management Contract</h2>
     <table>
@@ -154,17 +149,16 @@
       </thead>
       <tbody>
         <tr><td><span class="mono">GET /v1/users</span></td><td>List users</td><td>Returns each user with <span class="mono">role</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
-        <tr><td><span class="mono">POST /v1/users</span></td><td>Create user</td><td>Supports both frontend-style <span class="mono">name</span> payloads and direct API <span class="mono">firstName/lastName</span> payloads. Owners can create a doctor with allowed <span class="mono">extraPermissions</span>.</td></tr>
-        <tr><td><span class="mono">PATCH /v1/users/:id</span></td><td>Update activation or extra permissions</td><td>Used by owners to activate or deactivate users and to grant or clear the assistant-support permission subset on doctor accounts.</td></tr>
+        <tr><td><span class="mono">POST /v1/users</span></td><td>Create user</td><td>Supports both frontend-style <span class="mono">name</span> payloads and direct API <span class="mono">firstName/lastName</span> payloads. Owners can create a doctor with allowed optional extra permissions such as <span class="mono">inventory.write</span> or <span class="mono">family.write</span>.</td></tr>
+        <tr><td><span class="mono">PATCH /v1/users/:id</span></td><td>Update activation or extra permissions</td><td>Used by owners to activate or deactivate users and to grant or clear the remaining allowed doctor extra-permission subset.</td></tr>
       </tbody>
     </table>
 
     <h3>5.1 Example Permission Assignment</h3>
     <pre>{
   "extraPermissions": [
-    "patient.write",
-    "appointment.create",
-    "prescription.dispense"
+    "inventory.write",
+    "family.write"
   ]
 }</pre>
     <p>Only valid permission names are accepted. Unsupported permission names or owner-only permissions are rejected by the backend.</p>
@@ -177,11 +171,11 @@
         <tr><th style="width:18%">Domain</th><th style="width:26%">Primary Routes</th><th style="width:24%">Key Permissions</th><th>Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td><span class="mono">GET /v1/patients</span> is a summary-list contract. Full identity and guardian details belong to <span class="mono">/v1/patients/:id/profile</span>. Selected doctors can perform registration only if granted <span class="mono">patient.write</span>.</td></tr>
+        <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td><span class="mono">GET /v1/patients</span> is a summary-list contract. Full identity and guardian details belong to <span class="mono">/v1/patients/:id/profile</span>. Doctors can perform patient registration under the default doctor workflow.</td></tr>
         <tr><td>Families</td><td><span class="mono">/v1/families</span></td><td><span class="mono">family.read</span>, <span class="mono">family.write</span></td><td>Doctor accounts can receive <span class="mono">family.write</span> through assistant-support permissions.</td></tr>
         <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td><td><span class="mono">appointment.read</span>, <span class="mono">appointment.create</span>, <span class="mono">appointment.update</span></td><td>Appointment creation is no longer tied only to the assistant role. It follows permission checks.</td></tr>
         <tr><td>Encounters</td><td><span class="mono">/v1/encounters</span></td><td><span class="mono">encounter.read</span>, <span class="mono">encounter.write</span></td><td>Doctor base permissions already cover clinical encounter authoring.</td></tr>
-        <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td><span class="mono">prescription.read</span>, <span class="mono">prescription.dispense</span></td><td>Dispense actions can be extended to selected doctors through <span class="mono">extra_permissions</span>.</td></tr>
+        <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td><span class="mono">prescription.read</span>, <span class="mono">prescription.dispense</span></td><td>Doctors can access the pending dispense queue and complete dispense workflow under the default doctor permission set.</td></tr>
         <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td><span class="mono">inventory.read</span>, <span class="mono">inventory.write</span></td><td>Mutation routes are permission-checked; selected doctors can inherit inventory write access.</td></tr>
         <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical</span></td><td><span class="mono">clinical.icd10.read</span></td><td>Reference read flows for ICD-10 search.</td></tr>
         <tr><td>Analytics</td><td><span class="mono">/v1/analytics</span></td><td><span class="mono">analytics.read</span></td><td>Operational dashboards and cache metrics.</td></tr>
