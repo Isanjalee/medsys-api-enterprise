@@ -648,7 +648,7 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
       authorization: `Bearer ${ownerLogin.accessToken}`
     },
     payload: {
-      extraPermissions: ["prescription.dispense"]
+      extraPermissions: []
     }
   });
 
@@ -656,9 +656,10 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
   const grantedUser = grantResponse.json() as {
     user: { extra_permissions: string[]; permissions: string[] };
   };
-  assert.deepEqual(grantedUser.user.extra_permissions, ["prescription.dispense"]);
+  assert.deepEqual(grantedUser.user.extra_permissions, []);
   assert.equal(grantedUser.user.permissions.includes("patient.write"), true);
   assert.equal(grantedUser.user.permissions.includes("appointment.create"), true);
+  assert.equal(grantedUser.user.permissions.includes("prescription.dispense"), true);
 
   const meResponse = await app.inject({
     method: "GET",
@@ -677,7 +678,8 @@ test("owner can grant assistant-support permissions to a doctor", async () => {
   assert.equal(meBody.role, "doctor");
   assert.equal(meBody.permissions.includes("patient.write"), true);
   assert.equal(meBody.permissions.includes("appointment.create"), true);
-  assert.deepEqual(meBody.extra_permissions, ["prescription.dispense"]);
+  assert.equal(meBody.permissions.includes("prescription.dispense"), true);
+  assert.deepEqual(meBody.extra_permissions, []);
 
   const createResponse = await app.inject({
     method: "POST",
@@ -2156,7 +2158,7 @@ test("doctor cannot delete patients without patient.delete permission", async ()
   await app.close();
 });
 
-test("doctor cannot access dispense queue without prescription.dispense permission", async () => {
+test("doctor can access dispense queue under self-service policy", async () => {
   if (!process.env.DATABASE_URL) {
     return;
   }
@@ -2172,7 +2174,7 @@ test("doctor cannot access dispense queue without prescription.dispense permissi
     }
   });
 
-  assert.equal(response.statusCode, 403);
+  assert.equal(response.statusCode, 200);
   await app.close();
 });
 

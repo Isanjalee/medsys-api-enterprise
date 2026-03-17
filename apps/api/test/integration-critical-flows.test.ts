@@ -383,7 +383,7 @@ test("role access matrix enforces critical allow and deny paths", async () => {
         accessToken: doctor.accessToken,
         method: "GET" as const,
         url: "/v1/prescriptions/queue/pending-dispense",
-        expectedStatus: 403
+        expectedStatus: 200
       },
       {
         name: "owner can access audit logs",
