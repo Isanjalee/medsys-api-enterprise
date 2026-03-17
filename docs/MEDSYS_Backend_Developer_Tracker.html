@@ -85,6 +85,7 @@
     <h3>5.1 Frontend Contract Alignment</h3>
     <ul>
       <li>Backend endpoints added or aligned for auth, users, patients, patient history, ICD-10 lookup, and logout.</li>
+      <li>Patient summary/profile separation is now explicit: lightweight list responses, identity-focused search responses, and full profile responses after selection.</li>
       <li>Shared validation envelopes, shared serializers, effective permission resolution, and Swagger request-body examples are implemented across the <span class="mono">/v1</span> surface.</li>
       <li>Frontend BFF integration has been verified against the backend through authenticated end-to-end flows, and prototype store retirement is verified.</li>
     </ul>
@@ -93,7 +94,7 @@
     <h3>5.3 Phase 2</h3>
     <ul><li>Async audit publishing and worker consumption.</li><li>Retry queue, exponential backoff, dead-letter queue, and direct-write fallback.</li></ul>
     <h3>5.4 Phase 3</h3>
-    <ul><li>Patient search endpoint with OpenSearch acceleration and DB fallback.</li><li>Cache service with invalidation hooks for appointments, patients, and encounters.</li><li>Cache statistics endpoint.</li></ul>
+    <ul><li>Patient search endpoint with OpenSearch acceleration and DB fallback.</li><li>Search now covers patient code, patient NIC, phone, guardian name, guardian NIC, and guardian phone.</li><li>Cache service with invalidation hooks for appointments, patients, and encounters.</li><li>Cache statistics endpoint.</li></ul>
     <h3>5.5 Phase 4</h3>
     <ul><li>Metrics endpoint, request tracing, authenticated observability summary.</li><li>PHI-safe logging, optional Sentry, login lockout, sensitive-action throttles.</li><li>Refresh-token family tracking and replay-triggered revocation.</li></ul>
     <h3>5.6 Phase 5</h3>
@@ -105,8 +106,8 @@
 
     <h2>6. Frontend Alignment Summary</h2>
     <table><thead><tr><th style="width:16%">Alignment Area</th><th style="width:18%">Status</th><th>Current State</th></tr></thead><tbody>
-      <tr><td>Core endpoint coverage</td><td class="good">Complete</td><td>Backend supports the aligned auth, patient, user, history, clinical lookup, analytics, inventory, encounter, and prescription flows.</td></tr>
-      <tr><td>Validation and response mapping</td><td class="good">Complete</td><td>Shared validation envelope and shared serializers support the aligned backend surface.</td></tr>
+      <tr><td>Core endpoint coverage</td><td class="good">Complete</td><td>Backend supports the aligned auth, patient, guardian-aware patient search/profile, user, history, clinical lookup, analytics, inventory, encounter, and prescription flows.</td></tr>
+      <tr><td>Validation and response mapping</td><td class="good">Complete</td><td>Shared validation envelope and shared serializers support the aligned backend surface, including patient summary responses, search responses, and guardian-linked detail flows.</td></tr>
       <tr><td>Permission enforcement</td><td class="good">Complete</td><td>Shared permission catalog and centralized effective-permission resolution cover the full implemented API surface, including user-level doctor overrides.</td></tr>
       <tr><td>Frontend store retirement</td><td class="good">Verified</td><td>Frontend evidence confirms no live-path prototype persistence and verified BFF-backed journeys.</td></tr>
       <tr><td>Open governance item</td><td class="warn">Optional</td><td>Long-term ownership of browser-facing normalization between BFF and backend can still be formalized, but it does not block current delivery.</td></tr>

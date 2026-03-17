@@ -163,6 +163,7 @@
         <tr><td><span class="mono">id</span></td><td>BIGSERIAL</td><td>Yes</td><td>Sequence generated</td><td>Primary key.</td></tr>
         <tr><td><span class="mono">organization_id</span></td><td>UUID</td><td>Yes</td><td>None</td><td>Tenant scope.</td></tr>
         <tr><td><span class="mono">uuid</span></td><td>UUID</td><td>Yes</td><td><span class="mono">gen_random_uuid()</span></td><td>Unique patient UUID.</td></tr>
+        <tr><td><span class="mono">patient_code</span></td><td>VARCHAR(24)</td><td>Yes</td><td>Application generated</td><td>Always-present patient identifier added in <span class="mono">V10</span>; unique per organization.</td></tr>
         <tr><td><span class="mono">nic</span></td><td>VARCHAR(20)</td><td>No</td><td>None</td><td>Optional identity number; unique per organization when present.</td></tr>
         <tr><td><span class="mono">first_name</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required.</td></tr>
         <tr><td><span class="mono">last_name</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required.</td></tr>
@@ -174,13 +175,18 @@
         <tr><td><span class="mono">address</span></td><td>TEXT</td><td>No</td><td>None</td><td>Optional address.</td></tr>
         <tr><td><span class="mono">blood_group</span></td><td>VARCHAR(5)</td><td>No</td><td>None</td><td>Optional short blood group.</td></tr>
         <tr><td><span class="mono">family_id</span></td><td>BIGINT</td><td>No</td><td>None</td><td>Optional foreign key to <span class="mono">families.id</span>.</td></tr>
+        <tr><td><span class="mono">guardian_patient_id</span></td><td>BIGINT</td><td>No</td><td>None</td><td>Optional link to another patient row used as guardian; added in <span class="mono">V10</span>.</td></tr>
+        <tr><td><span class="mono">guardian_name</span></td><td>VARCHAR(120)</td><td>No</td><td>None</td><td>Optional guardian display name for minors or dependent patients.</td></tr>
+        <tr><td><span class="mono">guardian_nic</span></td><td>VARCHAR(20)</td><td>No</td><td>None</td><td>Optional guardian NIC, searchable and not unique.</td></tr>
+        <tr><td><span class="mono">guardian_phone</span></td><td>VARCHAR(30)</td><td>No</td><td>None</td><td>Optional guardian phone, searchable and not unique.</td></tr>
+        <tr><td><span class="mono">guardian_relationship</span></td><td>VARCHAR(40)</td><td>No</td><td>None</td><td>Optional guardian relationship label such as <span class="mono">mother</span>, <span class="mono">father</span>, or <span class="mono">guardian</span>.</td></tr>
         <tr><td><span class="mono">is_active</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">TRUE</span></td><td>Operational active flag.</td></tr>
         <tr><td><span class="mono">created_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Creation timestamp.</td></tr>
         <tr><td><span class="mono">updated_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Update timestamp.</td></tr>
         <tr><td><span class="mono">deleted_at</span></td><td>TIMESTAMPTZ</td><td>No</td><td>None</td><td>Soft delete marker.</td></tr>
       </tbody>
     </table>
-    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">uuid</span>; unique <span class="mono">patients_org_nic_unique</span> on <span class="mono">(organization_id, nic)</span>; foreign key <span class="mono">family_id -&gt; families.id</span>; <span class="mono">full_name</span>, <span class="mono">dob</span>, and <span class="mono">age</span> are <span class="mono">NOT NULL</span> after <span class="mono">V7</span>. <strong>Indexes:</strong> <span class="mono">patients_org_full_name_idx</span>, <span class="mono">patients_org_family_idx</span>.</p>
+    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">uuid</span>; unique <span class="mono">patients_org_nic_unique</span> on <span class="mono">(organization_id, nic)</span>; unique <span class="mono">patients_org_patient_code_unique</span> on <span class="mono">(organization_id, patient_code)</span>; foreign key <span class="mono">family_id -&gt; families.id</span>; foreign key <span class="mono">guardian_patient_id -&gt; patients.id</span>; <span class="mono">full_name</span>, <span class="mono">dob</span>, <span class="mono">age</span>, and <span class="mono">patient_code</span> are <span class="mono">NOT NULL</span> after <span class="mono">V10</span>. <strong>Indexes:</strong> <span class="mono">patients_org_full_name_idx</span>, <span class="mono">patients_org_family_idx</span>, <span class="mono">patients_org_patient_code_idx</span>, <span class="mono">patients_org_guardian_patient_idx</span>, <span class="mono">patients_org_guardian_nic_idx</span>.</p>
 
     <h3>6.3 family_members</h3>
     <table class="small">

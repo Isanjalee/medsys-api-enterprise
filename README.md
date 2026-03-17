@@ -94,6 +94,18 @@ npm run dev -w @medsys/worker
 - `/v1/audit/logs`
 - `/metrics`
 
+## Patient API behavior
+- `GET /v1/patients` returns a summary list for browsing:
+  - `id`, `name`, `date_of_birth`, `patient_code`, `phone`, `address`, `created_at`, `family_id`, `guardian_patient_id`
+- `GET /v1/search/patients` is the doctor-facing lookup surface:
+  - searches by patient name, patient code, patient NIC, phone, guardian name, guardian NIC, and guardian phone
+- `GET /v1/patients/:id/profile` returns the full patient record:
+  - includes identity and guardian fields such as `nic`, `age`, `gender`, `guardianPatientId`, `guardianNic`, `guardianPhone`, and `guardianRelationship`
+- Patient creation and update support guardian-aware fields:
+  - `familyId`, `guardianPatientId`, `guardianName`, `guardianNic`, `guardianPhone`, `guardianRelationship`
+- For minors without a patient NIC, guardian details are required:
+  - either link an existing guardian patient or provide guardian name plus guardian NIC or phone
+
 ## Clinical transaction guarantees
 - Encounter bundle save is atomic:
   - encounter + diagnoses + tests + prescription + items + appointment status update

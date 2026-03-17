@@ -177,7 +177,7 @@
         <tr><th style="width:18%">Domain</th><th style="width:26%">Primary Routes</th><th style="width:24%">Key Permissions</th><th>Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td>Patient creation and update are permission-driven. Selected doctors can perform registration only if granted <span class="mono">patient.write</span>.</td></tr>
+        <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td><span class="mono">GET /v1/patients</span> is a summary-list contract. Full identity and guardian details belong to <span class="mono">/v1/patients/:id/profile</span>. Selected doctors can perform registration only if granted <span class="mono">patient.write</span>.</td></tr>
         <tr><td>Families</td><td><span class="mono">/v1/families</span></td><td><span class="mono">family.read</span>, <span class="mono">family.write</span></td><td>Doctor accounts can receive <span class="mono">family.write</span> through assistant-support permissions.</td></tr>
         <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td><td><span class="mono">appointment.read</span>, <span class="mono">appointment.create</span>, <span class="mono">appointment.update</span></td><td>Appointment creation is no longer tied only to the assistant role. It follows permission checks.</td></tr>
         <tr><td>Encounters</td><td><span class="mono">/v1/encounters</span></td><td><span class="mono">encounter.read</span>, <span class="mono">encounter.write</span></td><td>Doctor base permissions already cover clinical encounter authoring.</td></tr>
@@ -194,6 +194,9 @@
     <ul>
       <li>Patient <span class="mono">first_name</span> and <span class="mono">last_name</span> are required. Therefore the stored generated <span class="mono">full_name</span> is also never null.</li>
       <li>Patient <span class="mono">dob</span> is required and <span class="mono">age</span> is also required. The backend derives and validates age against DOB when provided.</li>
+      <li>Patient <span class="mono">nic</span> is optional. The backend now assigns every patient a mandatory <span class="mono">patient_code</span> used as the always-available internal identifier.</li>
+      <li>Minor patients without a patient NIC must include guardian information. Clients can either link an existing guardian with <span class="mono">guardianPatientId</span> or provide guardian name plus guardian NIC or phone.</li>
+      <li>Guardian-aware patient payload fields supported by create and update flows are <span class="mono">familyId</span>, <span class="mono">guardianPatientId</span>, <span class="mono">guardianName</span>, <span class="mono">guardianNic</span>, <span class="mono">guardianPhone</span>, and <span class="mono">guardianRelationship</span>.</li>
       <li>User creation supports two request shapes: frontend-friendly <span class="mono">name</span> or direct API <span class="mono">firstName/lastName</span>.</li>
       <li>Swagger examples are available on the major create and update endpoints to reduce ambiguity around payload shapes.</li>
       <li>Permission names are validated. Clients should not send arbitrary strings in <span class="mono">extraPermissions</span>.</li>
@@ -205,17 +208,19 @@
       <li>Use <span class="mono">role</span> for display identity and workspace semantics, not for allow-or-deny logic.</li>
       <li>Hide or disable create, update, dispense, and inventory mutation actions when the required permission is absent.</li>
       <li>Expect a doctor with assistant-support permissions to remain <span class="mono">role = doctor</span>.</li>
+      <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor search by patient/guardian identity, and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
+      <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
     </ol>
 
     <h2>9. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 16, 2026.</li>
+      <li>Repository implementation state as of March 17, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
-      <li>Patient required-field enforcement and current database constraints through Flyway V9.</li>
-      <li>Verified automated backend suite status of 51 passing API tests and 6 passing worker tests.</li>
+      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, and current database constraints through Flyway V10.</li>
+      <li>Verified automated backend suite status of 52 passing API tests and 6 passing worker tests.</li>
     </ul>
-    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 16, 2026.</div>
+    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 17, 2026.</div>
   </section>
 </body>
 </html>
