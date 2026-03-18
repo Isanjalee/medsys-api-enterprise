@@ -92,6 +92,20 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       isNull(appointments.deletedAt)
     );
 
+    const selectFields = {
+      id: appointments.id,
+      patientId: appointments.patientId,
+      patientName: patients.fullName,
+      patientCode: patients.patientCode,
+      doctorId: appointments.doctorId,
+      assistantId: appointments.assistantId,
+      scheduledAt: appointments.scheduledAt,
+      status: appointments.status,
+      reason: appointments.reason,
+      priority: appointments.priority,
+      createdAt: appointments.createdAt
+    };
+
     if (validatedStatus === "waiting") {
       const cached = await app.cacheService.getJson<Array<Record<string, unknown>>>("appointmentQueue", queueCacheKey);
       if (cached) {
@@ -99,8 +113,9 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const rows = await app.readDb
-        .select()
+        .select(selectFields)
         .from(appointments)
+        .innerJoin(patients, eq(appointments.patientId, patients.id))
         .where(and(baseCondition, eq(appointments.status, validatedStatus)))
         .orderBy(desc(appointments.scheduledAt));
       await app.cacheService.setJson(
@@ -112,15 +127,14 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       return rows;
     }
 
-    if (!validatedStatus) {
-      return app.readDb.select().from(appointments).where(baseCondition).orderBy(desc(appointments.scheduledAt));
-    }
-
-    return app.readDb
-      .select()
+    const queryBuilder = app.readDb
+      .select(selectFields)
       .from(appointments)
-      .where(and(baseCondition, eq(appointments.status, validatedStatus)))
+      .innerJoin(patients, eq(appointments.patientId, patients.id))
+      .where(validatedStatus ? and(baseCondition, eq(appointments.status, validatedStatus)) : baseCondition)
       .orderBy(desc(appointments.scheduledAt));
+
+    return queryBuilder;
   });
 
   app.post(
