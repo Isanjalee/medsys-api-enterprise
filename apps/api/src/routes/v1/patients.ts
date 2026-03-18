@@ -652,8 +652,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const actor = request.actor!;
       const useFrontendPayload =
-        hasAnyKey(request.body, ["name", "dateOfBirth", "phone", "address"]) ||
-        !hasAnyKey(request.body, ["firstName", "lastName", "gender"]);
+        hasAnyKey(request.body, ["name", "dateOfBirth", "mobile"]) ||
+        !hasAnyKey(request.body, ["firstName", "lastName", "dob"]);
 
       let values: PatientWriteValues;
 
@@ -795,7 +795,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       const actor = request.actor!;
       const { id } = parseOrThrowValidation(idParamSchema, request.params);
       const useFrontendPayload =
-        hasAnyKey(request.body, ["name", "dateOfBirth", "phone", "address"]) ||
+        hasAnyKey(request.body, ["name", "dateOfBirth", "mobile"]) ||
         !hasAnyKey(request.body, [
           "firstName",
           "lastName",
