@@ -97,14 +97,24 @@ npm run dev -w @medsys/worker
 ## Patient API behavior
 - `GET /v1/patients` returns a summary list for browsing:
   - `id`, `name`, `date_of_birth`, `patient_code`, `phone`, `address`, `created_at`, `family_id`, `guardian_patient_id`
-- `GET /v1/search/patients` is the doctor-facing lookup surface:
+- `GET /v1/search/patients` is the doctor-facing lookup by code/NIC/guardian NIC/phone/name:
   - searches by patient name, patient code, patient NIC, phone, guardian name, guardian NIC, and guardian phone
-- `GET /v1/patients/:id/profile` returns the full patient record:
+  - returns quick-selection fields: `patient_code`, `nic`, `guardian_nic`, `date_of_birth`, `gender`
+- `GET /v1/patients/:id/profile` returns the full patient details record:
   - includes identity and guardian fields such as `nic`, `age`, `gender`, `guardianPatientId`, `guardianNic`, `guardianPhone`, and `guardianRelationship`
 - Patient creation and update support guardian-aware fields:
   - `familyId`, `guardianPatientId`, `guardianName`, `guardianNic`, `guardianPhone`, `guardianRelationship`
 - For minors without a patient NIC, guardian details are required:
   - either link an existing guardian patient or provide guardian name plus guardian NIC or phone
+
+## Doctor-only clinic mode workflow
+For clinics operating without an assistant, the doctor workflow natively supports end-to-end administration:
+1. Doctor searches patient using `GET /v1/search/patients`.
+2. If not found, doctor creates patient via `POST /v1/patients`.
+3. Doctor creates or continues appointment via `POST /v1/appointments` to track the visit.
+4. Doctor opens full profile (`GET /v1/patients/:id/profile`) and creates the clinical encounter.
+5. Doctor optionally completes the dispense workflow directly if `prescription.dispense` is granted.
+
 
 ## Clinical transaction guarantees
 - Encounter bundle save is atomic:
