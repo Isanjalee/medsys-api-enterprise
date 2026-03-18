@@ -40,8 +40,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.2</div>
-      <div><strong>Date</strong>March 16, 2026</div>
+      <div><strong>Version</strong>2.3</div>
+      <div><strong>Date</strong>March 18, 2026</div>
       <div><strong>Audience</strong>Frontend, BFF, QA, BA, and client delivery teams</div>
       <div><strong>Scope</strong>Implemented REST contracts, auth behavior, permission model, and integration expectations</div>
     </div>
@@ -202,9 +202,19 @@
       <li>Use <span class="mono">role</span> for display identity and workspace semantics, not for allow-or-deny logic.</li>
       <li>Hide or disable create, update, dispense, and inventory mutation actions when the required permission is absent.</li>
       <li>Expect a doctor with assistant-support permissions to remain <span class="mono">role = doctor</span>.</li>
-      <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor search by patient/guardian identity, and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
+      <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor fast-selection by patient/guardian identity (returns <code>patient_code</code>, <code>nic</code>, <code>gender</code>), and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
       <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
+    </ol>
+
+    <h2>9. Doctor-Only Clinic Mode Workflow</h2>
+    <p>For small practices operating without an assistant, doctors now possess native permissions to complete the full patient journey end-to-end:</p>
+    <ol>
+      <li>Doctor searches patient using <span class="mono">GET /v1/search/patients</span> by code, NIC, phone, or name.</li>
+      <li>If not found, doctor creates the patient profile with <span class="mono">POST /v1/patients</span>.</li>
+      <li>Doctor creates or continues an appointment with <span class="mono">POST /v1/appointments</span> to trace the visit.</li>
+      <li>Doctor enters the full profile (<span class="mono">GET /v1/patients/:id/profile</span>) and authors the clinical encounter.</li>
+      <li>If dispensing inside the clinic, doctor optionally completes the dispense workflow directly.</li>
     </ol>
 
     <h2>9. Source Basis</h2>
@@ -214,7 +224,7 @@
       <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, and current database constraints through Flyway V10.</li>
       <li>Verified automated backend suite status of 52 passing API tests and 6 passing worker tests.</li>
     </ul>
-    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 17, 2026.</div>
+    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 18, 2026.</div>
   </section>
 </body>
 </html>
