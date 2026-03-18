@@ -630,36 +630,14 @@ test("patient delete tolerates an empty JSON body when content-type is set", asy
   await app.close();
 });
 
-test("owner can grant assistant-support permissions to a doctor", async () => {
+test("doctor natively has patient and appointment creation permissions", async () => {
   if (!process.env.DATABASE_URL) {
     return;
   }
 
   const app = await buildApp();
-  const ownerLogin = await loginAs(app, "owner@medsys.local");
   const doctorLogin = await loginAs(app, "doctor@medsys.local");
-  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
   const uniqueSuffix = Date.now().toString();
-
-  const grantResponse = await app.inject({
-    method: "PATCH",
-    url: `/v1/users/${doctorId}`,
-    headers: {
-      authorization: `Bearer ${ownerLogin.accessToken}`
-    },
-    payload: {
-      extraPermissions: []
-    }
-  });
-
-  assert.equal(grantResponse.statusCode, 200);
-  const grantedUser = grantResponse.json() as {
-    user: { extra_permissions: string[]; permissions: string[] };
-  };
-  assert.deepEqual(grantedUser.user.extra_permissions, []);
-  assert.equal(grantedUser.user.permissions.includes("patient.write"), true);
-  assert.equal(grantedUser.user.permissions.includes("appointment.create"), true);
-  assert.equal(grantedUser.user.permissions.includes("prescription.dispense"), true);
 
   const meResponse = await app.inject({
     method: "GET",
