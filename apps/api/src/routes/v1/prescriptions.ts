@@ -114,33 +114,36 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/:id", { preHandler: app.authorizePermissions(["prescription.read"]) }, async (request) => {
     const actor = request.actor!;
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
-    const prescriptionRows = await app.readDb
-      .select()
-      .from(prescriptions)
-      .where(
-        and(
-          eq(prescriptions.id, id),
-          eq(prescriptions.organizationId, actor.organizationId),
-          isNull(prescriptions.deletedAt)
+    
+    const [prescriptionRows, items, dispenses] = await Promise.all([
+      app.readDb
+        .select()
+        .from(prescriptions)
+        .where(
+          and(
+            eq(prescriptions.id, id),
+            eq(prescriptions.organizationId, actor.organizationId),
+            isNull(prescriptions.deletedAt)
+          )
         )
-      )
-      .limit(1);
-    assertOrThrow(prescriptionRows.length === 1, 404, "Prescription not found");
+        .limit(1),
+      app.readDb
+        .select()
+        .from(prescriptionItems)
+        .where(
+          and(
+            eq(prescriptionItems.prescriptionId, id),
+            eq(prescriptionItems.organizationId, actor.organizationId),
+            isNull(prescriptionItems.deletedAt)
+          )
+        ),
+      app.readDb
+        .select()
+        .from(dispenseRecords)
+        .where(and(eq(dispenseRecords.prescriptionId, id), eq(dispenseRecords.organizationId, actor.organizationId)))
+    ]);
 
-    const items = await app.readDb
-      .select()
-      .from(prescriptionItems)
-      .where(
-        and(
-          eq(prescriptionItems.prescriptionId, id),
-          eq(prescriptionItems.organizationId, actor.organizationId),
-          isNull(prescriptionItems.deletedAt)
-        )
-      );
-    const dispenses = await app.readDb
-      .select()
-      .from(dispenseRecords)
-      .where(and(eq(dispenseRecords.prescriptionId, id), eq(dispenseRecords.organizationId, actor.organizationId)));
+    assertOrThrow(prescriptionRows.length === 1, 404, "Prescription not found");
 
     return { prescription: prescriptionRows[0], items, dispenses };
   });
