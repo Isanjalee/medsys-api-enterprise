@@ -313,22 +313,25 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
       .from(encounters)
       .where(and(eq(encounters.id, id), eq(encounters.organizationId, actor.organizationId)))
       .limit(1);
+
     assertOrThrow(found.length === 1, 404, "Encounter not found");
 
-    const diagnosisRows = await app.readDb
-      .select()
-      .from(encounterDiagnoses)
-      .where(and(eq(encounterDiagnoses.encounterId, id), eq(encounterDiagnoses.organizationId, actor.organizationId)));
-
-    const testRows = await app.readDb
-      .select()
-      .from(testOrders)
-      .where(and(eq(testOrders.encounterId, id), eq(testOrders.organizationId, actor.organizationId)));
-
-    const prescriptionRows = await app.readDb
-      .select()
-      .from(prescriptions)
-      .where(and(eq(prescriptions.encounterId, id), eq(prescriptions.organizationId, actor.organizationId)));
+    const [diagnosisRows, testRows, prescriptionRows] = await Promise.all([
+      app.readDb
+        .select()
+        .from(encounterDiagnoses)
+        .where(
+          and(eq(encounterDiagnoses.encounterId, id), eq(encounterDiagnoses.organizationId, actor.organizationId))
+        ),
+      app.readDb
+        .select()
+        .from(testOrders)
+        .where(and(eq(testOrders.encounterId, id), eq(testOrders.organizationId, actor.organizationId))),
+      app.readDb
+        .select()
+        .from(prescriptions)
+        .where(and(eq(prescriptions.encounterId, id), eq(prescriptions.organizationId, actor.organizationId)))
+    ]);
 
     const prescriptionIds = prescriptionRows.map((row) => row.id);
     const items =
