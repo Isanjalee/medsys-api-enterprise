@@ -83,6 +83,8 @@ type PatientWriteValues = {
   address?: string | null;
   bloodGroup?: string | null;
   familyId?: number | null;
+  familyCode?: string | null;
+  allergies?: { allergyName: string; severity?: "low" | "moderate" | "high" | null; isActive?: boolean }[] | null;
   guardianPatientId?: number | null;
   guardianName?: string | null;
   guardianNic?: string | null;
@@ -671,7 +673,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           gender: payload.gender ?? "other",
           phone: payload.phone ?? payload.mobile ?? null,
           address: payload.address ?? null,
+          bloodGroup: payload.bloodGroup ?? null,
           familyId: payload.familyId ?? null,
+          familyCode: payload.familyCode ?? null,
+          allergies: payload.allergies ?? null,
           guardianPatientId: payload.guardianPatientId ?? null,
           guardianName: payload.guardianName ?? null,
           guardianNic: payload.guardianNic ?? null,
@@ -702,6 +707,24 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       }
 
       values = await resolveGuardianValues(actor.organizationId, null, values);
+
+      if (!values.familyId && values.familyCode) {
+        const familyRows = await app.readDb
+          .select({ id: families.id })
+          .from(families)
+          .where(
+            and(
+              eq(families.familyCode, values.familyCode),
+              eq(families.organizationId, actor.organizationId),
+              isNull(families.deletedAt)
+            )
+          )
+          .limit(1);
+        if (familyRows.length > 0) {
+          values.familyId = familyRows[0].id;
+        }
+      }
+
       if (values.familyId) {
         await assertFamilyExists(actor.organizationId, values.familyId);
       }
@@ -735,13 +758,25 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         inserted[0].id,
         values.age < 18 ? "child" : values.guardianRelationship ?? null
       );
-
-      await writeAuditLog(request, {
+      await writeAuditLog(request, {
         entityType: "patient",
         action: "create",
         entityId: inserted[0].id
       });
       await syncPatientSearch(inserted[0]);
+
+      if (values.allergies && values.allergies.length > 0) {
+        await app.db.insert(patientAllergies).values(
+          values.allergies.map((a) => ({
+            organizationId: actor.organizationId,
+            patientId: inserted[0].id,
+            allergyName: a.allergyName,
+            severity: a.severity ?? null,
+            isActive: a.isActive ?? true
+          }))
+        );
+      }
+
       return reply.code(201).send({ patient: serializePatientSummary(inserted[0]) });
     }
   );
