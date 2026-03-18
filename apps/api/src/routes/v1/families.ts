@@ -66,7 +66,13 @@ const familiesRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", { preHandler: app.authorizePermissions(["family.read"]) }, async (request) => {
     const actor = request.actor!;
     return app.readDb
-      .select()
+      .select({
+        id: families.id,
+        familyCode: families.familyCode,
+        familyName: families.familyName,
+        assigned: families.assigned,
+        createdAt: families.createdAt
+      })
       .from(families)
       .where(and(eq(families.organizationId, actor.organizationId), isNull(families.deletedAt)));
   });
