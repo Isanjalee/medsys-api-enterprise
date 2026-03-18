@@ -107,6 +107,14 @@ export const updatePatientSchema = createPatientSchema
     "At least one field must be provided"
   );
 
+export const createPatientAllergySchema = z
+  .object({
+    allergyName: z.string().trim().min(1).max(120),
+    severity: z.enum(["low", "moderate", "high"]).optional().nullable(),
+    isActive: z.boolean().optional()
+  })
+  .strict();
+
 export const createPatientFrontendSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -118,6 +126,9 @@ export const createPatientFrontendSchema = z
     dateOfBirth: dateOfBirthSchema,
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(255).optional().nullable(),
+    bloodGroup: z.string().max(5).optional().nullable(),
+    familyCode: z.string().max(30).optional().nullable(),
+    allergies: z.array(createPatientAllergySchema).optional().nullable(),
     familyId: z.number().int().positive().optional().nullable(),
     guardianPatientId: z.number().int().positive().optional().nullable(),
     guardianName: guardianNameSchema.optional().nullable(),
@@ -138,6 +149,9 @@ export const updatePatientFrontendSchema = z
     dateOfBirth: dateOfBirthSchema.optional(),
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(255).optional().nullable(),
+    bloodGroup: z.string().max(5).optional().nullable(),
+    familyCode: z.string().max(30).optional().nullable(),
+    allergies: z.array(createPatientAllergySchema).optional().nullable(),
     familyId: z.number().int().positive().optional().nullable(),
     guardianPatientId: z.number().int().positive().optional().nullable(),
     guardianName: guardianNameSchema.optional().nullable(),
@@ -157,6 +171,9 @@ export const updatePatientFrontendSchema = z
       value.dateOfBirth !== undefined ||
       value.phone !== undefined ||
       value.address !== undefined ||
+      value.bloodGroup !== undefined ||
+      value.familyCode !== undefined ||
+      value.allergies !== undefined ||
       value.familyId !== undefined ||
       value.guardianPatientId !== undefined ||
       value.guardianName !== undefined ||
@@ -287,14 +304,6 @@ export const createPatientConditionSchema = z
     conditionName: z.string().trim().min(1).max(180),
     icd10Code: z.string().max(16).optional().nullable(),
     status: z.string().trim().min(1).max(20).optional()
-  })
-  .strict();
-
-export const createPatientAllergySchema = z
-  .object({
-    allergyName: z.string().trim().min(1).max(120),
-    severity: z.enum(["low", "moderate", "high"]).optional().nullable(),
-    isActive: z.boolean().optional()
   })
   .strict();
 
