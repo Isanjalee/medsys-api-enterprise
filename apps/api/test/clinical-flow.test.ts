@@ -954,6 +954,73 @@ test("patient create accepts compatibility fields used by the frontend BFF", asy
   await app.close();
 });
 
+test("patient create with backend-style payload auto-creates family and saves allergies", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      firstName: "Backend",
+      lastName: `Create ${uniqueSuffix}`,
+      dob: DEFAULT_PATIENT_DOB,
+      gender: "male",
+      nic: `19900101${uniqueSuffix.slice(-4)}`,
+      phone: "+94770000999",
+      address: "Backend Create Street",
+      bloodGroup: "B+",
+      allergies: [{ allergyName: "Dust", severity: "moderate", isActive: true }]
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const createBody = createResponse.json() as {
+    patient: { id: number; family_id: number | null };
+  };
+  assert.notEqual(createBody.patient.family_id, null);
+
+  const familyResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${createBody.patient.id}/family`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(familyResponse.statusCode, 200);
+  const familyBody = familyResponse.json() as {
+    familyId: number | null;
+    family: { familyName: string } | null;
+  };
+  assert.notEqual(familyBody.familyId, null);
+  assert.equal(familyBody.family?.familyName, `Backend Create ${uniqueSuffix} Family`);
+
+  const allergiesResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${createBody.patient.id}/allergies`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(allergiesResponse.statusCode, 200);
+  const allergiesBody = allergiesResponse.json() as Array<{ allergyName: string; severity: string | null }>;
+  assert.equal(allergiesBody.length, 1);
+  assert.equal(allergiesBody[0].allergyName, "Dust");
+  assert.equal(allergiesBody[0].severity, "moderate");
+
+  await app.close();
+});
+
 test("owner can register and list users after bootstrap", async () => {
   if (!process.env.DATABASE_URL) {
     return;

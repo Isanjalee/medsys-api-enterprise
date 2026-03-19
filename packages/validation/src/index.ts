@@ -67,6 +67,14 @@ const dateOfBirthSchema = z
   .date()
   .refine((value) => new Date(value) <= new Date(), "DOB cannot be in the future");
 
+export const createPatientAllergySchema = z
+  .object({
+    allergyName: z.string().trim().min(1).max(120),
+    severity: z.enum(["low", "moderate", "high"]).optional().nullable(),
+    isActive: z.boolean().optional()
+  })
+  .strict();
+
 export const createPatientSchema = z.object({
   nic: z.string().regex(nicRegex, "Invalid NIC format").optional().nullable(),
   firstName: patientNameSchema,
@@ -78,6 +86,8 @@ export const createPatientSchema = z.object({
   address: z.string().max(2000).optional().nullable(),
   bloodGroup: z.string().max(5).optional().nullable(),
   familyId: z.number().int().positive().optional().nullable(),
+  familyCode: z.string().max(30).optional().nullable(),
+  allergies: z.array(createPatientAllergySchema).optional().nullable(),
   guardianPatientId: z.number().int().positive().optional().nullable(),
   guardianName: guardianNameSchema.optional().nullable(),
   guardianNic: z.string().regex(nicRegex, "Invalid NIC format").optional().nullable(),
@@ -99,6 +109,8 @@ export const updatePatientSchema = createPatientSchema
       value.address !== undefined ||
       value.bloodGroup !== undefined ||
       value.familyId !== undefined ||
+      value.familyCode !== undefined ||
+      value.allergies !== undefined ||
       value.guardianPatientId !== undefined ||
       value.guardianName !== undefined ||
       value.guardianNic !== undefined ||
@@ -106,14 +118,6 @@ export const updatePatientSchema = createPatientSchema
       value.guardianRelationship !== undefined,
     "At least one field must be provided"
   );
-
-export const createPatientAllergySchema = z
-  .object({
-    allergyName: z.string().trim().min(1).max(120),
-    severity: z.enum(["low", "moderate", "high"]).optional().nullable(),
-    isActive: z.boolean().optional()
-  })
-  .strict();
 
 export const createPatientFrontendSchema = z
   .object({

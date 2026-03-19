@@ -179,11 +179,25 @@ const createPatientBodySchema = {
         address: { type: "string", nullable: true },
         bloodGroup: { type: "string", nullable: true },
         familyId: { type: "integer", minimum: 1, nullable: true },
+        familyCode: { type: "string", nullable: true },
         guardianPatientId: { type: "integer", minimum: 1, nullable: true },
         guardianName: { type: "string", nullable: true },
         guardianNic: { type: "string", nullable: true },
         guardianPhone: { type: "string", nullable: true },
-        guardianRelationship: { type: "string", nullable: true }
+        guardianRelationship: { type: "string", nullable: true },
+        allergies: {
+          type: "array",
+          nullable: true,
+          items: {
+            type: "object",
+            required: ["allergyName"],
+            properties: {
+              allergyName: { type: "string", minLength: 1 },
+              severity: { type: "string", enum: ["low", "moderate", "high"], nullable: true },
+              isActive: { type: "boolean" }
+            }
+          }
+        }
       }
     }
   ],
@@ -738,6 +752,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           address: payload.address ?? null,
           bloodGroup: payload.bloodGroup ?? null,
           familyId: payload.familyId ?? null,
+          familyCode: payload.familyCode ?? null,
+          allergies: payload.allergies ?? null,
           guardianPatientId: payload.guardianPatientId ?? null,
           guardianName: payload.guardianName ?? null,
           guardianNic: payload.guardianNic ?? null,
@@ -781,7 +797,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
                 .returning();
               values.familyId = newFamily[0].id;
             }
-          } else if (useFrontendPayload) {
+          } else {
             // Auto-create family if neither ID nor Code provided (Nimal Perera Family)
             const familyCode = buildFamilyCode();
             const familyName = `${values.firstName} ${values.lastName} Family`;
