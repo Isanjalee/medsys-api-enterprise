@@ -103,9 +103,18 @@ npm run dev -w @medsys/worker
 - `GET /v1/patients/:id/profile` returns the full patient details record:
   - includes identity and guardian fields such as `nic`, `age`, `gender`, `guardian_patient_id`, `guardian_nic`, `guardian_phone`, and `guardian_relationship`
 - Patient creation and update support guardian-aware fields:
-  - `familyId`, `guardianPatientId`, `guardianName`, `guardianNic`, `guardianPhone`, `guardianRelationship`
+  - `familyId`, `familyCode`, `guardianPatientId`, `guardianName`, `guardianNic`, `guardianPhone`, `guardianRelationship`
+- Patient creation supports profile enrichment fields in both payload styles:
+  - `bloodGroup`
+  - `allergies` with `allergyName`, `severity`, and `isActive`
+- If `familyId` and `familyCode` are both missing on patient create:
+  - backend auto-creates a family using the patient name, such as `Nimal Perera Family`
 - For minors without a patient NIC, guardian details are required:
   - either link an existing guardian patient or provide guardian name plus guardian NIC or phone
+- Allowed allergy severity values are:
+  - `low`, `moderate`, `high`
+- `priority` is an appointment field, not a patient field:
+  - send it to `POST /v1/appointments`, not `POST /v1/patients`
 
 ## Doctor-only clinic mode workflow
 For clinics operating without an assistant, the doctor workflow natively supports end-to-end administration:
@@ -119,6 +128,8 @@ For clinics operating without an assistant, the doctor workflow natively support
 ## Clinical transaction guarantees
 - Patient profile update is atomic:
   - `PATCH /v1/patients/:id` rolls back patient, family, and allergy changes together if any part fails
+- Patient summary responses remain stable:
+  - `/v1/patients` uses snake_case fields such as `patient_code`, `family_id`, `guardian_patient_id`, and `created_at`
 - Encounter bundle save is atomic:
   - encounter + diagnoses + tests + prescription + items + appointment status update
 - Dispense is atomic:
