@@ -101,7 +101,7 @@ npm run dev -w @medsys/worker
   - searches by patient name, patient code, patient NIC, phone, guardian name, guardian NIC, and guardian phone
   - returns quick-selection fields: `patient_code`, `nic`, `guardian_nic`, `date_of_birth`, `gender`
 - `GET /v1/patients/:id/profile` returns the full patient details record:
-  - includes identity and guardian fields such as `nic`, `age`, `gender`, `guardianPatientId`, `guardianNic`, `guardianPhone`, and `guardianRelationship`
+  - includes identity and guardian fields such as `nic`, `age`, `gender`, `guardian_patient_id`, `guardian_nic`, `guardian_phone`, and `guardian_relationship`
 - Patient creation and update support guardian-aware fields:
   - `familyId`, `guardianPatientId`, `guardianName`, `guardianNic`, `guardianPhone`, `guardianRelationship`
 - For minors without a patient NIC, guardian details are required:
@@ -117,6 +117,8 @@ For clinics operating without an assistant, the doctor workflow natively support
 
 
 ## Clinical transaction guarantees
+- Patient profile update is atomic:
+  - `PATCH /v1/patients/:id` rolls back patient, family, and allergy changes together if any part fails
 - Encounter bundle save is atomic:
   - encounter + diagnoses + tests + prescription + items + appointment status update
 - Dispense is atomic:
