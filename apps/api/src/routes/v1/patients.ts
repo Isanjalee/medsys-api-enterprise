@@ -640,22 +640,6 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     });
   };
 
-  const serializePatientSummary = (row: any) => {
-    return {
-      id: row.id,
-      patientCode: row.patientCode,
-      fullName: row.fullName,
-      firstName: row.firstName,
-      lastName: row.lastName,
-      dob: row.dob,
-      phone: row.phone,
-      address: row.address,
-      familyId: row.familyId,
-      guardianPatientId: row.guardianPatientId,
-      createdAt: typeof row.createdAt === 'string' ? row.createdAt : row.createdAt.toISOString()
-    };
-  };
-
   const invalidatePatientProfile = async (organizationId: string, patientId: number): Promise<void> => {
     await app.cacheService.invalidate("patientProfile", patientProfileCacheKey(organizationId, patientId));
   };
@@ -963,6 +947,11 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       const updateData: Record<string, unknown> = {
         updatedAt: new Date()
       };
+      let requestedFamilyCode: string | null | undefined;
+      let pendingAllergies:
+        | Array<{ allergyName: string; severity?: "low" | "moderate" | "high" | null; isActive?: boolean | null }>
+        | null
+        | undefined;
 
       if (useFrontendPayload) {
         const payload = parseOrThrowValidation(updatePatientFrontendSchema, request.body);
@@ -996,52 +985,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           updateData.bloodGroup = payload.bloodGroup;
         }
         if (payload.familyCode !== undefined && payload.familyCode !== null) {
-          const familyRows = await app.readDb
-            .select({ id: families.id })
-            .from(families)
-            .where(
-              and(
-                eq(families.familyCode, payload.familyCode),
-                eq(families.organizationId, actor.organizationId),
-                isNull(families.deletedAt)
-              )
-            )
-            .limit(1);
-          
-          if (familyRows.length > 0) {
-            updateData.familyId = familyRows[0].id;
-          } else {
-            // Auto-create on PATCH if code is new
-            const currentFirstName = updateData.firstName as string ?? existingPatient.firstName;
-            const currentLastName = updateData.lastName as string ?? existingPatient.lastName;
-            const familyName = `${currentFirstName} ${currentLastName} Family`;
-
-            const newFamily = await app.db
-              .insert(families)
-              .values({
-                organizationId: actor.organizationId,
-                familyCode: payload.familyCode,
-                familyName,
-                assigned: true
-              })
-              .returning();
-            updateData.familyId = newFamily[0].id;
-          }
+          requestedFamilyCode = payload.familyCode;
         }
         if (payload.allergies !== undefined && payload.allergies !== null) {
-          // Handle atomic allergy updates (Overwrite existing for the patient)
-          await app.db.delete(patientAllergies).where(eq(patientAllergies.patientId, id));
-          if (payload.allergies.length > 0) {
-            await app.db.insert(patientAllergies).values(
-              payload.allergies.map((a) => ({
-                organizationId: actor.organizationId,
-                patientId: id,
-                allergyName: a.allergyName,
-                severity: a.severity ?? null,
-                isActive: a.isActive ?? true
-              }))
-            );
-          }
+          pendingAllergies = payload.allergies;
         }
         if (payload.guardianPatientId !== undefined) {
           updateData.guardianPatientId = payload.guardianPatientId;
@@ -1131,6 +1078,24 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           (updateData.guardianRelationship as string | null | undefined) ?? existingPatient.guardianRelationship
       });
 
+      if (requestedFamilyCode) {
+        const familyRows = await app.readDb
+          .select({ id: families.id })
+          .from(families)
+          .where(
+            and(
+              eq(families.familyCode, requestedFamilyCode),
+              eq(families.organizationId, actor.organizationId),
+              isNull(families.deletedAt)
+            )
+          )
+          .limit(1);
+
+        if (familyRows.length > 0) {
+          resolvedValues.familyId = familyRows[0].id;
+        }
+      }
+
       if (resolvedValues.familyId) {
         await assertFamilyExists(actor.organizationId, resolvedValues.familyId);
       }
@@ -1143,27 +1108,60 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       updateData.guardianRelationship = resolvedValues.guardianRelationship ?? null;
 
       return app.db.transaction(async (tx) => {
+        if (requestedFamilyCode && !resolvedValues.familyId) {
+          const familyName = `${resolvedValues.firstName} ${resolvedValues.lastName} Family`;
+          const newFamily = await tx
+            .insert(families)
+            .values({
+              organizationId: actor.organizationId,
+              familyCode: requestedFamilyCode,
+              familyName,
+              assigned: true
+            })
+            .returning({ id: families.id });
+          resolvedValues.familyId = newFamily[0].id;
+          updateData.familyId = newFamily[0].id;
+        }
+
         const updated = await tx
           .update(patients)
-        .set(updateData)
-        .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
-        .returning();
+          .set(updateData)
+          .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
+          .returning();
 
-      assertOrThrow(updated.length === 1, 404, "Patient not found");
+        assertOrThrow(updated.length === 1, 404, "Patient not found");
 
-      await writeAuditLog(request, {
-        entityType: "patient",
-        action: "update",
-        entityId: id
-      });
-      await ensureFamilyMembership(
-        actor.organizationId,
-        resolvedValues.familyId,
-        id,
-        resolvedValues.age < 18 ? "child" : resolvedValues.guardianRelationship ?? null,
-        tx
-      );
-      await syncPatientSearch(updated[0]);
+        if (pendingAllergies !== undefined && pendingAllergies !== null) {
+          await tx
+            .delete(patientAllergies)
+            .where(and(eq(patientAllergies.organizationId, actor.organizationId), eq(patientAllergies.patientId, id)));
+
+          if (pendingAllergies.length > 0) {
+            await tx.insert(patientAllergies).values(
+              pendingAllergies.map((a) => ({
+                organizationId: actor.organizationId,
+                patientId: id,
+                allergyName: a.allergyName,
+                severity: a.severity ?? null,
+                isActive: a.isActive ?? true
+              }))
+            );
+          }
+        }
+
+        await writeAuditLog(request, {
+          entityType: "patient",
+          action: "update",
+          entityId: id
+        });
+        await ensureFamilyMembership(
+          actor.organizationId,
+          resolvedValues.familyId,
+          id,
+          resolvedValues.age < 18 ? "child" : resolvedValues.guardianRelationship ?? null,
+          tx
+        );
+        await syncPatientSearch(updated[0]);
         await invalidatePatientProfile(actor.organizationId, id);
         return { patient: serializePatientSummary(updated[0]) };
       });
