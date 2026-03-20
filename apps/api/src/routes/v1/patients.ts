@@ -406,27 +406,52 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       operationId: "PatientsController_addVital",
       summary: "Add patient vital record",
       bodySchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["recordedAt"],
-        properties: {
-          encounterId: { type: "integer", minimum: 1, nullable: true },
-          bpSystolic: { type: "integer", minimum: 30, maximum: 300, nullable: true },
-          bpDiastolic: { type: "integer", minimum: 20, maximum: 200, nullable: true },
-          heartRate: { type: "integer", minimum: 20, maximum: 300, nullable: true },
-          temperatureC: { type: "number", minimum: 25, maximum: 45, nullable: true },
-          spo2: { type: "integer", minimum: 0, maximum: 100, nullable: true },
-          recordedAt: { type: "string", format: "date-time" }
-        }
+        allOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["recordedAt"],
+            properties: {
+              encounterId: { type: "integer", minimum: 1, nullable: true },
+              bpSystolic: { type: "integer", minimum: 30, maximum: 300, nullable: true },
+              bpDiastolic: { type: "integer", minimum: 20, maximum: 200, nullable: true },
+              heartRate: { type: "integer", minimum: 20, maximum: 300, nullable: true },
+              temperatureC: { type: "number", minimum: 25, maximum: 45, nullable: true },
+              spo2: { type: "integer", minimum: 0, maximum: 100, nullable: true },
+              recordedAt: { type: "string", format: "date-time" }
+            }
+          },
+          {
+            anyOf: [
+              { required: ["bpSystolic"] },
+              { required: ["bpDiastolic"] },
+              { required: ["heartRate"] },
+              { required: ["temperatureC"] },
+              { required: ["spo2"] }
+            ]
+          }
+        ]
       },
-      bodyExample: {
-        encounterId: 7,
-        bpSystolic: 120,
-        bpDiastolic: 80,
-        heartRate: 78,
-        temperatureC: 37.2,
-        spo2: 98,
-        recordedAt: "2026-03-05T10:15:00Z"
+      bodyExamples: {
+        consultationLinked: {
+          summary: "Vitals linked to an active encounter",
+          value: {
+            encounterId: 7,
+            bpSystolic: 120,
+            bpDiastolic: 80,
+            heartRate: 78,
+            temperatureC: 37.2,
+            spo2: 98,
+            recordedAt: "2026-03-05T10:15:00Z"
+          }
+        },
+        triageMinimal: {
+          summary: "Minimal pre-consultation triage vital",
+          value: {
+            heartRate: 84,
+            recordedAt: "2026-03-05T09:55:00Z"
+          }
+        }
       }
     },
     "GET /:id/timeline": {
