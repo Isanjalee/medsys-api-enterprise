@@ -2260,6 +2260,85 @@ test("patient vitals can be updated through the correction endpoint", async () =
   await app.close();
 });
 
+test("patient vitals can be soft deleted and disappear from the list", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createPatientResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      name: `Vitals Delete ${uniqueSuffix} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
+    }
+  });
+
+  assert.equal(createPatientResponse.statusCode, 201);
+  const createBody = createPatientResponse.json() as { patient: { id: number } };
+
+  const createVitalResponse = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      spo2: 98,
+      recordedAt: "2026-03-09T10:15:00Z"
+    }
+  });
+
+  assert.equal(createVitalResponse.statusCode, 201);
+  const createdVital = createVitalResponse.json() as { id: number };
+
+  const deleteVitalResponse = await app.inject({
+    method: "DELETE",
+    url: `/v1/patients/${createBody.patient.id}/vitals/${createdVital.id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(deleteVitalResponse.statusCode, 200);
+  assert.deepEqual(deleteVitalResponse.json(), {
+    deleted: true,
+    id: createdVital.id
+  });
+
+  const listVitalsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(listVitalsResponse.statusCode, 200);
+  const vitals = listVitalsResponse.json() as Array<{ id: number }>;
+  assert.equal(vitals.some((row) => row.id === createdVital.id), false);
+
+  const deleteAgainResponse = await app.inject({
+    method: "DELETE",
+    url: `/v1/patients/${createBody.patient.id}/vitals/${createdVital.id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(deleteAgainResponse.statusCode, 404);
+
+  await app.close();
+});
+
 test("patient create rejects mismatched age and DOB with validation envelope", async () => {
   if (!process.env.DATABASE_URL) {
     return;

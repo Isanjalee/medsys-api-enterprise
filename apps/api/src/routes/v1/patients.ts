@@ -483,6 +483,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         }
       }
     },
+    "DELETE /:id/vitals/:vitalId": {
+      operationId: "PatientsController_deleteVital",
+      summary: "Soft delete patient vital record"
+    },
     "GET /:id/timeline": {
       operationId: "PatientsController_listTimeline",
       summary: "List patient timeline events"
@@ -1717,6 +1721,42 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     });
     await invalidatePatientProfile(actor.organizationId, params.id);
     return serializePatientVital(updated[0]);
+  });
+
+  app.delete("/:id/vitals/:vitalId", { preHandler: app.authorizePermissions(["patient.vital.write"]) }, async (request) => {
+    const actor = request.actor!;
+    const params = parseOrThrowValidation(
+      z.object({
+        id: idParamSchema.shape.id,
+        vitalId: idParamSchema.shape.id
+      }),
+      request.params
+    );
+
+    const deleted = await app.db
+      .update(patientVitals)
+      .set({
+        updatedAt: new Date(),
+        deletedAt: new Date()
+      })
+      .where(
+        and(
+          eq(patientVitals.id, params.vitalId),
+          eq(patientVitals.patientId, params.id),
+          eq(patientVitals.organizationId, actor.organizationId),
+          isNull(patientVitals.deletedAt)
+        )
+      )
+      .returning({ id: patientVitals.id });
+
+    assertOrThrow(deleted.length === 1, 404, "Patient vital not found");
+    await writeAuditLog(request, {
+      entityType: "patient_vitals",
+      action: "delete",
+      entityId: params.vitalId
+    });
+    await invalidatePatientProfile(actor.organizationId, params.id);
+    return { deleted: true, id: params.vitalId };
   });
 
   app.get("/:id/timeline", { preHandler: app.authorizePermissions(["patient.timeline.read"]) }, async (request) => {
