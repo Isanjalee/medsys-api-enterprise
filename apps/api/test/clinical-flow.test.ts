@@ -2162,6 +2162,104 @@ test("patient vitals create and list use the stable serialized response shape", 
   await app.close();
 });
 
+test("patient vitals can be updated through the correction endpoint", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createPatientResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      name: `Vitals Update ${uniqueSuffix} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
+    }
+  });
+
+  assert.equal(createPatientResponse.statusCode, 201);
+  const createBody = createPatientResponse.json() as { patient: { id: number } };
+
+  const createVitalResponse = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      heartRate: 84,
+      temperatureC: 36.9,
+      recordedAt: "2026-03-09T10:15:00Z"
+    }
+  });
+
+  assert.equal(createVitalResponse.statusCode, 201);
+  const createdVital = createVitalResponse.json() as {
+    id: number;
+    heart_rate: number | null;
+    temperature_c: number | null;
+    recorded_at: string;
+  };
+
+  const updateVitalResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/patients/${createBody.patient.id}/vitals/${createdVital.id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      heartRate: 88,
+      temperatureC: 37.1,
+      recordedAt: "2026-03-09T10:18:00Z"
+    }
+  });
+
+  assert.equal(updateVitalResponse.statusCode, 200);
+  const updatedVital = updateVitalResponse.json() as {
+    id: number;
+    patient_id: number;
+    heart_rate: number | null;
+    temperature_c: number | null;
+    recorded_at: string;
+    updated_at: string;
+  };
+  assert.equal(updatedVital.id, createdVital.id);
+  assert.equal(updatedVital.patient_id, createBody.patient.id);
+  assert.equal(updatedVital.heart_rate, 88);
+  assert.equal(updatedVital.temperature_c, 37.1);
+  assert.equal(updatedVital.recorded_at, "2026-03-09T10:18:00.000Z");
+  assert.equal(typeof updatedVital.updated_at, "string");
+
+  const listVitalsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(listVitalsResponse.statusCode, 200);
+  const vitals = listVitalsResponse.json() as Array<{
+    id: number;
+    heart_rate: number | null;
+    temperature_c: number | null;
+    recorded_at: string;
+  }>;
+  assert.equal(vitals[0].id, createdVital.id);
+  assert.equal(vitals[0].heart_rate, 88);
+  assert.equal(vitals[0].temperature_c, 37.1);
+  assert.equal(vitals[0].recorded_at, "2026-03-09T10:18:00.000Z");
+
+  await app.close();
+});
+
 test("patient create rejects mismatched age and DOB with validation envelope", async () => {
   if (!process.env.DATABASE_URL) {
     return;

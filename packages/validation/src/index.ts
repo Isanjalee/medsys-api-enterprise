@@ -464,3 +464,26 @@ export const createVitalSchema = z
       value.spo2 !== undefined,
     "At least one vital measurement must be provided"
   );
+
+export const updateVitalSchema = z
+  .object({
+    encounterId: z.number().int().positive().optional().nullable(),
+    bpSystolic: z.number().int().min(30).max(300).optional().nullable(),
+    bpDiastolic: z.number().int().min(20).max(200).optional().nullable(),
+    heartRate: z.number().int().min(20).max(300).optional().nullable(),
+    temperatureC: z.number().min(25).max(45).optional().nullable(),
+    spo2: z.number().int().min(0).max(100).optional().nullable(),
+    recordedAt: z.string().datetime().optional()
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.encounterId !== undefined ||
+      value.bpSystolic !== undefined ||
+      value.bpDiastolic !== undefined ||
+      value.heartRate !== undefined ||
+      value.temperatureC !== undefined ||
+      value.spo2 !== undefined ||
+      value.recordedAt !== undefined,
+    "At least one field must be provided"
+  );

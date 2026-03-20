@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, count, desc, eq, isNull } from "drizzle-orm";
+import { z } from "zod";
 import {
   families,
   familyMembers,
@@ -20,6 +21,7 @@ import {
   createPatientTimelineEventSchema,
   createVitalSchema,
   idParamSchema,
+  updateVitalSchema,
   updatePatientFrontendSchema,
   updatePatientSchema
 } from "@medsys/validation";
@@ -450,6 +452,33 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           value: {
             heartRate: 84,
             recordedAt: "2026-03-05T09:55:00Z"
+          }
+        }
+      }
+    },
+    "PATCH /:id/vitals/:vitalId": {
+      operationId: "PatientsController_updateVital",
+      summary: "Update patient vital record",
+      bodySchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          encounterId: { type: "integer", minimum: 1, nullable: true },
+          bpSystolic: { type: "integer", minimum: 30, maximum: 300, nullable: true },
+          bpDiastolic: { type: "integer", minimum: 20, maximum: 200, nullable: true },
+          heartRate: { type: "integer", minimum: 20, maximum: 300, nullable: true },
+          temperatureC: { type: "number", minimum: 25, maximum: 45, nullable: true },
+          spo2: { type: "integer", minimum: 0, maximum: 100, nullable: true },
+          recordedAt: { type: "string", format: "date-time" }
+        }
+      },
+      bodyExamples: {
+        correction: {
+          summary: "Correct a previously saved vital record",
+          value: {
+            heartRate: 82,
+            temperatureC: 37.1,
+            recordedAt: "2026-03-05T10:18:00Z"
           }
         }
       }
@@ -1628,6 +1657,66 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     });
     await invalidatePatientProfile(actor.organizationId, params.id);
     return reply.code(201).send(serializePatientVital(inserted[0]));
+  });
+
+  app.patch("/:id/vitals/:vitalId", { preHandler: app.authorizePermissions(["patient.vital.write"]) }, async (request) => {
+    const actor = request.actor!;
+    const params = parseOrThrowValidation(
+      z.object({
+        id: idParamSchema.shape.id,
+        vitalId: idParamSchema.shape.id
+      }),
+      request.params
+    );
+    const payload = parseOrThrowValidation(updateVitalSchema, request.body);
+
+    const patch: Record<string, unknown> = {
+      updatedAt: new Date()
+    };
+
+    if (payload.encounterId !== undefined) {
+      patch.encounterId = payload.encounterId;
+    }
+    if (payload.bpSystolic !== undefined) {
+      patch.bpSystolic = payload.bpSystolic;
+    }
+    if (payload.bpDiastolic !== undefined) {
+      patch.bpDiastolic = payload.bpDiastolic;
+    }
+    if (payload.heartRate !== undefined) {
+      patch.heartRate = payload.heartRate;
+    }
+    if (payload.temperatureC !== undefined) {
+      patch.temperatureC = payload.temperatureC?.toString() ?? null;
+    }
+    if (payload.spo2 !== undefined) {
+      patch.spo2 = payload.spo2;
+    }
+    if (payload.recordedAt !== undefined) {
+      patch.recordedAt = new Date(payload.recordedAt);
+    }
+
+    const updated = await app.db
+      .update(patientVitals)
+      .set(patch)
+      .where(
+        and(
+          eq(patientVitals.id, params.vitalId),
+          eq(patientVitals.patientId, params.id),
+          eq(patientVitals.organizationId, actor.organizationId),
+          isNull(patientVitals.deletedAt)
+        )
+      )
+      .returning();
+
+    assertOrThrow(updated.length === 1, 404, "Patient vital not found");
+    await writeAuditLog(request, {
+      entityType: "patient_vitals",
+      action: "update",
+      entityId: params.vitalId
+    });
+    await invalidatePatientProfile(actor.organizationId, params.id);
+    return serializePatientVital(updated[0]);
   });
 
   app.get("/:id/timeline", { preHandler: app.authorizePermissions(["patient.timeline.read"]) }, async (request) => {
