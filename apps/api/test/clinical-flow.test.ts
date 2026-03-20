@@ -2339,6 +2339,106 @@ test("patient vitals can be soft deleted and disappear from the list", async () 
   await app.close();
 });
 
+test("patient vitals reject encounter ids that belong to a different patient", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const assistantId = await getUserIdByEmail(app, ownerLogin.accessToken, "assistant", "assistant@medsys.local");
+  const patientAId = await createPatientAs(app, ownerLogin.accessToken, `Encounter Link A ${Date.now()} Patient`);
+  const patientBId = await createPatientAs(app, ownerLogin.accessToken, `Encounter Link B ${Date.now()} Patient`);
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId: patientAId,
+      doctorId,
+      assistantId,
+      scheduledAt: "2026-03-20T10:00:00Z"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
+  const appointment = appointmentResponse.json() as { id: number };
+
+  const encounterResponse = await app.inject({
+    method: "POST",
+    url: "/v1/encounters",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      appointmentId: appointment.id,
+      patientId: patientAId,
+      doctorId,
+      checkedAt: "2026-03-20T10:30:00Z",
+      diagnoses: [],
+      tests: []
+    }
+  });
+
+  assert.equal(encounterResponse.statusCode, 201);
+  const encounterBody = encounterResponse.json() as { encounterId: number };
+
+  const createWrongEncounterResponse = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${patientBId}/vitals`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      encounterId: encounterBody.encounterId,
+      heartRate: 84,
+      recordedAt: "2026-03-20T10:35:00Z"
+    }
+  });
+
+  assert.equal(createWrongEncounterResponse.statusCode, 404);
+  assert.deepEqual(createWrongEncounterResponse.json(), {
+    error: "Encounter not found for patient"
+  });
+
+  const createVitalResponse = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${patientBId}/vitals`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      heartRate: 80,
+      recordedAt: "2026-03-20T10:36:00Z"
+    }
+  });
+
+  assert.equal(createVitalResponse.statusCode, 201);
+  const createdVital = createVitalResponse.json() as { id: number };
+
+  const updateWrongEncounterResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/patients/${patientBId}/vitals/${createdVital.id}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      encounterId: encounterBody.encounterId
+    }
+  });
+
+  assert.equal(updateWrongEncounterResponse.statusCode, 404);
+  assert.deepEqual(updateWrongEncounterResponse.json(), {
+    error: "Encounter not found for patient"
+  });
+
+  await app.close();
+});
+
 test("patient create rejects mismatched age and DOB with validation envelope", async () => {
   if (!process.env.DATABASE_URL) {
     return;

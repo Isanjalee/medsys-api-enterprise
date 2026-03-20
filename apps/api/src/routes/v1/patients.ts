@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { and, count, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
+  encounters,
   families,
   familyMembers,
   patientAllergies,
@@ -53,6 +54,28 @@ const assertFrontendNameHasFirstAndLast = (fullName: string): { firstName: strin
     firstName: nameParts.firstName,
     lastName: nameParts.lastName
   };
+};
+
+const assertEncounterBelongsToPatient = async (
+  readDb: any,
+  organizationId: string,
+  patientId: number,
+  encounterId: number
+): Promise<void> => {
+  const rows = await readDb
+    .select({ id: encounters.id })
+    .from(encounters)
+    .where(
+      and(
+        eq(encounters.id, encounterId),
+        eq(encounters.organizationId, organizationId),
+        eq(encounters.patientId, patientId),
+        isNull(encounters.deletedAt)
+      )
+    )
+    .limit(1);
+
+  assertOrThrow(rows.length === 1, 404, "Encounter not found for patient");
 };
 
 const calculateValidatedAge = (dob: string, age?: number): number => {
@@ -1640,6 +1663,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       patientId: params.id
     });
 
+    if (payload.encounterId) {
+      await assertEncounterBelongsToPatient(app.readDb, actor.organizationId, params.id, payload.encounterId);
+    }
+
     const inserted = await app.db
       .insert(patientVitals)
       .values({
@@ -1673,6 +1700,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       request.params
     );
     const payload = parseOrThrowValidation(updateVitalSchema, request.body);
+
+    if (payload.encounterId) {
+      await assertEncounterBelongsToPatient(app.readDb, actor.organizationId, params.id, payload.encounterId);
+    }
 
     const patch: Record<string, unknown> = {
       updatedAt: new Date()
