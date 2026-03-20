@@ -11,6 +11,7 @@ import auditRoutes from "./v1/audit.js";
 import userRoutes from "./v1/users.js";
 import clinicalRoutes from "./v1/clinical.js";
 import searchRoutes from "./v1/search.js";
+import visitsRoutes from "./v1/visits.js";
 
 const routesPlugin: FastifyPluginAsync = async (app) => {
   await app.register(authRoutes, { prefix: "/auth" });
@@ -20,6 +21,7 @@ const routesPlugin: FastifyPluginAsync = async (app) => {
   await app.register(patientRoutes, { prefix: "/patients" });
   await app.register(familyRoutes, { prefix: "/families" });
   await app.register(appointmentRoutes, { prefix: "/appointments" });
+  await app.register(visitsRoutes, { prefix: "/visits" });
   await app.register(encounterRoutes, { prefix: "/encounters" });
   await app.register(prescriptionRoutes, { prefix: "/prescriptions" });
   await app.register(inventoryRoutes, { prefix: "/inventory" });

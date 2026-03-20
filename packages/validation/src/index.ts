@@ -268,6 +268,17 @@ export const createAppointmentSchema = z.object({
   priority: prioritySchema.default("normal")
 });
 
+export const startVisitSchema = z
+  .object({
+    patientId: z.number().int().positive(),
+    doctorId: z.number().int().positive().optional().nullable(),
+    assistantId: z.number().int().positive().optional().nullable(),
+    scheduledAt: z.string().datetime().optional(),
+    reason: z.string().max(5000).optional().nullable(),
+    priority: prioritySchema.default("normal")
+  })
+  .strict();
+
 export const listAppointmentsQuerySchema = z
   .object({
     status: appointmentStatusSchema.optional()
