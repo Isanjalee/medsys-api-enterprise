@@ -454,4 +454,13 @@ export const createVitalSchema = z
     spo2: z.number().int().min(0).max(100).optional().nullable(),
     recordedAt: z.string().datetime()
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.bpSystolic !== undefined ||
+      value.bpDiastolic !== undefined ||
+      value.heartRate !== undefined ||
+      value.temperatureC !== undefined ||
+      value.spo2 !== undefined,
+    "At least one vital measurement must be provided"
+  );

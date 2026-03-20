@@ -2013,6 +2013,50 @@ test("patient vitals rejects unknown fields with validation envelope", async () 
   await app.close();
 });
 
+test("patient vitals rejects payloads without any measurement values", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createPatientResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      name: `Vitals Empty ${uniqueSuffix} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
+    }
+  });
+
+  assert.equal(createPatientResponse.statusCode, 201);
+  const createBody = createPatientResponse.json() as { patient: { id: number } };
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      recordedAt: "2026-03-09T10:15:00Z"
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [{ field: "body", message: "At least one vital measurement must be provided" }]
+  });
+  await app.close();
+});
+
 test("patient create rejects mismatched age and DOB with validation envelope", async () => {
   if (!process.env.DATABASE_URL) {
     return;
