@@ -2114,6 +2114,26 @@ test("patient vitals create and list use the stable serialized response shape", 
   assert.equal(typeof createdVital.created_at, "string");
   assert.equal(typeof createdVital.updated_at, "string");
 
+  const secondVitalResponse = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      spo2: 97,
+      recordedAt: "2026-03-09T10:20:00Z"
+    }
+  });
+
+  assert.equal(secondVitalResponse.statusCode, 201);
+  const secondVital = secondVitalResponse.json() as {
+    id: number;
+    spo2: number | null;
+    recorded_at: string;
+  };
+  assert.equal(secondVital.spo2, 97);
+
   const listVitalsResponse = await app.inject({
     method: "GET",
     url: `/v1/patients/${createBody.patient.id}/vitals`,
@@ -2127,12 +2147,17 @@ test("patient vitals create and list use the stable serialized response shape", 
     id: number;
     patient_id: number;
     heart_rate: number | null;
+    spo2: number | null;
     temperature_c: number | null;
     recorded_at: string;
   }>;
-  assert.equal(vitals.length >= 1, true);
+  assert.equal(vitals.length >= 2, true);
   assert.equal(vitals[0].patient_id, createBody.patient.id);
+  assert.equal(vitals[0].id, secondVital.id);
+  assert.equal(vitals[0].spo2, 97);
   assert.equal(typeof vitals[0].recorded_at, "string");
+  assert.equal(vitals[1].id, createdVital.id);
+  assert.equal(vitals[1].heart_rate, 84);
 
   await app.close();
 });

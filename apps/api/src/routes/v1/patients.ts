@@ -1573,7 +1573,19 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
     const rows = await app.readDb
-      .select()
+      .select({
+        id: patientVitals.id,
+        patientId: patientVitals.patientId,
+        encounterId: patientVitals.encounterId,
+        bpSystolic: patientVitals.bpSystolic,
+        bpDiastolic: patientVitals.bpDiastolic,
+        heartRate: patientVitals.heartRate,
+        temperatureC: patientVitals.temperatureC,
+        spo2: patientVitals.spo2,
+        recordedAt: patientVitals.recordedAt,
+        createdAt: patientVitals.createdAt,
+        updatedAt: patientVitals.updatedAt
+      })
       .from(patientVitals)
       .where(
         and(
@@ -1582,7 +1594,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           isNull(patientVitals.deletedAt)
         )
       )
-      .orderBy(desc(patientVitals.recordedAt));
+      .orderBy(desc(patientVitals.recordedAt), desc(patientVitals.id));
 
     return rows.map(serializePatientVital);
   });
