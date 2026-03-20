@@ -38,8 +38,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built relational database dictionary</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>1.3</div>
-      <div><strong>Date</strong>March 19, 2026</div>
+      <div><strong>Version</strong>1.4</div>
+      <div><strong>Date</strong>March 20, 2026</div>
       <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, V8, V9, and V10</div>
       <div><strong>Audience</strong>Developers, QA, BA, reviewers, and client stakeholders</div>
     </div>
@@ -262,6 +262,7 @@
       </tbody>
     </table>
     <p><strong>Index:</strong> <span class="mono">patient_vitals_patient_recorded_idx</span> on <span class="mono">(patient_id, recorded_at)</span>.</p>
+    <p><strong>Application behavior note:</strong> vitals writes now follow a fixed typed API contract rather than generic name or value rows. The application requires at least one measurement on create, supports correction via the vitals patch route, soft deletion via the vitals delete route, validates that any supplied <span class="mono">encounter_id</span> belongs to the same patient, and can create the first vitals row during encounter bundle creation.</p>
 
     <h3>7.4 patient_timeline_events</h3>
     <table class="small">

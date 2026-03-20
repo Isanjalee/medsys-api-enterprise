@@ -115,13 +115,22 @@ npm run dev -w @medsys/worker
   - `low`, `moderate`, `high`
 - `priority` is an appointment field, not a patient field:
   - send it to `POST /v1/appointments`, not `POST /v1/patients`
+- Vitals API uses a typed clinical payload, not generic `name/value` rows:
+  - `bpSystolic`, `bpDiastolic`, `heartRate`, `temperatureC`, `spo2`, `recordedAt`
+- `POST /v1/patients/:id/vitals` requires at least one actual measurement field
+- `PATCH /v1/patients/:id/vitals/:vitalId` supports correcting a saved vitals row
+- `DELETE /v1/patients/:id/vitals/:vitalId` soft-deletes a mistaken vitals row
+- `encounterId` on vitals is optional, but if provided it must belong to the same patient
+- `POST /v1/encounters` can now accept an optional `vitals` block:
+  - backend creates the encounter and initial vitals in one workflow
+  - if `vitals.recordedAt` is omitted, backend defaults it to `checkedAt`
 
 ## Doctor-only clinic mode workflow
 For clinics operating without an assistant, the doctor workflow natively supports end-to-end administration:
 1. Doctor searches patient using `GET /v1/search/patients`.
 2. If not found, doctor creates patient via `POST /v1/patients`.
 3. Doctor creates or continues appointment via `POST /v1/appointments` to track the visit.
-4. Doctor opens full profile (`GET /v1/patients/:id/profile`) and creates the clinical encounter.
+4. Doctor opens full profile (`GET /v1/patients/:id/profile`) and creates the clinical encounter, optionally including initial vitals in the encounter request.
 5. Doctor optionally completes the dispense workflow directly if `prescription.dispense` is granted.
 
 

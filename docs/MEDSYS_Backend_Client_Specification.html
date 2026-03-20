@@ -40,8 +40,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.4</div>
-      <div><strong>Date</strong>March 19, 2026</div>
+      <div><strong>Version</strong>2.5</div>
+      <div><strong>Date</strong>March 20, 2026</div>
       <div><strong>Audience</strong>Frontend, BFF, QA, BA, and client delivery teams</div>
       <div><strong>Scope</strong>Implemented REST contracts, auth behavior, permission model, and integration expectations</div>
     </div>
@@ -195,6 +195,12 @@
       <li>Patient create supports <span class="mono">bloodGroup</span> and inline <span class="mono">allergies</span> in both request styles. Allergy rows use <span class="mono">allergyName</span>, <span class="mono">severity</span>, and <span class="mono">isActive</span>, where severity must be <span class="mono">low</span>, <span class="mono">moderate</span>, or <span class="mono">high</span>.</li>
       <li>If neither <span class="mono">familyId</span> nor <span class="mono">familyCode</span> is provided on patient create, the backend auto-creates a family named from the patient, such as <span class="mono">Nimal Perera Family</span>.</li>
       <li><span class="mono">priority</span> remains an appointment-only field. Clients should send visit urgency to <span class="mono">POST /v1/appointments</span>, not to the patient master record.</li>
+      <li>Vitals writes use a fixed typed payload, not a generic name or value array. Supported fields are <span class="mono">bpSystolic</span>, <span class="mono">bpDiastolic</span>, <span class="mono">heartRate</span>, <span class="mono">temperatureC</span>, <span class="mono">spo2</span>, optional <span class="mono">encounterId</span>, and required <span class="mono">recordedAt</span>.</li>
+      <li><span class="mono">POST /v1/patients/:id/vitals</span> requires at least one actual measurement value. <span class="mono">recordedAt</span> by itself is not enough.</li>
+      <li>Vitals responses are serialized in stable snake_case fields such as <span class="mono">patient_id</span>, <span class="mono">encounter_id</span>, <span class="mono">bp_systolic</span>, <span class="mono">heart_rate</span>, <span class="mono">temperature_c</span>, <span class="mono">recorded_at</span>, <span class="mono">created_at</span>, and <span class="mono">updated_at</span>.</li>
+      <li><span class="mono">PATCH /v1/patients/:id/vitals/:vitalId</span> corrects an existing vitals row, and <span class="mono">DELETE /v1/patients/:id/vitals/:vitalId</span> soft-deletes a mistaken row.</li>
+      <li>If <span class="mono">encounterId</span> is sent with a vitals create or update request, the backend validates that the encounter belongs to the same patient and organization.</li>
+      <li><span class="mono">POST /v1/encounters</span> now supports an optional <span class="mono">vitals</span> block so the consultation workflow can create the encounter and initial vitals together. If the vitals block omits <span class="mono">recordedAt</span>, the backend uses <span class="mono">checkedAt</span>.</li>
       <li><span class="mono">PATCH /v1/patients/:id</span> is transactional for patient profile, family, and allergy changes. If any part of a combined update fails, the full save is rolled back.</li>
       <li>User creation supports two request shapes: frontend-friendly <span class="mono">name</span> or direct API <span class="mono">firstName/lastName</span>.</li>
       <li>Swagger examples are available on the major create and update endpoints to reduce ambiguity around payload shapes.</li>
@@ -218,18 +224,18 @@
       <li>Doctor searches patient using <span class="mono">GET /v1/search/patients</span> by code, NIC, phone, or name.</li>
       <li>If not found, doctor creates the patient profile with <span class="mono">POST /v1/patients</span>, optionally including blood group, family link or family code, guardian details, and inline allergies.</li>
       <li>Doctor creates or continues an appointment with <span class="mono">POST /v1/appointments</span> to trace the visit and assign <span class="mono">priority</span>.</li>
-      <li>Doctor enters the full profile (<span class="mono">GET /v1/patients/:id/profile</span>) and authors the clinical encounter.</li>
+      <li>Doctor enters the full profile (<span class="mono">GET /v1/patients/:id/profile</span>) and authors the clinical encounter, optionally including the first vitals block in the encounter request.</li>
       <li>If dispensing inside the clinic, doctor optionally completes the dispense workflow directly.</li>
     </ol>
 
     <h2>9. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 19, 2026.</li>
+      <li>Repository implementation state as of March 20, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
-      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, and current database constraints through Flyway V10.</li>
-      <li>Verified automated backend suite status of 53 passing API tests and 6 passing worker tests.</li>
+      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, fixed typed vitals workflows, and current database constraints through Flyway V10.</li>
+      <li>Verified automated backend suite status of 61 passing API tests and 6 passing worker tests.</li>
     </ul>
-    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 19, 2026.</div>
+    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 20, 2026.</div>
   </section>
 </body>
 </html>
