@@ -84,6 +84,7 @@ npm run dev -w @medsys/worker
 - `/v1/patients/:id/vitals`, `/v1/patients/:id/timeline`
 - `/v1/families`
 - `/v1/appointments`, `/v1/appointments/:id`
+- `/v1/visits/start`
 - `/v1/encounters`, `/v1/encounters/:id/diagnoses`, `/v1/encounters/:id/tests`
 - `/v1/prescriptions`, `/v1/prescriptions/:id`, `/v1/prescriptions/:id/dispense`
 - `/v1/prescriptions/queue/pending-dispense`
@@ -129,9 +130,22 @@ npm run dev -w @medsys/worker
 For clinics operating without an assistant, the doctor workflow natively supports end-to-end administration:
 1. Doctor searches patient using `GET /v1/search/patients`.
 2. If not found, doctor creates patient via `POST /v1/patients`.
-3. Doctor creates or continues appointment via `POST /v1/appointments` to track the visit.
-4. Doctor opens full profile (`GET /v1/patients/:id/profile`) and creates the clinical encounter, optionally including initial vitals in the encounter request.
-5. Doctor optionally completes the dispense workflow directly if `prescription.dispense` is granted.
+3. Doctor starts or resumes the visit via `POST /v1/visits/start`.
+4. Backend reuses an active `waiting` or `in_consultation` visit if one already exists for the patient, otherwise it creates a new walk-in visit as `in_consultation`.
+5. Doctor opens full profile (`GET /v1/patients/:id/profile`) and creates the clinical encounter, optionally including initial vitals in the encounter request.
+6. Doctor optionally completes the dispense workflow directly if `prescription.dispense` is granted.
+
+## Dual clinic workflow support
+- Small-clinic walk-in mode:
+  - doctor searches patient first
+  - if not found, create patient
+  - call `POST /v1/visits/start`
+  - backend reuses or creates the live visit record
+- Appointment-first center mode:
+  - assistant or scheduling flow creates appointment via `POST /v1/appointments`
+  - doctor works from the waiting queue
+  - if needed, `POST /v1/visits/start` can still safely reuse the active visit instead of creating duplicates
+- `POST /v1/appointments` remains the resource-level route for scheduled visits, while `POST /v1/visits/start` is the orchestration route for walk-in doctor flow.
 
 
 ## Clinical transaction guarantees
