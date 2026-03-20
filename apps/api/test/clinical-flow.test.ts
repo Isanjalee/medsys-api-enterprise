@@ -2260,6 +2260,63 @@ test("patient vitals can be updated through the correction endpoint", async () =
   await app.close();
 });
 
+test("patient vitals patch rejects an empty body with validation envelope", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createPatientResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      name: `Vitals Empty Patch ${uniqueSuffix} Patient`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
+    }
+  });
+
+  assert.equal(createPatientResponse.statusCode, 201);
+  const createBody = createPatientResponse.json() as { patient: { id: number } };
+
+  const createVitalResponse = await app.inject({
+    method: "POST",
+    url: `/v1/patients/${createBody.patient.id}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      heartRate: 82,
+      recordedAt: "2026-03-09T10:15:00Z"
+    }
+  });
+
+  assert.equal(createVitalResponse.statusCode, 201);
+  const createdVital = createVitalResponse.json() as { id: number };
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: `/v1/patients/${createBody.patient.id}/vitals/${createdVital.id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {}
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [{ field: "body", message: "At least one field must be provided" }]
+  });
+  await app.close();
+});
+
 test("patient vitals can be soft deleted and disappear from the list", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -2528,6 +2585,84 @@ test("encounter bundle can create initial vitals in the same workflow", async ()
   assert.equal(vitals[0].heart_rate, 78);
   assert.equal(vitals[0].temperature_c, 37.2);
   assert.equal(vitals[0].spo2, 98);
+
+  await app.close();
+});
+
+test("encounter bundle vitals default recordedAt to checkedAt when omitted", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const assistantId = await getUserIdByEmail(app, ownerLogin.accessToken, "assistant", "assistant@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Encounter Vitals Default ${Date.now()} Patient`);
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      doctorId,
+      assistantId,
+      scheduledAt: "2026-03-20T12:00:00Z"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
+  const appointment = appointmentResponse.json() as { id: number };
+
+  const checkedAt = "2026-03-20T12:05:00Z";
+  const encounterResponse = await app.inject({
+    method: "POST",
+    url: "/v1/encounters",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      appointmentId: appointment.id,
+      patientId,
+      doctorId,
+      checkedAt,
+      vitals: {
+        heartRate: 76
+      },
+      diagnoses: [],
+      tests: []
+    }
+  });
+
+  assert.equal(encounterResponse.statusCode, 201);
+  const encounterBody = encounterResponse.json() as {
+    encounterId: number;
+    vitalId: number | null;
+  };
+  assert.equal(typeof encounterBody.vitalId, "number");
+
+  const listVitalsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${patientId}/vitals`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(listVitalsResponse.statusCode, 200);
+  const vitals = listVitalsResponse.json() as Array<{
+    id: number;
+    encounter_id: number | null;
+    heart_rate: number | null;
+    recorded_at: string;
+  }>;
+  assert.equal(vitals[0].id, encounterBody.vitalId);
+  assert.equal(vitals[0].encounter_id, encounterBody.encounterId);
+  assert.equal(vitals[0].heart_rate, 76);
+  assert.equal(vitals[0].recorded_at, "2026-03-20T12:05:00.000Z");
 
   await app.close();
 });
