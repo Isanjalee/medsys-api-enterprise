@@ -954,6 +954,137 @@ test("patient create accepts compatibility fields used by the frontend BFF", asy
   await app.close();
 });
 
+test("start visit creates a new in-consultation visit for walk-in doctor flow", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const patientId = await createPatientAs(app, doctorLogin.accessToken, `Walk-In ${Date.now()} Patient`);
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/visits/start",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      reason: "Walk-in consultation",
+      priority: "normal"
+    }
+  });
+
+  assert.equal(response.statusCode, 201);
+  const body = response.json() as {
+    reused: boolean;
+    visit: {
+      patientId: number;
+      doctorId: number | null;
+      status: string;
+      reason: string | null;
+      priority: string;
+    };
+  };
+  assert.equal(body.reused, false);
+  assert.equal(body.visit.patientId, patientId);
+  assert.equal(body.visit.doctorId, doctorId);
+  assert.equal(body.visit.status, "in_consultation");
+  assert.equal(body.visit.reason, "Walk-in consultation");
+  assert.equal(body.visit.priority, "normal");
+
+  await app.close();
+});
+
+test("start visit reuses an active waiting visit instead of creating a duplicate", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Reuse Visit ${Date.now()} Patient`);
+
+  const createAppointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      scheduledAt: "2026-03-20T09:00:00Z",
+      status: "waiting",
+      priority: "high"
+    }
+  });
+
+  assert.equal(createAppointmentResponse.statusCode, 201);
+  const createdAppointment = createAppointmentResponse.json() as { id: number };
+
+  const startVisitResponse = await app.inject({
+    method: "POST",
+    url: "/v1/visits/start",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      patientId
+    }
+  });
+
+  assert.equal(startVisitResponse.statusCode, 200);
+  const startVisitBody = startVisitResponse.json() as {
+    reused: boolean;
+    visit: {
+      id: number;
+      patientId: number;
+      doctorId: number | null;
+      status: string;
+    };
+  };
+  assert.equal(startVisitBody.reused, true);
+  assert.equal(startVisitBody.visit.id, createdAppointment.id);
+  assert.equal(startVisitBody.visit.patientId, patientId);
+  assert.equal(startVisitBody.visit.doctorId, doctorId);
+  assert.equal(startVisitBody.visit.status, "in_consultation");
+
+  const waitingResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=waiting",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(waitingResponse.statusCode, 200);
+  const waitingAppointments = waitingResponse.json() as Array<{ id: number }>;
+  assert.equal(waitingAppointments.some((row) => row.id === createdAppointment.id), false);
+
+  const inConsultationResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=in_consultation",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(inConsultationResponse.statusCode, 200);
+  const inConsultationAppointments = inConsultationResponse.json() as Array<{ id: number; doctorId: number | null }>;
+  assert.equal(inConsultationAppointments.some((row) => row.id === createdAppointment.id), true);
+  assert.equal(
+    inConsultationAppointments.some((row) => row.id === createdAppointment.id && row.doctorId === doctorId),
+    true
+  );
+
+  await app.close();
+});
+
 test("patient create with backend-style payload auto-creates family and saves allergies", async () => {
   if (!process.env.DATABASE_URL) {
     return;
