@@ -23,7 +23,7 @@ import {
   updatePatientFrontendSchema,
   updatePatientSchema
 } from "@medsys/validation";
-import { serializePatientHistoryEntry, serializePatientSummary } from "../../lib/api-serializers.js";
+import { serializePatientHistoryEntry, serializePatientSummary, serializePatientVital } from "../../lib/api-serializers.js";
 import { calculateAgeFromDob } from "../../lib/date.js";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { splitFullName } from "../../lib/names.js";
@@ -1572,7 +1572,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
   app.get("/:id/vitals", { preHandler: app.authorizePermissions(["patient.vital.read"]) }, async (request) => {
     const actor = request.actor!;
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
-    return app.readDb
+    const rows = await app.readDb
       .select()
       .from(patientVitals)
       .where(
@@ -1583,6 +1583,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         )
       )
       .orderBy(desc(patientVitals.recordedAt));
+
+    return rows.map(serializePatientVital);
   });
 
   app.post("/:id/vitals", { preHandler: app.authorizePermissions(["patient.vital.write"]) }, async (request, reply) => {
@@ -1613,7 +1615,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       entityId: inserted[0].id
     });
     await invalidatePatientProfile(actor.organizationId, params.id);
-    return reply.code(201).send(inserted[0]);
+    return reply.code(201).send(serializePatientVital(inserted[0]));
   });
 
   app.get("/:id/timeline", { preHandler: app.authorizePermissions(["patient.timeline.read"]) }, async (request) => {

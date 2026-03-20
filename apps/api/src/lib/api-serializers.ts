@@ -40,6 +40,20 @@ export type PatientHistoryRow = {
   createdByRole: "owner" | "doctor" | "assistant";
 };
 
+export type PatientVitalRow = {
+  id: number;
+  patientId: number;
+  encounterId: number | null;
+  bpSystolic: number | null;
+  bpDiastolic: number | null;
+  heartRate: number | null;
+  temperatureC: string | number | null;
+  spo2: number | null;
+  recordedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export const serializeAuthUser = (row: AuthUserRow) => ({
   id: row.id,
   name: buildDisplayName(row.firstName, row.lastName),
@@ -74,4 +88,18 @@ export const serializePatientHistoryEntry = (row: PatientHistoryRow) => ({
   created_by_user_id: row.createdByUserId,
   created_by_name: buildDisplayName(row.createdByFirstName, row.createdByLastName),
   created_by_role: row.createdByRole
+});
+
+export const serializePatientVital = (row: PatientVitalRow) => ({
+  id: row.id,
+  patient_id: row.patientId,
+  encounter_id: row.encounterId,
+  bp_systolic: row.bpSystolic,
+  bp_diastolic: row.bpDiastolic,
+  heart_rate: row.heartRate,
+  temperature_c: row.temperatureC === null ? null : Number(row.temperatureC),
+  spo2: row.spo2,
+  recorded_at: row.recordedAt,
+  created_at: row.createdAt,
+  updated_at: row.updatedAt
 });
