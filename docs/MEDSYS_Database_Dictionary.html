@@ -38,7 +38,7 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built relational database dictionary</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>1.4</div>
+      <div><strong>Version</strong>1.5</div>
       <div><strong>Date</strong>March 20, 2026</div>
       <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, V8, V9, and V10</div>
       <div><strong>Audience</strong>Developers, QA, BA, reviewers, and client stakeholders</div>
@@ -324,6 +324,7 @@
     </table>
     <p><strong>Constraints:</strong> partitioned table; primary key is composite <span class="mono">(id, scheduled_at)</span>; foreign keys to <span class="mono">patients.id</span> and optionally <span class="mono">users.id</span> for doctor/assistant. <strong>Indexes:</strong> <span class="mono">appointments_id_idx</span>, <span class="mono">appointments_status_scheduled_idx</span>, <span class="mono">appointments_patient_idx</span>, <span class="mono">appointments_org_scheduled_idx</span>.</p>
     <p><strong>Partitioning notes:</strong> V4 creates <span class="mono">appointments_default</span> and monthly partitions such as <span class="mono">appointments_2026_03</span>.</p>
+    <p><strong>Application behavior note:</strong> the backend now uses <span class="mono">appointments</span> for both scheduled center visits and small-clinic walk-ins. The <span class="mono">POST /v1/visits/start</span> workflow reuses an existing active row in <span class="mono">waiting</span> or <span class="mono">in_consultation</span> when available, otherwise it creates a new in-consultation visit row for the patient.</p>
 
     <h3>8.2 encounters</h3>
     <table class="small">

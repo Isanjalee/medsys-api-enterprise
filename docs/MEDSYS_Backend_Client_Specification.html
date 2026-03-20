@@ -40,7 +40,7 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.5</div>
+      <div><strong>Version</strong>2.6</div>
       <div><strong>Date</strong>March 20, 2026</div>
       <div><strong>Audience</strong>Frontend, BFF, QA, BA, and client delivery teams</div>
       <div><strong>Scope</strong>Implemented REST contracts, auth behavior, permission model, and integration expectations</div>
@@ -173,7 +173,8 @@
       <tbody>
         <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td><span class="mono">GET /v1/patients</span> is a summary-list contract. Full identity and guardian details belong to <span class="mono">/v1/patients/:id/profile</span>. Doctors can perform patient registration under the default doctor workflow.</td></tr>
         <tr><td>Families</td><td><span class="mono">/v1/families</span></td><td><span class="mono">family.read</span>, <span class="mono">family.write</span></td><td>Doctor accounts can receive <span class="mono">family.write</span> through assistant-support permissions.</td></tr>
-        <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td><td><span class="mono">appointment.read</span>, <span class="mono">appointment.create</span>, <span class="mono">appointment.update</span></td><td>Appointment creation is no longer tied only to the assistant role. It follows permission checks.</td></tr>
+        <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td><td><span class="mono">appointment.read</span>, <span class="mono">appointment.create</span>, <span class="mono">appointment.update</span></td><td>Appointment creation is no longer tied only to the assistant role. It follows permission checks and remains the resource-level route for scheduled visits.</td></tr>
+        <tr><td>Visits</td><td><span class="mono">/v1/visits/start</span></td><td><span class="mono">appointment.create</span></td><td>Walk-in orchestration route that reuses an active patient visit or creates a new in-consultation visit for doctor-first workflows.</td></tr>
         <tr><td>Encounters</td><td><span class="mono">/v1/encounters</span></td><td><span class="mono">encounter.read</span>, <span class="mono">encounter.write</span></td><td>Doctor base permissions already cover clinical encounter authoring.</td></tr>
         <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td><span class="mono">prescription.read</span>, <span class="mono">prescription.dispense</span></td><td>Doctors can access the pending dispense queue and complete dispense workflow under the default doctor permission set.</td></tr>
         <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td><span class="mono">inventory.read</span>, <span class="mono">inventory.write</span></td><td>Mutation routes are permission-checked; selected doctors can inherit inventory write access.</td></tr>
@@ -202,6 +203,7 @@
       <li>If <span class="mono">encounterId</span> is sent with a vitals create or update request, the backend validates that the encounter belongs to the same patient and organization.</li>
       <li><span class="mono">POST /v1/encounters</span> now supports an optional <span class="mono">vitals</span> block so the consultation workflow can create the encounter and initial vitals together. If the vitals block omits <span class="mono">recordedAt</span>, the backend uses <span class="mono">checkedAt</span>.</li>
       <li><span class="mono">PATCH /v1/patients/:id</span> is transactional for patient profile, family, and allergy changes. If any part of a combined update fails, the full save is rolled back.</li>
+      <li><span class="mono">POST /v1/visits/start</span> is the preferred walk-in flow endpoint. It reuses an active visit in <span class="mono">waiting</span> or <span class="mono">in_consultation</span> for the patient, or creates a new visit if none exists.</li>
       <li>User creation supports two request shapes: frontend-friendly <span class="mono">name</span> or direct API <span class="mono">firstName/lastName</span>.</li>
       <li>Swagger examples are available on the major create and update endpoints to reduce ambiguity around payload shapes.</li>
       <li>Permission names are validated. Clients should not send arbitrary strings in <span class="mono">extraPermissions</span>.</li>
@@ -215,25 +217,35 @@
       <li>Expect a doctor with assistant-support permissions to remain <span class="mono">role = doctor</span>.</li>
       <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor fast-selection by patient/guardian identity (returns <code>patient_code</code>, <code>nic</code>, <code>gender</code>), and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
       <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
+      <li>For small walk-in clinics, after patient selection call <span class="mono">POST /v1/visits/start</span> instead of creating a separate appointment manually. For larger centers with receptionist-led scheduling, keep using <span class="mono">POST /v1/appointments</span> and the waiting queue.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
     </ol>
 
-    <h2>9. Doctor-Only Clinic Mode Workflow</h2>
-    <p>For small practices operating without an assistant, doctors now possess native permissions to complete the full patient journey end-to-end:</p>
+    <h2>9. Dual Clinic Workflow Support</h2>
+    <p>The backend now supports both Sri Lankan walk-in clinics and appointment-first multi-doctor centers without changing the core patient, visit, encounter, and dispense model.</p>
+    <h3>9.1 Walk-In Doctor Flow</h3>
     <ol>
       <li>Doctor searches patient using <span class="mono">GET /v1/search/patients</span> by code, NIC, phone, or name.</li>
       <li>If not found, doctor creates the patient profile with <span class="mono">POST /v1/patients</span>, optionally including blood group, family link or family code, guardian details, and inline allergies.</li>
-      <li>Doctor creates or continues an appointment with <span class="mono">POST /v1/appointments</span> to trace the visit and assign <span class="mono">priority</span>.</li>
+      <li>Doctor starts the visit with <span class="mono">POST /v1/visits/start</span>.</li>
+      <li>The backend reuses an existing active visit in <span class="mono">waiting</span> or <span class="mono">in_consultation</span> if present, otherwise it creates a new walk-in visit in <span class="mono">in_consultation</span>.</li>
       <li>Doctor enters the full profile (<span class="mono">GET /v1/patients/:id/profile</span>) and authors the clinical encounter, optionally including the first vitals block in the encounter request.</li>
       <li>If dispensing inside the clinic, doctor optionally completes the dispense workflow directly.</li>
+    </ol>
+    <h3>9.2 Appointment-First Center Flow</h3>
+    <ol>
+      <li>Assistant or scheduling staff creates the appointment using <span class="mono">POST /v1/appointments</span> with the required visit metadata such as <span class="mono">scheduledAt</span> and optional <span class="mono">priority</span>.</li>
+      <li>Doctor works from the waiting queue and selects the queued patient.</li>
+      <li>Doctor starts or continues consultation and saves the encounter, optionally including the first vitals block in the encounter request.</li>
+      <li>The same patient and encounter APIs remain unchanged across both operating modes.</li>
     </ol>
 
     <h2>9. Source Basis</h2>
     <ul>
       <li>Repository implementation state as of March 20, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
-      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, fixed typed vitals workflows, and current database constraints through Flyway V10.</li>
-      <li>Verified automated backend suite status of 61 passing API tests and 6 passing worker tests.</li>
+      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, fixed typed vitals workflows, and current database constraints through Flyway V10.</li>
+      <li>Verified automated backend suite status of 63 passing API tests and 6 passing worker tests.</li>
     </ul>
     <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 20, 2026.</div>
   </section>
