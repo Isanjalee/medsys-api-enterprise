@@ -2439,6 +2439,99 @@ test("patient vitals reject encounter ids that belong to a different patient", a
   await app.close();
 });
 
+test("encounter bundle can create initial vitals in the same workflow", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const assistantId = await getUserIdByEmail(app, ownerLogin.accessToken, "assistant", "assistant@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Encounter Vitals ${Date.now()} Patient`);
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      doctorId,
+      assistantId,
+      scheduledAt: "2026-03-20T11:00:00Z"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
+  const appointment = appointmentResponse.json() as { id: number };
+
+  const encounterResponse = await app.inject({
+    method: "POST",
+    url: "/v1/encounters",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      appointmentId: appointment.id,
+      patientId,
+      doctorId,
+      checkedAt: "2026-03-20T11:05:00Z",
+      vitals: {
+        bpSystolic: 120,
+        bpDiastolic: 80,
+        heartRate: 78,
+        temperatureC: 37.2,
+        spo2: 98
+      },
+      diagnoses: [],
+      tests: []
+    }
+  });
+
+  assert.equal(encounterResponse.statusCode, 201);
+  const encounterBody = encounterResponse.json() as {
+    encounterId: number;
+    prescriptionId: number | null;
+    vitalId: number | null;
+  };
+  assert.equal(typeof encounterBody.encounterId, "number");
+  assert.equal(encounterBody.prescriptionId, null);
+  assert.equal(typeof encounterBody.vitalId, "number");
+
+  const listVitalsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${patientId}/vitals`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(listVitalsResponse.statusCode, 200);
+  const vitals = listVitalsResponse.json() as Array<{
+    id: number;
+    patient_id: number;
+    encounter_id: number | null;
+    bp_systolic: number | null;
+    bp_diastolic: number | null;
+    heart_rate: number | null;
+    temperature_c: number | null;
+    spo2: number | null;
+  }>;
+  assert.equal(vitals.length >= 1, true);
+  assert.equal(vitals[0].id, encounterBody.vitalId);
+  assert.equal(vitals[0].patient_id, patientId);
+  assert.equal(vitals[0].encounter_id, encounterBody.encounterId);
+  assert.equal(vitals[0].bp_systolic, 120);
+  assert.equal(vitals[0].bp_diastolic, 80);
+  assert.equal(vitals[0].heart_rate, 78);
+  assert.equal(vitals[0].temperature_c, 37.2);
+  assert.equal(vitals[0].spo2, 98);
+
+  await app.close();
+});
+
 test("patient create rejects mismatched age and DOB with validation envelope", async () => {
   if (!process.env.DATABASE_URL) {
     return;

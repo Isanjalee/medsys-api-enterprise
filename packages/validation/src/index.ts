@@ -348,6 +348,26 @@ const prescriptionItemInputSchema = z
   })
   .strict();
 
+const encounterVitalInputSchema = z
+  .object({
+    bpSystolic: z.number().int().min(30).max(300).optional().nullable(),
+    bpDiastolic: z.number().int().min(20).max(200).optional().nullable(),
+    heartRate: z.number().int().min(20).max(300).optional().nullable(),
+    temperatureC: z.number().min(25).max(45).optional().nullable(),
+    spo2: z.number().int().min(0).max(100).optional().nullable(),
+    recordedAt: z.string().datetime().optional()
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.bpSystolic !== undefined ||
+      value.bpDiastolic !== undefined ||
+      value.heartRate !== undefined ||
+      value.temperatureC !== undefined ||
+      value.spo2 !== undefined,
+    "If vitals exist, at least one vital measurement must be provided"
+  );
+
 export const createEncounterBundleSchema = z
   .object({
     appointmentId: z.number().int().positive(),
@@ -356,6 +376,7 @@ export const createEncounterBundleSchema = z
     checkedAt: z.string().datetime(),
     notes: z.string().max(10000).optional().nullable(),
     nextVisitDate: optionalDateString,
+    vitals: encounterVitalInputSchema.optional(),
     diagnoses: z.array(diagnosisInputSchema).default([]),
     tests: z.array(testOrderInputSchema).default([]),
     prescription: z

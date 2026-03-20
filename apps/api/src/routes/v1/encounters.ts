@@ -4,6 +4,7 @@ import {
   appointments,
   encounterDiagnoses,
   encounters,
+  patientVitals,
   prescriptionItems,
   prescriptions,
   testOrders
@@ -26,6 +27,19 @@ const createEncounterBundleBodySchema = {
     checkedAt: { type: "string", format: "date-time" },
     notes: { type: "string", nullable: true },
     nextVisitDate: { type: "string", format: "date", nullable: true },
+    vitals: {
+      type: "object",
+      nullable: true,
+      additionalProperties: false,
+      properties: {
+        bpSystolic: { type: "integer", minimum: 30, maximum: 300, nullable: true },
+        bpDiastolic: { type: "integer", minimum: 20, maximum: 200, nullable: true },
+        heartRate: { type: "integer", minimum: 20, maximum: 300, nullable: true },
+        temperatureC: { type: "number", minimum: 25, maximum: 45, nullable: true },
+        spo2: { type: "integer", minimum: 0, maximum: 100, nullable: true },
+        recordedAt: { type: "string", format: "date-time" }
+      }
+    },
     diagnoses: {
       type: "array",
       items: {
@@ -86,6 +100,13 @@ const createEncounterBundleBodySchema = {
     checkedAt: "2026-03-05T10:30:00Z",
     notes: "Viral fever suspected",
     nextVisitDate: "2026-03-12",
+    vitals: {
+      bpSystolic: 120,
+      bpDiastolic: 80,
+      heartRate: 78,
+      temperatureC: 37.2,
+      spo2: 98
+    },
     diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }],
     tests: [{ testName: "CBC", status: "ordered" }],
     prescription: {
@@ -212,6 +233,25 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         );
       }
 
+      let vitalId: number | null = null;
+      if (payload.vitals) {
+        const vitalRows = await tx
+          .insert(patientVitals)
+          .values({
+            organizationId: actor.organizationId,
+            patientId: payload.patientId,
+            encounterId: encounter.id,
+            bpSystolic: payload.vitals.bpSystolic ?? null,
+            bpDiastolic: payload.vitals.bpDiastolic ?? null,
+            heartRate: payload.vitals.heartRate ?? null,
+            temperatureC: payload.vitals.temperatureC?.toString() ?? null,
+            spo2: payload.vitals.spo2 ?? null,
+            recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt)
+          })
+          .returning({ id: patientVitals.id });
+        vitalId = vitalRows[0].id;
+      }
+
       let prescriptionId: number | null = null;
       if (payload.prescription) {
         const prescriptionRows = await tx
@@ -244,7 +284,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         .set({ status: "completed", updatedAt: new Date() })
         .where(and(eq(appointments.id, payload.appointmentId), eq(appointments.organizationId, actor.organizationId)));
 
-      return { encounterId: encounter.id, prescriptionId };
+      return { encounterId: encounter.id, prescriptionId, vitalId };
     });
 
     await writeAuditLog(request, {
@@ -253,7 +293,8 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
       entityId: outcome.encounterId,
       payload: {
         appointmentId: payload.appointmentId,
-        hasPrescription: Boolean(outcome.prescriptionId)
+        hasPrescription: Boolean(outcome.prescriptionId),
+        hasVitals: Boolean(outcome.vitalId)
       }
     });
     await app.searchService.indexDiagnoses(
@@ -270,9 +311,9 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
     );
     await app.cacheService.invalidate("appointmentQueue", appointmentQueueCacheKey(actor.organizationId));
 
-      return reply.code(201).send(outcome);
-    }
-  );
+    return reply.code(201).send(outcome);
+  }
+);
 
   app.get(
     "/:id/diagnoses",
