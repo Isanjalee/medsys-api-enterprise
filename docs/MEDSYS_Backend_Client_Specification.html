@@ -219,7 +219,7 @@
       <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
       <li>For the doctor screen, prefer <span class="mono">POST /v1/consultations/save</span> as the one-button workflow endpoint. Send <span class="mono">patientId</span> for an existing patient or <span class="mono">patientDraft</span> for inline quick-create.</li>
       <li>Use <span class="mono">patientDraft.name</span> plus <span class="mono">patientDraft.dateOfBirth</span> as the minimum quick-create fields. Treat date of birth as canonical and use age only as an optional helper.</li>
-      <li>For minors without a patient NIC, send guardian details in the same consultation request. If <span class="mono">guardianNic</span> matches an existing patient, backend will auto-link the guardian and inherit family linkage when possible.</li>
+      <li>For minors without a patient NIC, send guardian details in the same consultation request. If <span class="mono">guardianNic</span> matches an existing patient, backend will auto-link the guardian and inherit family linkage when possible. If frontend has enough guardian demographics to create a real guardian patient, send <span class="mono">guardianDraft</span>.</li>
       <li>Use <span class="mono">clinicalSummary</span> when the doctor wants a narrative clinical note in patient history. Use <span class="mono">persistAsCondition = true</span> on a diagnosis row only when it should become part of the patient's long-term condition list.</li>
       <li>For small walk-in clinics using older resource-level orchestration, <span class="mono">POST /v1/visits/start</span> remains valid. For larger centers with receptionist-led scheduling, keep using <span class="mono">POST /v1/appointments</span> and the waiting queue.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
@@ -235,7 +235,7 @@
       <li>The same consultation request can carry diagnoses, tests, notes, vitals, prescription items, allergies, and an optional <span class="mono">clinicalSummary</span>.</li>
       <li>The backend creates or resolves the patient, reuses an existing active visit in <span class="mono">waiting</span> or <span class="mono">in_consultation</span> if present, otherwise creates a new walk-in visit, then saves the encounter atomically.</li>
       <li>The backend also creates a patient timeline event automatically, optionally stores <span class="mono">clinicalSummary</span> as a narrative history entry, and promotes any diagnosis marked with <span class="mono">persistAsCondition = true</span> into long-term patient conditions.</li>
-      <li>For minor patients without a patient NIC, guardian details are part of the same workflow, and guardian NIC can auto-link an existing guardian patient record.</li>
+      <li>For minor patients without a patient NIC, guardian details are part of the same workflow, guardian NIC can auto-link an existing guardian patient record, and <span class="mono">guardianDraft</span> can be used when frontend wants backend to create the guardian patient and family linkage immediately.</li>
       <li>If dispensing inside the clinic, doctor optionally completes the dispense workflow directly after consultation save.</li>
     </ol>
     <h3>9.2 Appointment-First Center Flow</h3>
@@ -251,7 +251,7 @@
       <li>Repository implementation state as of March 24, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
       <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, consultation workflow orchestration, fixed typed vitals workflows, and current database constraints through Flyway V10.</li>
-      <li>Verified automated backend suite status of 64 passing API tests and 6 passing worker tests.</li>
+      <li>Verified automated backend suite status of 65 passing API tests and 6 passing worker tests.</li>
     </ul>
     <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 24, 2026.</div>
   </section>

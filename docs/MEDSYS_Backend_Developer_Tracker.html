@@ -90,7 +90,7 @@
       <li>Shared validation envelopes, shared serializers, effective permission resolution, and Swagger request-body examples are implemented across the <span class="mono">/v1</span> surface.</li>
       <li>Vitals now follow a stable typed contract with validation, correction, soft delete, encounter ownership checks, and encounter-bundle integration.</li>
       <li>Walk-in visit orchestration is implemented with <span class="mono">POST /v1/visits/start</span>, which reuses active visits and prevents duplicate live queue rows for the same patient.</li>
-      <li>Doctor workflow orchestration is now implemented with <span class="mono">POST /v1/consultations/save</span>, which can resolve or create the patient, map guardian linkage by NIC, reuse or create the visit, save the encounter with diagnoses, tests, vitals, prescription items, and allergies, create a consultation timeline event, optionally write a narrative history note, and optionally persist flagged diagnoses into long-term patient conditions in one transaction.</li>
+      <li>Doctor workflow orchestration is now implemented with <span class="mono">POST /v1/consultations/save</span>, which can resolve or create the patient, map guardian linkage by NIC, optionally create a guardian patient from <span class="mono">guardianDraft</span>, reuse or create the visit, save the encounter with diagnoses, tests, vitals, prescription items, and allergies, create a consultation timeline event, optionally write a narrative history note, and optionally persist flagged diagnoses into long-term patient conditions in one transaction.</li>
       <li>Frontend BFF integration has been verified against the backend through authenticated end-to-end flows, and prototype store retirement is verified.</li>
     </ul>
     <h3>5.2 Phase 1</h3>
@@ -129,7 +129,7 @@
 
     <h2>8. Test and Verification Snapshot</h2>
     <table><thead><tr><th style="width:26%">Surface</th><th style="width:18%">Result</th><th>Evidence</th></tr></thead><tbody>
-      <tr><td>API automated tests</td><td class="good">64 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, backend-style patient create family or allergy coverage, full vitals workflow coverage, walk-in visit create-or-reuse coverage, and consultation workflow quick-create plus guardian mapping coverage.</td></tr>
+      <tr><td>API automated tests</td><td class="good">65 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, backend-style patient create family or allergy coverage, full vitals workflow coverage, walk-in visit create-or-reuse coverage, consultation workflow quick-create plus guardian mapping coverage, and guardianDraft auto-create linkage coverage.</td></tr>
       <tr><td>Worker automated tests</td><td class="good">6 passing</td><td>Covers async audit retry and DLQ behaviors.</td></tr>
       <tr><td>Frontend alignment verification</td><td class="good">Verified</td><td>Authenticated live BFF flows exercised against the backend.</td></tr>
       <tr><td>Infrastructure live verification</td><td class="hold">On Hold</td><td>Deferred intentionally because AWS rollout is not currently planned.</td></tr>
