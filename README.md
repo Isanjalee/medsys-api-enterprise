@@ -132,6 +132,7 @@ npm run dev -w @medsys/worker
   - backend always creates a patient timeline event for the completed consultation
   - `clinicalSummary` optionally writes a narrative entry to patient history
   - diagnosis rows with `persistAsCondition: true` are also stored in long-term patient conditions
+  - `guardianDraft` can be sent for minor flows when frontend wants backend to create a real guardian patient and family linkage in the same save
 - `patientDraft` follows the frontend patient payload style:
   - minimum fields are `name` and `dateOfBirth`
   - use `dateOfBirth` as the canonical identity field; `age` is optional validation help only
