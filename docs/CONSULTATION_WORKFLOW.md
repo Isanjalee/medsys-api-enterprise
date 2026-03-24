@@ -21,6 +21,9 @@ This endpoint accepts either:
 - `patientId` for an existing patient
 - `patientDraft` for a patient who does not yet exist
 
+It can also accept:
+- `guardianDraft` when frontend wants backend to create a real guardian patient record during the same save
+
 The backend then performs one atomic workflow:
 - resolve or create patient
 - auto-link guardian by NIC when possible
@@ -103,9 +106,33 @@ Optional:
 Guardian mapping behavior:
 - if `guardianPatientId` is provided, backend links to that guardian patient
 - if `guardianNic` matches an existing patient, backend auto-links the guardian patient
-- if no guardian patient exists, backend stores guardian details directly on the child patient
+- if `guardianDraft` is provided, backend creates a guardian patient, creates or reuses family linkage, and links the child to that guardian
+- if no guardian patient exists and no `guardianDraft` is provided, backend stores guardian details directly on the child patient
 
 Frontend does not need to force guardian registration during doctor consultation save.
+
+## Guardian Draft Behavior
+
+Use `guardianDraft` only when frontend has enough data to create a real guardian patient record.
+
+Minimum `guardianDraft` fields:
+- `name`
+- `dateOfBirth`
+
+Optional:
+- `nic`
+- `gender`
+- `phone`
+- `mobile`
+- `address`
+- `bloodGroup`
+- `familyId`
+- `familyCode`
+
+Best usage:
+- use `guardianPatientId` when guardian already exists
+- use manual guardian fields when doctor only needs a lightweight guardian reference
+- use `guardianDraft` when frontend wants backend to create the guardian patient and family linkage immediately
 
 ## Family Behavior
 
@@ -212,6 +239,32 @@ This means the doctor flow does not need a mandatory separate family creation st
       "diagnosisName": "Childhood asthma",
       "icd10Code": "J45.909",
       "persistAsCondition": true
+    }
+  ]
+}
+```
+
+### Minor New Patient With Guardian Draft
+
+```json
+{
+  "patientDraft": {
+    "name": "Nethmi Silva",
+    "dateOfBirth": "2012-04-15",
+    "guardianRelationship": "mother"
+  },
+  "guardianDraft": {
+    "name": "Kasuni Silva",
+    "dateOfBirth": "1988-06-20",
+    "nic": "198812345678",
+    "gender": "female",
+    "phone": "+94771112233"
+  },
+  "checkedAt": "2026-03-24T10:30:00Z",
+  "diagnoses": [
+    {
+      "diagnosisName": "Acute viral fever",
+      "icd10Code": "B34.9"
     }
   ]
 }
