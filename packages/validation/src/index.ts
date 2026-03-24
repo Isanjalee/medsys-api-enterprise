@@ -142,6 +142,22 @@ export const createPatientFrontendSchema = z
   })
   .strict();
 
+export const createGuardianFrontendSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    nic: z.string().max(32).optional().nullable(),
+    age: z.number().int().min(0).max(130).optional(),
+    gender: genderSchema.optional(),
+    mobile: z.string().trim().max(30).optional().nullable(),
+    dateOfBirth: dateOfBirthSchema,
+    phone: z.string().trim().max(30).optional().nullable(),
+    address: z.string().trim().max(255).optional().nullable(),
+    bloodGroup: z.string().max(5).optional().nullable(),
+    familyCode: z.string().max(30).optional().nullable(),
+    familyId: z.number().int().positive().optional().nullable()
+  })
+  .strict();
+
 export const updatePatientFrontendSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
@@ -415,6 +431,7 @@ export const saveConsultationWorkflowSchema = z
   .object({
     patientId: z.number().int().positive().optional(),
     patientDraft: createPatientFrontendSchema.optional(),
+    guardianDraft: createGuardianFrontendSchema.optional(),
     doctorId: z.number().int().positive().optional().nullable(),
     assistantId: z.number().int().positive().optional().nullable(),
     checkedAt: z.string().datetime(),
