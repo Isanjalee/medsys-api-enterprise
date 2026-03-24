@@ -341,6 +341,12 @@ const diagnosisInputSchema = z
   })
   .strict();
 
+const consultationDiagnosisInputSchema = diagnosisInputSchema
+  .extend({
+    persistAsCondition: z.boolean().optional()
+  })
+  .strict();
+
 const testOrderInputSchema = z
   .object({
     testName: z.string().min(1).max(180),
@@ -404,6 +410,57 @@ export const createEncounterBundleSchema = z
     }
     return payload.prescription.items.length > 0;
   }, "If prescription exists, at least one complete drug row is required");
+
+export const saveConsultationWorkflowSchema = z
+  .object({
+    patientId: z.number().int().positive().optional(),
+    patientDraft: createPatientFrontendSchema.optional(),
+    doctorId: z.number().int().positive().optional().nullable(),
+    assistantId: z.number().int().positive().optional().nullable(),
+    checkedAt: z.string().datetime(),
+    scheduledAt: z.string().datetime().optional(),
+    reason: z.string().max(5000).optional().nullable(),
+    priority: prioritySchema.default("normal"),
+    notes: z.string().max(10000).optional().nullable(),
+    clinicalSummary: z.string().max(4000).optional().nullable(),
+    nextVisitDate: optionalDateString,
+    vitals: encounterVitalInputSchema.optional(),
+    diagnoses: z.array(consultationDiagnosisInputSchema).default([]),
+    tests: z.array(testOrderInputSchema).default([]),
+    allergies: z.array(createPatientAllergySchema).default([]),
+    prescription: z
+      .object({
+        items: z.array(prescriptionItemInputSchema).min(1)
+      })
+      .strict()
+      .optional()
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (!payload.patientId && !payload.patientDraft) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["patientDraft"],
+        message: "Either patientId or patientDraft is required."
+      });
+    }
+
+    if (payload.patientId && payload.patientDraft) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["patientId"],
+        message: "Provide either patientId or patientDraft, not both."
+      });
+    }
+
+    if (payload.prescription && payload.prescription.items.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["prescription", "items"],
+        message: "If prescription exists, at least one complete drug row is required."
+      });
+    }
+  });
 
 export const dispensePrescriptionSchema = z
   .object({
