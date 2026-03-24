@@ -17,7 +17,7 @@ import {
   testOrders
 } from "@medsys/db";
 import { hasAllResolvedPermissions } from "@medsys/types";
-import { createPatientFrontendSchema, saveConsultationWorkflowSchema } from "@medsys/validation";
+import { createGuardianFrontendSchema, createPatientFrontendSchema, saveConsultationWorkflowSchema } from "@medsys/validation";
 import { serializePatientSummary, serializePatientVital } from "../../lib/api-serializers.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { calculateAgeFromDob } from "../../lib/date.js";
@@ -89,12 +89,12 @@ const assertFrontendNameHasFirstAndLast = (fullName: string): { firstName: strin
   };
 };
 
-const ensureMinorGuardianDetails = (values: PatientWriteValues): void => {
+const ensureMinorGuardianDetails = (values: PatientWriteValues, hasGuardianDraft = false): void => {
   if (values.age >= 18 || values.nic) {
     return;
   }
 
-  if (!values.guardianPatientId && !values.guardianName) {
+  if (!values.guardianPatientId && !values.guardianName && !hasGuardianDraft) {
     throw validationError([
       {
         field: "patientDraft.guardianName",
@@ -103,7 +103,7 @@ const ensureMinorGuardianDetails = (values: PatientWriteValues): void => {
     ]);
   }
 
-  if (!values.guardianPatientId && !values.guardianNic && !values.guardianPhone) {
+  if (!values.guardianPatientId && !values.guardianNic && !values.guardianPhone && !hasGuardianDraft) {
     throw validationError([
       {
         field: "patientDraft.guardianNic",
@@ -140,6 +140,25 @@ const saveConsultationBodySchema = {
         guardianNic: { type: "string", nullable: true },
         guardianPhone: { type: "string", nullable: true },
         guardianRelationship: { type: "string", nullable: true }
+      }
+    },
+    guardianDraft: {
+      type: "object",
+      nullable: true,
+      additionalProperties: false,
+      required: ["name", "dateOfBirth"],
+      properties: {
+        name: { type: "string", minLength: 1, maxLength: 120 },
+        nic: { type: "string", nullable: true },
+        age: { type: "integer", minimum: 0, maximum: 130 },
+        gender: { type: "string", enum: ["male", "female", "other"], nullable: true },
+        mobile: { type: "string", nullable: true },
+        dateOfBirth: { type: "string", format: "date" },
+        phone: { type: "string", nullable: true },
+        address: { type: "string", nullable: true },
+        bloodGroup: { type: "string", nullable: true },
+        familyCode: { type: "string", nullable: true },
+        familyId: { type: "integer", minimum: 1, nullable: true }
       }
     },
     doctorId: { type: "integer", minimum: 1, nullable: true },
@@ -238,6 +257,13 @@ const saveConsultationBodySchema = {
       nic: "199912345678",
       gender: "male",
       phone: "+94770000001"
+    },
+    guardianDraft: {
+      name: "Saman Silva",
+      dateOfBirth: "1988-02-15",
+      nic: "198812345678",
+      gender: "male",
+      phone: "+94770000002"
     },
     checkedAt: "2026-03-24T10:30:00Z",
     reason: "Walk-in consultation",
@@ -383,8 +409,120 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           });
         };
 
+        const buildValuesFromFrontendDraft = (
+          draft: ReturnType<typeof createPatientFrontendSchema.parse> | ReturnType<typeof createGuardianFrontendSchema.parse>
+        ): PatientWriteValues => {
+          const nameParts = assertFrontendNameHasFirstAndLast(draft.name);
+          return {
+            nic: draft.nic ?? null,
+            firstName: nameParts.firstName,
+            lastName: nameParts.lastName,
+            dob: draft.dateOfBirth,
+            age: calculateValidatedAge(draft.dateOfBirth, draft.age),
+            gender: draft.gender ?? "other",
+            phone: draft.phone ?? draft.mobile ?? null,
+            address: draft.address ?? null,
+            bloodGroup: draft.bloodGroup ?? null,
+            familyId: draft.familyId ?? null,
+            familyCode: draft.familyCode ?? null
+          };
+        };
+
+        const ensureFamilyForValues = async (values: PatientWriteValues): Promise<PatientWriteValues> => {
+          if (values.familyId) {
+            return values;
+          }
+
+          if (values.familyCode) {
+            const familyRows = await tx
+              .select({ id: families.id })
+              .from(families)
+              .where(
+                and(
+                  eq(families.familyCode, values.familyCode),
+                  eq(families.organizationId, actor.organizationId),
+                  isNull(families.deletedAt)
+                )
+              )
+              .limit(1);
+
+            if (familyRows.length === 1) {
+              return {
+                ...values,
+                familyId: familyRows[0].id
+              };
+            }
+
+            const familyName = `${values.firstName} ${values.lastName} Family`;
+            const newFamily = await tx
+              .insert(families)
+              .values({
+                organizationId: actor.organizationId,
+                familyCode: values.familyCode,
+                familyName,
+                assigned: true
+              })
+              .returning();
+            return {
+              ...values,
+              familyId: newFamily[0].id
+            };
+          }
+
+          const familyCode = buildFamilyCode();
+          const familyName = `${values.firstName} ${values.lastName} Family`;
+          const newFamily = await tx
+            .insert(families)
+            .values({
+              organizationId: actor.organizationId,
+              familyCode,
+              familyName,
+              assigned: true
+            })
+            .returning();
+
+          return {
+            ...values,
+            familyId: newFamily[0].id,
+            familyCode
+          };
+        };
+
+        const insertPatientRecord = async (
+          values: PatientWriteValues,
+          relationship: string | null
+        ) => {
+          const insertedRows = await tx
+            .insert(patients)
+            .values({
+              organizationId: actor.organizationId,
+              patientCode: buildPatientCode(),
+              nic: values.nic ?? null,
+              firstName: values.firstName,
+              lastName: values.lastName,
+              dob: values.dob,
+              age: values.age,
+              gender: values.gender,
+              phone: values.phone ?? null,
+              address: values.address ?? null,
+              bloodGroup: values.bloodGroup ?? null,
+              familyId: values.familyId ?? null,
+              guardianPatientId: values.guardianPatientId ?? null,
+              guardianName: values.guardianName ?? null,
+              guardianNic: values.guardianNic ?? null,
+              guardianPhone: values.guardianPhone ?? null,
+              guardianRelationship: values.guardianRelationship ?? null
+            })
+            .returning();
+          const patient = insertedRows[0];
+
+          await ensureFamilyMembership(values.familyId, patient.id, relationship);
+          await syncPatientSearch(patient);
+          return patient;
+        };
+
         const resolveGuardianValues = async (values: PatientWriteValues): Promise<PatientWriteValues> => {
-          ensureMinorGuardianDetails(values);
+          ensureMinorGuardianDetails(values, Boolean(payload.guardianDraft));
 
           let guardianPatientId = values.guardianPatientId ?? null;
           if (!guardianPatientId && values.guardianNic) {
@@ -409,6 +547,29 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
 
             if (guardianByNic.length === 1) {
               guardianPatientId = guardianByNic[0].id;
+            }
+          }
+
+          if (!guardianPatientId && payload.guardianDraft) {
+            const guardianDraft = parseOrThrowValidation(createGuardianFrontendSchema, payload.guardianDraft);
+            let guardianValues = buildValuesFromFrontendDraft(guardianDraft);
+
+            if (values.familyId && !guardianValues.familyId) {
+              guardianValues.familyId = values.familyId;
+            }
+            if (values.familyCode && !guardianValues.familyCode) {
+              guardianValues.familyCode = values.familyCode;
+            }
+
+            guardianValues = await ensureFamilyForValues(guardianValues);
+            const guardianPatient = await insertPatientRecord(guardianValues, values.guardianRelationship ?? "guardian");
+            guardianPatientId = guardianPatient.id;
+
+            if (!values.familyId) {
+              values.familyId = guardianValues.familyId ?? null;
+            }
+            if (!values.familyCode) {
+              values.familyCode = guardianValues.familyCode ?? null;
             }
           }
 
@@ -485,20 +646,8 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           }
 
           const draft = parseOrThrowValidation(createPatientFrontendSchema, payload.patientDraft);
-          const nameParts = assertFrontendNameHasFirstAndLast(draft.name);
-
           let values: PatientWriteValues = {
-            nic: draft.nic ?? null,
-            firstName: nameParts.firstName,
-            lastName: nameParts.lastName,
-            dob: draft.dateOfBirth,
-            age: calculateValidatedAge(draft.dateOfBirth, draft.age),
-            gender: draft.gender ?? "other",
-            phone: draft.phone ?? draft.mobile ?? null,
-            address: draft.address ?? null,
-            bloodGroup: draft.bloodGroup ?? null,
-            familyId: draft.familyId ?? null,
-            familyCode: draft.familyCode ?? null,
+            ...buildValuesFromFrontendDraft(draft),
             allergies: draft.allergies ?? null,
             guardianPatientId: draft.guardianPatientId ?? null,
             guardianName: draft.guardianName ?? null,
@@ -508,80 +657,10 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           };
 
           values = await resolveGuardianValues(values);
+          values = await ensureFamilyForValues(values);
 
-          if (!values.familyId) {
-            if (values.familyCode) {
-              const familyRows = await tx
-                .select({ id: families.id })
-                .from(families)
-                .where(
-                  and(
-                    eq(families.familyCode, values.familyCode),
-                    eq(families.organizationId, actor.organizationId),
-                    isNull(families.deletedAt)
-                  )
-                )
-                .limit(1);
-
-              if (familyRows.length === 1) {
-                values.familyId = familyRows[0].id;
-              } else {
-                const familyName = `${values.firstName} ${values.lastName} Family`;
-                const newFamily = await tx
-                  .insert(families)
-                  .values({
-                    organizationId: actor.organizationId,
-                    familyCode: values.familyCode,
-                    familyName,
-                    assigned: true
-                  })
-                  .returning();
-                values.familyId = newFamily[0].id;
-              }
-            } else {
-              const familyCode = buildFamilyCode();
-              const familyName = `${values.firstName} ${values.lastName} Family`;
-              const newFamily = await tx
-                .insert(families)
-                .values({
-                  organizationId: actor.organizationId,
-                  familyCode,
-                  familyName,
-                  assigned: true
-                })
-                .returning();
-              values.familyId = newFamily[0].id;
-              values.familyCode = familyCode;
-            }
-          }
-
-          const insertedRows = await tx
-            .insert(patients)
-            .values({
-              organizationId: actor.organizationId,
-              patientCode: buildPatientCode(),
-              nic: values.nic ?? null,
-              firstName: values.firstName,
-              lastName: values.lastName,
-              dob: values.dob,
-              age: values.age,
-              gender: values.gender,
-              phone: values.phone ?? null,
-              address: values.address ?? null,
-              bloodGroup: values.bloodGroup ?? null,
-              familyId: values.familyId ?? null,
-              guardianPatientId: values.guardianPatientId ?? null,
-              guardianName: values.guardianName ?? null,
-              guardianNic: values.guardianNic ?? null,
-              guardianPhone: values.guardianPhone ?? null,
-              guardianRelationship: values.guardianRelationship ?? null
-            })
-            .returning();
-          const patient = insertedRows[0];
-
-          await ensureFamilyMembership(
-            values.familyId,
-            patient.id,
+          const patient = await insertPatientRecord(
+            values,
             values.age < 18 ? "child" : values.guardianRelationship ?? null
           );
 
@@ -597,8 +676,6 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
               }))
             );
           }
-
-          await syncPatientSearch(patient);
 
           return { patient, created: true as const };
         };
