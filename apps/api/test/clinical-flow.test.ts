@@ -2627,6 +2627,184 @@ test("patient vitals reject encounter ids that belong to a different patient", a
   await app.close();
 });
 
+test("consultation workflow can quick-create a minor patient, map guardian by NIC, and save treatment data", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const guardianResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Guardian",
+      lastName: `Flow ${uniqueSuffix}`,
+      dob: "1988-03-10",
+      gender: "female",
+      nic: `19880310${uniqueSuffix.slice(-4)}`,
+      phone: "+94770000111"
+    }
+  });
+
+  assert.equal(guardianResponse.statusCode, 201);
+  const guardianBody = guardianResponse.json() as {
+    patient: { id: number; family_id: number | null };
+  };
+
+  const consultationResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      patientDraft: {
+        name: `Child Flow ${uniqueSuffix}`,
+        dateOfBirth: "2012-04-15",
+        guardianName: "Guardian Flow",
+        guardianNic: `19880310${uniqueSuffix.slice(-4)}`,
+        guardianRelationship: "mother"
+      },
+      checkedAt: "2026-03-24T10:30:00Z",
+      reason: "Walk-in consultation",
+      notes: "Stable child visit",
+      clinicalSummary: "Child reviewed for fever. Supportive care and hydration advised.",
+      diagnoses: [
+        { diagnosisName: "Acute viral fever", icd10Code: "B34.9" },
+        { diagnosisName: "Childhood asthma", icd10Code: "J45.909", persistAsCondition: true }
+      ],
+      allergies: [{ allergyName: "Dust", severity: "moderate", isActive: true }],
+      vitals: {
+        heartRate: 92,
+        temperatureC: 37.4
+      },
+      prescription: {
+        items: [
+          {
+            drugName: "Paracetamol",
+            dose: "250mg",
+            frequency: "TID",
+            duration: "3 days",
+            quantity: 9,
+            source: "clinical"
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(consultationResponse.statusCode, 201);
+  const consultationBody = consultationResponse.json() as {
+    patient_created: boolean;
+    patient: { id: number; family_id: number | null; guardian_patient_id: number | null };
+    visit: { doctor_id: number | null };
+    encounter_id: number;
+    prescription_id: number | null;
+    vital: { patient_id: number; encounter_id: number | null; heart_rate: number | null } | null;
+  };
+
+  assert.equal(consultationBody.patient_created, true);
+  assert.equal(consultationBody.patient.guardian_patient_id, guardianBody.patient.id);
+  assert.equal(consultationBody.patient.family_id, guardianBody.patient.family_id);
+  assert.equal(consultationBody.visit.doctor_id, doctorId);
+  assert.equal(typeof consultationBody.encounter_id, "number");
+  assert.equal(typeof consultationBody.prescription_id, "number");
+  assert.equal(consultationBody.vital?.patient_id, consultationBody.patient.id);
+  assert.equal(consultationBody.vital?.encounter_id, consultationBody.encounter_id);
+  assert.equal(consultationBody.vital?.heart_rate, 92);
+
+  const familyResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${consultationBody.patient.id}/family`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(familyResponse.statusCode, 200);
+  const familyBody = familyResponse.json() as {
+    familyId: number | null;
+    guardianPatientId: number | null;
+    members: Array<{ patientId: number; relationship: string | null }>;
+  };
+  assert.equal(familyBody.familyId, guardianBody.patient.family_id);
+  assert.equal(familyBody.guardianPatientId, guardianBody.patient.id);
+  assert.equal(
+    familyBody.members.some(
+      (member) => member.patientId === consultationBody.patient.id && member.relationship === "child"
+    ),
+    true
+  );
+
+  const allergyResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${consultationBody.patient.id}/allergies`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(allergyResponse.statusCode, 200);
+  const allergies = allergyResponse.json() as Array<{ allergyName: string; severity: string | null }>;
+  assert.equal(allergies.some((row) => row.allergyName === "Dust" && row.severity === "moderate"), true);
+
+  const profileResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${consultationBody.patient.id}/profile`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(profileResponse.statusCode, 200);
+  const profileBody = profileResponse.json() as {
+    conditions: Array<{ conditionName: string; icd10Code: string | null }>;
+    timeline: Array<{ title: string; eventKind: string | null; description: string | null }>;
+  };
+  assert.equal(
+    profileBody.conditions.some(
+      (condition) => condition.conditionName === "Childhood asthma" && condition.icd10Code === "J45.909"
+    ),
+    true
+  );
+  assert.equal(
+    profileBody.timeline.some(
+      (event) =>
+        event.title === "Consultation completed" &&
+        event.eventKind === "consultation" &&
+        event.description?.includes("Child reviewed for fever") === true
+    ),
+    true
+  );
+
+  const historyResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${consultationBody.patient.id}/history`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(historyResponse.statusCode, 200);
+  const historyBody = historyResponse.json() as {
+    history: Array<{ note: string }>;
+  };
+  assert.equal(
+    historyBody.history.some((entry) => entry.note === "Child reviewed for fever. Supportive care and hydration advised."),
+    true
+  );
+
+  await app.close();
+});
+
 test("encounter bundle can create initial vitals in the same workflow", async () => {
   if (!process.env.DATABASE_URL) {
     return;
