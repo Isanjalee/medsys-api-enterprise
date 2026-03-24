@@ -85,6 +85,7 @@ npm run dev -w @medsys/worker
 - `/v1/families`
 - `/v1/appointments`, `/v1/appointments/:id`
 - `/v1/visits/start`
+- `/v1/consultations/save`
 - `/v1/encounters`, `/v1/encounters/:id/diagnoses`, `/v1/encounters/:id/tests`
 - `/v1/prescriptions`, `/v1/prescriptions/:id`, `/v1/prescriptions/:id/dispense`
 - `/v1/prescriptions/queue/pending-dispense`
@@ -125,27 +126,39 @@ npm run dev -w @medsys/worker
 - `POST /v1/encounters` can now accept an optional `vitals` block:
   - backend creates the encounter and initial vitals in one workflow
   - if `vitals.recordedAt` is omitted, backend defaults it to `checkedAt`
+- `POST /v1/consultations/save` is the doctor-facing orchestration route:
+  - send `patientId` for an existing patient or `patientDraft` for a quick-created patient
+  - backend creates or resolves the patient, reuses or creates the visit, saves the encounter, and optionally persists diagnoses, tests, vitals, prescription items, and allergies
+  - backend always creates a patient timeline event for the completed consultation
+  - `clinicalSummary` optionally writes a narrative entry to patient history
+  - diagnosis rows with `persistAsCondition: true` are also stored in long-term patient conditions
+- `patientDraft` follows the frontend patient payload style:
+  - minimum fields are `name` and `dateOfBirth`
+  - use `dateOfBirth` as the canonical identity field; `age` is optional validation help only
+- For minors without a patient NIC inside `patientDraft`:
+  - send `guardianName` and either `guardianNic` or `guardianPhone`
+  - if `guardianNic` already matches an existing patient, backend auto-links `guardianPatientId` and inherits the guardian family when possible
 
 ## Doctor-only clinic mode workflow
 For clinics operating without an assistant, the doctor workflow natively supports end-to-end administration:
 1. Doctor searches patient using `GET /v1/search/patients`.
-2. If not found, doctor creates patient via `POST /v1/patients`.
-3. Doctor starts or resumes the visit via `POST /v1/visits/start`.
-4. Backend reuses an active `waiting` or `in_consultation` visit if one already exists for the patient, otherwise it creates a new walk-in visit as `in_consultation`.
-5. Doctor opens full profile (`GET /v1/patients/:id/profile`) and creates the clinical encounter, optionally including initial vitals in the encounter request.
+2. If found, frontend sends `POST /v1/consultations/save` with `patientId`.
+3. If not found, frontend keeps the doctor on the same screen and sends `POST /v1/consultations/save` with `patientDraft`.
+4. Backend creates or resolves the patient, reuses an active `waiting` or `in_consultation` visit when present, otherwise creates a new walk-in visit, then saves the clinical encounter atomically.
+5. The same workflow request can include initial vitals, allergies, diagnoses, tests, notes, and prescription items.
 6. Doctor optionally completes the dispense workflow directly if `prescription.dispense` is granted.
 
 ## Dual clinic workflow support
 - Small-clinic walk-in mode:
   - doctor searches patient first
-  - if not found, create patient
-  - call `POST /v1/visits/start`
-  - backend reuses or creates the live visit record
+  - if found, call `POST /v1/consultations/save` with `patientId`
+  - if not found, call `POST /v1/consultations/save` with `patientDraft`
+  - backend reuses or creates the live visit record and persists the encounter in one transaction
 - Appointment-first center mode:
   - assistant or scheduling flow creates appointment via `POST /v1/appointments`
   - doctor works from the waiting queue
-  - if needed, `POST /v1/visits/start` can still safely reuse the active visit instead of creating duplicates
-- `POST /v1/appointments` remains the resource-level route for scheduled visits, while `POST /v1/visits/start` is the orchestration route for walk-in doctor flow.
+  - when saving clinical work, frontend can use `POST /v1/consultations/save` for the one-button doctor workflow or keep the resource-level visit plus encounter sequence where needed
+- `POST /v1/appointments`, `POST /v1/visits/start`, and `POST /v1/encounters` remain valid resource-level routes; `POST /v1/consultations/save` is the new doctor-facing orchestration route.
 
 
 ## Clinical transaction guarantees
@@ -155,6 +168,8 @@ For clinics operating without an assistant, the doctor workflow natively support
   - `/v1/patients` uses snake_case fields such as `patient_code`, `family_id`, `guardian_patient_id`, and `created_at`
 - Encounter bundle save is atomic:
   - encounter + diagnoses + tests + prescription + items + appointment status update
+- Consultation workflow save is atomic:
+  - patient resolve or create + family or guardian mapping + visit reuse or create + encounter + diagnoses + optional long-term conditions + tests + vitals + prescription + allergies + timeline event + optional patient history note + appointment status update
 - Dispense is atomic:
   - dispense record + stock deduction + inventory movements
 
@@ -187,6 +202,7 @@ For clinics operating without an assistant, the doctor workflow natively support
 - `app.db` and `app.readDb` are pinned to `DATABASE_URL` for writes and operational reads; analytics/reporting routes use `app.analyticsDb`, which targets `DATABASE_READ_URL` when configured.
 - Migration validation now runs in CI via [flyway-validate.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/flyway-validate.yml).
 - Consolidated client-facing backend documentation is maintained in [docs/MEDSYS_Backend_Client_Specification.html](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Client_Specification.html) and [docs/MEDSYS_Backend_Client_Specification.pdf](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Client_Specification.pdf).
+- The editable doctor workflow handoff is maintained in [docs/CONSULTATION_WORKFLOW.md](d:/Projects/MEDLINK/Medsys-Backend-git/medsys-api-enterprise/docs/CONSULTATION_WORKFLOW.md).
 - `patient_history_entries` is introduced in `V5__add_patient_history.sql` for note-based patient history separate from timeline events.
 - ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
 - Patient search supports OpenSearch-backed fuzzy lookup when `OPENSEARCH_URL` is configured; otherwise it falls back to DB search.
