@@ -2805,6 +2805,94 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
   await app.close();
 });
 
+test("consultation workflow can create a guardian patient from guardianDraft and link family automatically", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      patientDraft: {
+        name: `Child Draft ${uniqueSuffix}`,
+        dateOfBirth: "2014-05-20",
+        guardianRelationship: "father"
+      },
+      guardianDraft: {
+        name: `Saman Draft ${uniqueSuffix}`,
+        dateOfBirth: "1985-08-12",
+        nic: `19850812${uniqueSuffix.slice(-4)}`,
+        gender: "male",
+        phone: "+94770000333"
+      },
+      checkedAt: "2026-03-24T11:00:00Z",
+      clinicalSummary: "Minor patient seen with newly captured guardian details.",
+      diagnoses: [{ diagnosisName: "Upper respiratory tract infection", icd10Code: "J06.9" }]
+    }
+  });
+
+  assert.equal(response.statusCode, 201);
+  const body = response.json() as {
+    patient: { id: number; family_id: number | null; guardian_patient_id: number | null };
+  };
+
+  assert.notEqual(body.patient.guardian_patient_id, null);
+  assert.notEqual(body.patient.family_id, null);
+
+  const childFamilyResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${body.patient.id}/family`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(childFamilyResponse.statusCode, 200);
+  const childFamily = childFamilyResponse.json() as {
+    familyId: number | null;
+    guardianPatientId: number | null;
+    members: Array<{ patientId: number; relationship: string | null }>;
+  };
+
+  assert.equal(childFamily.familyId, body.patient.family_id);
+  assert.equal(childFamily.guardianPatientId, body.patient.guardian_patient_id);
+  assert.equal(
+    childFamily.members.some((member) => member.patientId === body.patient.id && member.relationship === "child"),
+    true
+  );
+  assert.equal(
+    childFamily.members.some(
+      (member) => member.patientId === body.patient.guardian_patient_id && member.relationship === "father"
+    ),
+    true
+  );
+
+  const guardianDetailResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${body.patient.guardian_patient_id}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(guardianDetailResponse.statusCode, 200);
+  const guardianDetail = guardianDetailResponse.json() as {
+    patient: { family_id: number | null };
+  };
+  assert.equal(guardianDetail.patient.family_id, body.patient.family_id);
+
+  await app.close();
+});
+
 test("encounter bundle can create initial vitals in the same workflow", async () => {
   if (!process.env.DATABASE_URL) {
     return;
