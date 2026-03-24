@@ -41,8 +41,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>Implementation Tracker and Delivery Register</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.6</div>
-      <div><strong>Date</strong>March 20, 2026</div>
+      <div><strong>Version</strong>2.7</div>
+      <div><strong>Date</strong>March 24, 2026</div>
       <div><strong>Audience</strong>Backend, Platform, QA, and Integration Teams</div>
       <div><strong>Scope</strong>Roadmap phases, frontend alignment, and open operational actions</div>
     </div>
@@ -62,7 +62,7 @@
 
     <h2>3. Current Delivery Snapshot</h2>
     <div class="grid">
-      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, 7, 8, and 9</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening, guardian-aware registration, backend-style and frontend-style patient create parity, vitals correction and soft-delete workflow, doctor self-service workflow permissions, and walk-in visit orchestration for small-clinic flow</li></ul></div>
+      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, 7, 8, and 9</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening, guardian-aware registration, backend-style and frontend-style patient create parity, vitals correction and soft-delete workflow, doctor self-service workflow permissions, walk-in visit orchestration, and the new consultation save orchestration for small-clinic flow</li></ul></div>
       <div class="panel"><h3>Open or Held</h3><ul><li>Phase 6 AWS rollout is deferred</li><li>Optional remaining doctor extra-permission bundle review</li><li>Optional BFF governance wording</li></ul></div>
     </div>
     <div class="callout"><strong>Current backend status:</strong> application features are implemented and verified through the core delivery phases. Phase 6 infrastructure artifacts are complete in code, and live AWS rollout is intentionally deferred.</div>
@@ -90,6 +90,7 @@
       <li>Shared validation envelopes, shared serializers, effective permission resolution, and Swagger request-body examples are implemented across the <span class="mono">/v1</span> surface.</li>
       <li>Vitals now follow a stable typed contract with validation, correction, soft delete, encounter ownership checks, and encounter-bundle integration.</li>
       <li>Walk-in visit orchestration is implemented with <span class="mono">POST /v1/visits/start</span>, which reuses active visits and prevents duplicate live queue rows for the same patient.</li>
+      <li>Doctor workflow orchestration is now implemented with <span class="mono">POST /v1/consultations/save</span>, which can resolve or create the patient, map guardian linkage by NIC, reuse or create the visit, save the encounter with diagnoses, tests, vitals, prescription items, and allergies, create a consultation timeline event, optionally write a narrative history note, and optionally persist flagged diagnoses into long-term patient conditions in one transaction.</li>
       <li>Frontend BFF integration has been verified against the backend through authenticated end-to-end flows, and prototype store retirement is verified.</li>
     </ul>
     <h3>5.2 Phase 1</h3>
@@ -109,7 +110,7 @@
 
     <h2>6. Frontend Alignment Summary</h2>
     <table><thead><tr><th style="width:16%">Alignment Area</th><th style="width:18%">Status</th><th>Current State</th></tr></thead><tbody>
-      <tr><td>Core endpoint coverage</td><td class="good">Complete</td><td>Backend supports the aligned auth, patient, guardian-aware patient search/profile, user, history, clinical lookup, analytics, inventory, encounter, prescription, and walk-in visit-start flows.</td></tr>
+      <tr><td>Core endpoint coverage</td><td class="good">Complete</td><td>Backend supports the aligned auth, patient, guardian-aware patient search/profile, user, history, clinical lookup, analytics, inventory, encounter, prescription, walk-in visit-start, and consultation workflow save flows.</td></tr>
       <tr><td>Validation and response mapping</td><td class="good">Complete</td><td>Shared validation envelope and shared serializers support the aligned backend surface, including patient summary responses, snake_case stability, search responses, guardian-linked detail flows, transactional patient family or allergy updates, and stable typed vitals responses.</td></tr>
       <tr><td>Permission enforcement</td><td class="good">Complete</td><td>Shared permission catalog and centralized effective-permission resolution cover the full implemented API surface, including the default doctor self-service workflow and user-level doctor overrides.</td></tr>
       <tr><td>Frontend store retirement</td><td class="good">Verified</td><td>Frontend evidence confirms no live-path prototype persistence and verified BFF-backed journeys.</td></tr>
@@ -128,7 +129,7 @@
 
     <h2>8. Test and Verification Snapshot</h2>
     <table><thead><tr><th style="width:26%">Surface</th><th style="width:18%">Result</th><th>Evidence</th></tr></thead><tbody>
-      <tr><td>API automated tests</td><td class="good">63 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, backend-style patient create family or allergy coverage, full vitals workflow coverage, and walk-in visit create-or-reuse coverage.</td></tr>
+      <tr><td>API automated tests</td><td class="good">64 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, backend-style patient create family or allergy coverage, full vitals workflow coverage, walk-in visit create-or-reuse coverage, and consultation workflow quick-create plus guardian mapping coverage.</td></tr>
       <tr><td>Worker automated tests</td><td class="good">6 passing</td><td>Covers async audit retry and DLQ behaviors.</td></tr>
       <tr><td>Frontend alignment verification</td><td class="good">Verified</td><td>Authenticated live BFF flows exercised against the backend.</td></tr>
       <tr><td>Infrastructure live verification</td><td class="hold">On Hold</td><td>Deferred intentionally because AWS rollout is not currently planned.</td></tr>
@@ -144,12 +145,12 @@
 
     <h2>10. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 20, 2026.</li>
+      <li>Repository implementation state as of March 24, 2026.</li>
       <li>Completed phase verification work through Phases 1, 2, 3, 4, 5, and 7.</li>
       <li>Frontend alignment evidence confirming BE-020 closure for frontend scope.</li>
-      <li>Post-March 11 updates including patient required-field enforcement, seeded relational demo data, user-level effective permission overrides, guardian-aware family and allergy create parity across both patient payload styles, typed vitals workflow hardening, walk-in visit orchestration, and refreshed client documentation.</li>
+      <li>Post-March 11 updates including patient required-field enforcement, seeded relational demo data, user-level effective permission overrides, guardian-aware family and allergy create parity across both patient payload styles, typed vitals workflow hardening, walk-in visit orchestration, consultation save orchestration, and refreshed client documentation.</li>
     </ul>
-    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status as of March 20, 2026.</div>
+    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status as of March 24, 2026.</div>
   </section>
 </body>
 </html>
