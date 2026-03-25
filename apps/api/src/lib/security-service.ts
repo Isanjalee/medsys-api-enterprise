@@ -19,7 +19,7 @@ const SENSITIVE_LIMITS: Record<
   SensitiveAction,
   Partial<Record<"owner" | "doctor" | "assistant", number>>
 > = {
-  "prescription.dispense": { owner: 120, assistant: 60 },
+  "prescription.dispense": { owner: 120, doctor: 60, assistant: 60 },
   "inventory.write": { owner: 240, assistant: 180 },
   "user.write": { owner: 40 }
 };
