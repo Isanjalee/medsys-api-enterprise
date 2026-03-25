@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MEDSYS Client Handover Review</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    body { font-family: Arial, sans-serif; font-size: 11px; line-height: 1.45; color: #222; margin: 0; }
+    h1, h2, h3 { color: #0f3554; margin: 0 0 10px; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 16px; margin-top: 22px; border-bottom: 1px solid #cfd8df; padding-bottom: 4px; }
+    h3 { font-size: 13px; margin-top: 14px; }
+    p { margin: 0 0 10px; }
+    ul, ol { margin: 0 0 10px; padding-left: 20px; }
+    li { margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
+    th, td { border: 1px solid #cfd8df; padding: 6px 8px; vertical-align: top; text-align: left; }
+    th { background: #eef3f7; }
+    .page { page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+    .cover { padding: 20px 0 0; }
+    .meta td:first-child { width: 32%; font-weight: bold; }
+    .callout { border: 1px solid #cfd8df; border-left: 4px solid #0f3554; padding: 10px 12px; margin: 12px 0; background: #f8fbfd; }
+    .mono { font-family: "Courier New", monospace; background: #f3f6f8; padding: 1px 4px; }
+    pre { white-space: pre-wrap; border: 1px solid #cfd8df; padding: 10px 12px; background: #f8fbfd; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div class="page cover">
+    <h1>MEDSYS Healthcare Platform<br>Client Specification and Implementation Review</h1>
+    <p>Standalone handover review document prepared for technical management review.</p>
+    <table class="meta">
+      <tr><td>Project Code</td><td>MEDLINK-Version2</td></tr>
+      <tr><td>Audience</td><td>All Medical Field Professionals and Technical Management</td></tr>
+      <tr><td>Document Version</td><td>1.0</td></tr>
+      <tr><td>Date</td><td>March 25, 2026</td></tr>
+      <tr><td>Status</td><td>Tech Manager Review Draft</td></tr>
+      <tr><td>Branding</td><td>Reserved space for logo and branding</td></tr>
+    </table>
+    <p>This PDF is intentionally separate from the backend API client specification so it can be reviewed as an independent management handover artifact.</p>
+
+    <h2>1. Executive Summary</h2>
+    <p>MEDSYS is a role-based healthcare operations platform for clinic and medical-center workflows. The current implementation supports patient management, appointment and walk-in consultation flows, diagnosis and medical test search, prescription lifecycle handling, assistant-driven dispensing, inventory search and stock deduction, user management, analytics, and audit logging.</p>
+    <p>The strongest implementation area today is the doctor and assistant operational flow. Doctors can save a complete consultation through a single workflow endpoint, appointment and walk-in modes are both supported, prescription items are operationally split into <span class="mono">clinical</span> and <span class="mono">outside</span>, only clinical items enter the dispense queue, and patient history is recorded structurally through encounters, timeline events, narrative history notes, and long-term conditions.</p>
+
+    <h2>2. Document Control</h2>
+    <table>
+      <tr><th>Field</th><th>Value</th></tr>
+      <tr><td>Document title</td><td>MEDSYS Client Specification and Implementation Review</td></tr>
+      <tr><td>Project code</td><td>MEDLINK-Version2</td></tr>
+      <tr><td>Version</td><td>1.0</td></tr>
+      <tr><td>Date</td><td>March 25, 2026</td></tr>
+      <tr><td>Status</td><td>Tech Manager Review Draft</td></tr>
+      <tr><td>Basis</td><td>Current repository implementation and verified API behavior</td></tr>
+    </table>
+
+    <h2>3. System Overview</h2>
+    <ol>
+      <li>Frontend application for doctor, assistant, owner, analytics, and support-facing workflows.</li>
+      <li>BFF/API access layer for authenticated browser integration.</li>
+      <li>Core backend API with implemented <span class="mono">/v1/*</span> business routes.</li>
+      <li>Persistence and platform services including PostgreSQL, audit logging, search integration, typed validation, and optional queue support.</li>
+    </ol>
+    <h3>Main Implemented Backend Domains</h3>
+    <ul>
+      <li>Authentication and session management</li>
+      <li>Users and permissions</li>
+      <li>Patients, families, guardian handling</li>
+      <li>Appointments and visit start</li>
+      <li>Consultations and encounters</li>
+      <li>Prescriptions and dispense workflow</li>
+      <li>Inventory and stock movements</li>
+      <li>Clinical terminology lookup</li>
+      <li>Analytics and observability</li>
+      <li>Audit logs</li>
+    </ul>
+  </div>
+
+  <div class="page">
+    <h2>4. Core Functional Scope</h2>
+    <h3>Authentication and Access Control</h3>
+    <ul>
+      <li>Login, refresh, logout, and current-user session are implemented.</li>
+      <li>Effective permission model uses role plus extra permissions.</li>
+      <li>Sensitive action throttling is in place.</li>
+      <li>Frontend should use returned permissions, not role name alone, for access decisions.</li>
+    </ul>
+
+    <h3>Patient Management</h3>
+    <ul>
+      <li>Patient search and quick selection are implemented.</li>
+      <li>Patient summary list and full profile are implemented.</li>
+      <li>Patient creation, update, guardian-aware flows, family auto-creation, allergies, conditions, history, timeline, and vitals are implemented.</li>
+      <li><span class="mono">dateOfBirth</span> is canonical; <span class="mono">age</span> is only a helper.</li>
+    </ul>
+
+    <h3>Consultation Workflows</h3>
+    <ul>
+      <li>One workflow endpoint: <span class="mono">POST /v1/consultations/save</span>.</li>
+      <li>Supports <span class="mono">workflowType = appointment</span> and <span class="mono">workflowType = walk_in</span>.</li>
+      <li>Supports <span class="mono">patientId</span>, <span class="mono">patientDraft</span>, and <span class="mono">guardianDraft</span>.</li>
+      <li>Supports diagnoses, tests, vitals, allergies, notes, clinical summary, and prescription in one save.</li>
+    </ul>
+
+    <h3>Prescription and Dispense</h3>
+    <ul>
+      <li>Prescription creation within consultation save is implemented.</li>
+      <li><span class="mono">clinical</span> vs <span class="mono">outside</span> source behavior is implemented.</li>
+      <li>Pending dispense queue, doctor direct dispense, assistant queue-based dispense, stock deduction, and inventory movement creation are implemented.</li>
+      <li>Inventory search exists for unresolved clinical dispense items.</li>
+    </ul>
+
+    <h2>5. Workflow Model</h2>
+    <h3>Appointment Mode</h3>
+    <ul>
+      <li>Patient already exists and appointment already exists.</li>
+      <li>Backend validates appointment and patient match.</li>
+      <li>Backend stores encounter, vitals, diagnoses, tests, allergies, history, and prescription.</li>
+      <li>If no clinical prescription items exist, workflow can complete immediately.</li>
+      <li>If clinical items exist and are not directly dispensed, workflow stays doctor-finished until dispense is completed.</li>
+    </ul>
+
+    <h3>Walk-In Mode</h3>
+    <ul>
+      <li>No appointment is required.</li>
+      <li>Doctor searches patient and can quick-create inline using <span class="mono">patientDraft</span>.</li>
+      <li>Backend resolves existing patient or creates a new one, reuses or creates visit context, then creates encounter and related clinical data.</li>
+      <li>Backend creates timeline event and optional history entry, and can promote flagged diagnoses into patient conditions.</li>
+    </ul>
+
+    <div class="callout"><strong>Implemented conflict protection:</strong> if an active walk-in consultation already exists for the patient, backend now returns <span class="mono">409 Conflict</span> with a clear frontend-safe message instead of a generic server failure.</div>
+
+    <h3>Prescription Source Logic</h3>
+    <ul>
+      <li><span class="mono">clinical</span> items affect workflow completion, create pending dispense queue if not directly dispensed, and require inventory resolution.</li>
+      <li><span class="mono">outside</span> items remain in prescription print/history, do not create dispense queue, and do not block completion.</li>
+    </ul>
+  </div>
+
+  <div class="page">
+    <h2>6. API Integration Model</h2>
+    <table>
+      <tr><th>Area</th><th>Implemented Endpoint</th></tr>
+      <tr><td>Auth</td><td><span class="mono">/v1/auth/login</span>, <span class="mono">/v1/auth/refresh</span>, <span class="mono">/v1/auth/me</span>, <span class="mono">/v1/auth/logout</span></td></tr>
+      <tr><td>Patient search</td><td><span class="mono">/v1/search/patients</span></td></tr>
+      <tr><td>Patients</td><td><span class="mono">/v1/patients</span>, <span class="mono">/v1/patients/:id/profile</span></td></tr>
+      <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td></tr>
+      <tr><td>Visit start</td><td><span class="mono">/v1/visits/start</span></td></tr>
+      <tr><td>Consultation workflow</td><td><span class="mono">/v1/consultations/save</span></td></tr>
+      <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span>, <span class="mono">/v1/prescriptions/:id/dispense</span></td></tr>
+      <tr><td>Dispense queue</td><td><span class="mono">/v1/prescriptions/queue/pending-dispense</span></td></tr>
+      <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span>, <span class="mono">/v1/inventory/search</span></td></tr>
+      <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical/diagnoses</span>, <span class="mono">/v1/clinical/tests</span>, <span class="mono">/v1/clinical/diagnoses/:code/recommended-tests</span></td></tr>
+    </table>
+
+    <h3>Frontend Contract Direction</h3>
+    <ul>
+      <li>Diagnosis field = diagnoses only.</li>
+      <li>Medical Tests field = test catalog only.</li>
+      <li>Selected diagnosis can request suggested tests below.</li>
+      <li>Consultation save should be one workflow payload, not many independent save steps.</li>
+      <li>Dispense completion requires real <span class="mono">inventoryItemId</span> selection for clinical items.</li>
+    </ul>
+
+    <h2>7. Error Handling Contract</h2>
+    <table>
+      <tr><th>Endpoint</th><th>Status</th><th>Meaning</th></tr>
+      <tr><td><span class="mono">POST /v1/consultations/save</span></td><td>400</td><td>Validation or input issue</td></tr>
+      <tr><td><span class="mono">POST /v1/consultations/save</span></td><td>404</td><td>Patient, appointment, or guardian not found</td></tr>
+      <tr><td><span class="mono">POST /v1/consultations/save</span></td><td>409</td><td>Active walk-in conflict or appointment/patient mismatch</td></tr>
+      <tr><td><span class="mono">POST /v1/prescriptions/:id/dispense</span></td><td>400</td><td>Missing or invalid dispense item payload</td></tr>
+      <tr><td><span class="mono">POST /v1/prescriptions/:id/dispense</span></td><td>404</td><td>Prescription or inventory item not found</td></tr>
+      <tr><td><span class="mono">POST /v1/prescriptions/:id/dispense</span></td><td>409</td><td>Already dispensed or insufficient stock</td></tr>
+      <tr><td><span class="mono">POST /v1/prescriptions/:id/dispense</span></td><td>429</td><td>Sensitive action rate limit exceeded</td></tr>
+      <tr><td><span class="mono">GET /v1/clinical/tests</span></td><td>503</td><td>Terminology provider unavailable</td></tr>
+    </table>
+
+    <pre>{
+  "message": "Active walk-in consultation already exists for this patient. Complete or dispense the current consultation before starting a new one."
+}</pre>
+  </div>
+
+  <div class="page">
+    <h2>8. Current Implementation Status</h2>
+    <ul>
+      <li>Consultation workflow endpoint implemented and verified.</li>
+      <li>Appointment and walk-in branching implemented and verified.</li>
+      <li>Guardian linking and guardian draft creation implemented and verified.</li>
+      <li>Patient timeline and history integration implemented and verified.</li>
+      <li>Diagnosis persistence into patient conditions implemented and verified.</li>
+      <li>Terminology lookup endpoints implemented and verified.</li>
+      <li>Pending dispense queue enrichment implemented and verified.</li>
+      <li>Inventory search for assistant stock matching implemented and verified.</li>
+      <li>Source-aware prescription workflow implemented and verified.</li>
+      <li>Walk-in conflict handling with clean <span class="mono">409</span> implemented and verified.</li>
+      <li>Swagger request and error response documentation updated.</li>
+    </ul>
+
+    <h3>Verification Status</h3>
+    <ul>
+      <li><span class="mono">npm run typecheck</span> passing</li>
+      <li><span class="mono">npm run test --workspace @medsys/api</span> passing</li>
+      <li>76 API tests passing at the time of this document</li>
+    </ul>
+
+    <h2>9. Known Limitations and Future Scope</h2>
+    <ul>
+      <li>Imaging and procedures are not yet part of the main clinical test catalog.</li>
+      <li>Prescription items do not yet persist inventory linkage at item-create time.</li>
+      <li>Advanced clinical decision support remains limited.</li>
+      <li>Compliance maturity is operationally helpful but not certification-ready.</li>
+      <li>External lab and imaging integration remain future scope.</li>
+    </ul>
+
+    <h2>10. Handover Recommendation</h2>
+    <p>The most important achievements so far are backend workflow consolidation around consultation save, reduction of doctor UX from many steps to one final save, proper appointment versus walk-in lifecycle separation, source-based prescription workflow, assistant queue and inventory resolution alignment, and clearer frontend error contracts with Swagger accuracy.</p>
+    <ol>
+      <li>Validate the workflow model against real clinic operations.</li>
+      <li>Confirm the current status names and handoff stages fit business language.</li>
+      <li>Review remaining terminology and integration scope for imaging and external systems.</li>
+      <li>Approve the current API contract as the baseline for frontend completion.</li>
+    </ol>
+  </div>
+</body>
+</html>
