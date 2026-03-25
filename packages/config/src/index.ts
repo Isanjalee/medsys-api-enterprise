@@ -69,6 +69,10 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search"),
+  LOINC_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://clinicaltables.nlm.nih.gov/api/loinc_items/v3/search"),
   AUDIT_TRANSPORT: z.enum(["auto", "direct", "redis"]).default("auto"),
   AUDIT_QUEUE_KEY: z.string().default("medsys:audit:events"),
   AUDIT_RETRY_QUEUE_KEY: z.string().optional(),
