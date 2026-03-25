@@ -13,6 +13,8 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "export:docs-pdf": "powershell -ExecutionPolicy Bypass -File scripts/export-docs-pdfs.ps1",
+    "export:handover-docx": "python scripts/export-handover-docx.py",
     "db:migrate": "node scripts/flyway-docker.cjs migrate",
     "db:validate": "node scripts/flyway-docker.cjs validate",
     "db:info": "node scripts/flyway-docker.cjs info"
