@@ -36,6 +36,8 @@ const PERMISSIONS = [
   "prescription.dispense"
 ] as const;
 const APPOINTMENT_STATUSES = ["waiting", "in_consultation", "completed", "cancelled"] as const;
+const CONSULTATION_WORKFLOW_TYPES = ["appointment", "walk_in"] as const;
+const CONSULTATION_DISPENSE_MODES = ["assistant_queue", "doctor_direct"] as const;
 const PRIORITY_LEVELS = ["low", "normal", "high", "critical"] as const;
 const DRUG_SOURCES = ["clinical", "outside"] as const;
 
@@ -227,6 +229,19 @@ export const clinicalIcd10QuerySchema = z
   })
   .strict();
 
+export const clinicalTerminologyQuerySchema = z
+  .object({
+    terms: z.string().trim().max(100).optional(),
+    limit: z.coerce.number().int().positive().max(20).default(10)
+  })
+  .strict();
+
+export const clinicalCodeParamSchema = z
+  .object({
+    code: z.string().trim().min(1).max(32)
+  })
+  .strict();
+
 export const createUserSchema = z.object({
   firstName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid first name"),
   lastName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid last name"),
@@ -306,6 +321,15 @@ export const searchPatientsQuerySchema = z
     q: z.string().trim().min(2).max(120),
     page: z.coerce.number().int().positive().default(1),
     limit: z.coerce.number().int().positive().max(50).default(20)
+  })
+  .strict();
+
+export const searchInventoryQuerySchema = z
+  .object({
+    q: z.string().trim().min(2).max(120),
+    limit: z.coerce.number().int().positive().max(20).default(10),
+    category: z.enum(["medicine", "consumable", "equipment", "other"]).optional(),
+    activeOnly: z.coerce.boolean().default(true)
   })
   .strict();
 
@@ -429,6 +453,8 @@ export const createEncounterBundleSchema = z
 
 export const saveConsultationWorkflowSchema = z
   .object({
+    workflowType: z.enum(CONSULTATION_WORKFLOW_TYPES).default("walk_in"),
+    appointmentId: z.number().int().positive().optional(),
     patientId: z.number().int().positive().optional(),
     patientDraft: createPatientFrontendSchema.optional(),
     guardianDraft: createGuardianFrontendSchema.optional(),
@@ -450,11 +476,64 @@ export const saveConsultationWorkflowSchema = z
         items: z.array(prescriptionItemInputSchema).min(1)
       })
       .strict()
+      .optional(),
+    dispense: z
+      .object({
+        mode: z.enum(CONSULTATION_DISPENSE_MODES).default("assistant_queue"),
+        dispensedAt: z.string().datetime().optional(),
+        notes: z.string().max(10000).optional().nullable(),
+        items: z
+          .array(
+            z
+              .object({
+                inventoryItemId: z.number().int().positive(),
+                quantity: z.number().positive()
+              })
+              .strict()
+          )
+          .min(1)
+          .optional()
+      })
+      .strict()
       .optional()
   })
   .strict()
   .superRefine((payload, ctx) => {
-    if (!payload.patientId && !payload.patientDraft) {
+    if (payload.workflowType === "appointment") {
+      if (!payload.appointmentId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["appointmentId"],
+          message: "appointmentId is required for appointment workflow."
+        });
+      }
+
+      if (!payload.patientId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["patientId"],
+          message: "patientId is required for appointment workflow."
+        });
+      }
+
+      if (payload.patientDraft) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["patientDraft"],
+          message: "patientDraft is not allowed for appointment workflow."
+        });
+      }
+
+      if (payload.guardianDraft) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["guardianDraft"],
+          message: "guardianDraft is not allowed for appointment workflow."
+        });
+      }
+    }
+
+    if (payload.workflowType === "walk_in" && !payload.patientId && !payload.patientDraft) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["patientDraft"],
@@ -470,11 +549,35 @@ export const saveConsultationWorkflowSchema = z
       });
     }
 
+    if (payload.workflowType === "walk_in" && payload.appointmentId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["appointmentId"],
+        message: "appointmentId is not used for walk_in workflow."
+      });
+    }
+
     if (payload.prescription && payload.prescription.items.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["prescription", "items"],
         message: "If prescription exists, at least one complete drug row is required."
+      });
+    }
+
+    if (payload.dispense?.mode === "doctor_direct" && !payload.prescription) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dispense", "mode"],
+        message: "doctor_direct dispense requires a prescription."
+      });
+    }
+
+    if (payload.dispense?.mode === "doctor_direct" && !payload.dispense.items?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dispense", "items"],
+        message: "doctor_direct dispense requires at least one inventory item."
       });
     }
   });
