@@ -1488,8 +1488,27 @@ test("encounter bundle and prescription detail flows remain consistent", async (
   });
 
   assert.equal(queueResponse.statusCode, 200);
-  const queueBody = queueResponse.json() as Array<{ prescriptionId: number }>;
-  assert.equal(queueBody.some((row) => row.prescriptionId === encounterBody.prescriptionId), true);
+  const queueBody = queueResponse.json() as Array<{
+    id: number;
+    prescriptionId: number;
+    appointmentId: number;
+    patientId: number;
+    patientName: string;
+    patient_code: string;
+    nic: string | null;
+    diagnosis: string | null;
+    items: Array<{ drugName: string; quantity: string; inventoryItemId: number | null }>;
+  }>;
+  const queuedPrescription = queueBody.find((row) => row.prescriptionId === encounterBody.prescriptionId);
+  assert.ok(queuedPrescription);
+  assert.equal(queuedPrescription.appointmentId, appointment.id);
+  assert.equal(queuedPrescription.patientId, patientId);
+  assert.equal(typeof queuedPrescription.patientName, "string");
+  assert.equal(typeof queuedPrescription.patient_code, "string");
+  assert.equal(queuedPrescription.diagnosis?.includes("Acute viral fever"), true);
+  assert.equal(queuedPrescription.items[0]?.drugName, "Paracetamol");
+  assert.equal(queuedPrescription.items[0]?.quantity, "9");
+  assert.equal(queuedPrescription.items[0]?.inventoryItemId, null);
 
   const encounterDetailResponse = await app.inject({
     method: "GET",
@@ -1605,6 +1624,18 @@ test("encounter bundle and prescription detail flows remain consistent", async (
   assert.equal(prescriptionDetail.items[0]?.drugName, "Paracetamol");
   assert.equal(prescriptionDetail.dispenses[0]?.assistantId, assistantId);
   assert.equal(prescriptionDetail.dispenses[0]?.status, "completed");
+
+  const appointmentAfterDispenseResponse = await app.inject({
+    method: "GET",
+    url: `/v1/appointments/${appointment.id}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(appointmentAfterDispenseResponse.statusCode, 200);
+  const appointmentAfterDispense = appointmentAfterDispenseResponse.json() as { status: string };
+  assert.equal(appointmentAfterDispense.status, "completed");
   await app.close();
 });
 
@@ -1764,6 +1795,75 @@ test("inventory movement accepts the frontend alias payload shape", async () => 
   assert.equal(movement.inventoryItemId, created.id);
   assert.equal(movement.movementType, "in");
   assert.equal(movement.quantity, "1");
+  await app.close();
+});
+
+test("inventory search supports assistant dispense matching by drug name", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createOne = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      sku: `PCM-500-${uniqueSuffix}`,
+      name: `Paracetamol 500mg ${uniqueSuffix}`,
+      category: "medicine",
+      unit: "tablet",
+      stock: 40,
+      reorderLevel: 5
+    }
+  });
+  assert.equal(createOne.statusCode, 201);
+
+  const createTwo = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      sku: `PCM-SYR-${uniqueSuffix}`,
+      name: `Paracetamol Syrup ${uniqueSuffix}`,
+      category: "medicine",
+      unit: "bottle",
+      stock: 15,
+      reorderLevel: 3
+    }
+  });
+  assert.equal(createTwo.statusCode, 201);
+
+  const searchResponse = await app.inject({
+    method: "GET",
+    url: "/v1/inventory/search?q=Paracetamol&limit=10&category=medicine",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(searchResponse.statusCode, 200);
+  const searchBody = searchResponse.json() as Array<{
+    id: number;
+    sku: string | null;
+    name: string;
+    category: string;
+    unit: string;
+    stock: string;
+    isActive: boolean;
+  }>;
+  assert.equal(searchBody.length >= 2, true);
+  assert.equal(searchBody.every((row) => row.category === "medicine"), true);
+  assert.equal(searchBody.some((row) => row.name.includes("Paracetamol 500mg")), true);
+  assert.equal(searchBody.some((row) => row.name.includes("Paracetamol Syrup")), true);
+
   await app.close();
 });
 
@@ -2022,6 +2122,275 @@ test("clinical icd10 rejects oversized terms with validation envelope", async ()
       error: "Validation failed.",
       issues: [{ field: "terms", message: "String must contain at most 100 character(s)." }]
     });
+  } finally {
+    await app.close();
+  }
+});
+
+test("clinical diagnoses endpoint returns normalized diagnosis objects", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify([
+          2,
+          ["A00", "J18.9"],
+          null,
+          [
+            ["A00", "Cholera"],
+            ["J18.9", "Pneumonia, unspecified organism"]
+          ]
+        ]),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/diagnoses?terms=chol&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      diagnoses: [
+        { code: "A00", codeSystem: "ICD-10-CM", display: "Cholera" },
+        { code: "J18.9", codeSystem: "ICD-10-CM", display: "Pneumonia, unspecified organism" }
+      ]
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
+test("clinical tests endpoint returns normalized loinc-like test objects", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          expansion: {
+            contains: [
+              {
+                code: "4548-4",
+                display: "Hemoglobin A1c/Hemoglobin.total in Blood"
+              },
+              {
+                code: "1558-6",
+                display: "Fasting glucose [Mass/volume] in Serum or Plasma"
+              }
+            ]
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/tests?terms=glucose&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      tests: [
+        {
+          code: "4548-4",
+          codeSystem: "LOINC",
+          display: "Hemoglobin A1c/Hemoglobin.total in Blood",
+          category: null
+        },
+        {
+          code: "1558-6",
+          codeSystem: "LOINC",
+          display: "Fasting glucose [Mass/volume] in Serum or Plasma",
+          category: null
+        }
+      ]
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
+test("clinical tests endpoint supports normalized clinical tables loinc search results", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify([
+          2,
+          ["3016-3", "4548-4"],
+          null,
+          [
+            ["3016-3", "Thyrotropin (TSH) [Units/volume] in Serum or Plasma"],
+            ["4548-4", "Hemoglobin A1c/Hemoglobin.total in Blood"]
+          ]
+        ]),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/tests?terms=TSH&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      tests: [
+        {
+          code: "3016-3",
+          codeSystem: "LOINC",
+          display: "Thyrotropin (TSH) [Units/volume] in Serum or Plasma",
+          category: null
+        },
+        {
+          code: "4548-4",
+          codeSystem: "LOINC",
+          display: "Hemoglobin A1c/Hemoglobin.total in Blood",
+          category: null
+        }
+      ]
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
+test("clinical tests endpoint filters out note and questionnaire style loinc noise", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify([
+          5,
+          ["97711-6", "58302-1", "46021-2", "18708-8", "54533-5"],
+          null,
+          [
+            ["97711-6", "Heart failure Outpatient Note"],
+            ["58302-1", "Ever told by doctor that you had rheumatic heart or heart valve problems"],
+            ["46021-2", "Heart or circulation diseases or conditions Set"],
+            ["18708-8", "Heart rate"],
+            ["54533-5", "Heart/circulation during assessment period [CMS Assessment]"]
+          ]
+        ]),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/tests?terms=heart&limit=10",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      tests: [
+        {
+          code: "18708-8",
+          codeSystem: "LOINC",
+          display: "Heart rate",
+          category: null
+        }
+      ]
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
+test("clinical recommended tests endpoint returns curated mappings for a diagnosis code", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/diagnoses/J45.909/recommended-tests",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json() as {
+      diagnosis: { code: string; codeSystem: string };
+      source: string;
+      tests: Array<{ code: string; codeSystem: string; display: string; category: string | null }>;
+    };
+    assert.equal(body.diagnosis.code, "J45.909");
+    assert.equal(body.diagnosis.codeSystem, "ICD-10-CM");
+    assert.equal(body.source, "curated");
+    assert.equal(body.tests.some((test) => test.code === "20150-9"), true);
   } finally {
     await app.close();
   }
@@ -2805,6 +3174,369 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
   await app.close();
 });
 
+test("consultation workflow supports appointment mode with doctor-completed outcome", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Appointment Mode ${Date.now()} Patient`);
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      doctorId,
+      scheduledAt: "2026-03-24T09:30:00Z",
+      status: "waiting",
+      priority: "normal",
+      reason: "Scheduled review"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
+  const appointment = appointmentResponse.json() as { id: number };
+
+  const consultationResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "appointment",
+      appointmentId: appointment.id,
+      patientId,
+      checkedAt: "2026-03-24T10:30:00Z",
+      diagnoses: [{ diagnosisName: "Follow-up review", icd10Code: "Z09.9" }],
+      prescription: {
+        items: [
+          {
+            drugName: "Paracetamol",
+            dose: "500mg",
+            frequency: "TID",
+            duration: "2 days",
+            quantity: 6,
+            source: "clinical"
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(consultationResponse.statusCode, 201);
+  const consultationBody = consultationResponse.json() as {
+    patient_created: boolean;
+    visit: { id: number; status: string };
+    prescription_id: number | null;
+    workflow_type: string;
+    workflow_status: string;
+    dispense_status: string;
+    doctor_direct_dispense: boolean;
+  };
+  assert.equal(consultationBody.patient_created, false);
+  assert.equal(consultationBody.visit.id, appointment.id);
+  assert.equal(consultationBody.visit.status, "in_consultation");
+  assert.equal(consultationBody.workflow_type, "appointment");
+  assert.equal(consultationBody.workflow_status, "doctor_completed");
+  assert.equal(consultationBody.dispense_status, "pending");
+  assert.equal(consultationBody.doctor_direct_dispense, false);
+  assert.equal(typeof consultationBody.prescription_id, "number");
+
+  const queueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/prescriptions/queue/pending-dispense",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(queueResponse.statusCode, 200);
+  const queueBody = queueResponse.json() as Array<{
+    id: number;
+    prescriptionId: number;
+    appointmentId: number;
+    patientId: number;
+    diagnosis: string | null;
+    items: Array<{ drugName: string }>;
+  }>;
+  const queuedPrescription = queueBody.find((row) => row.prescriptionId === consultationBody.prescription_id);
+  assert.ok(queuedPrescription);
+  assert.equal(queuedPrescription.appointmentId, appointment.id);
+  assert.equal(queuedPrescription.patientId, patientId);
+  assert.equal(queuedPrescription.diagnosis?.includes("Follow-up review"), true);
+  assert.equal(queuedPrescription.items[0]?.drugName, "Paracetamol");
+
+  const appointmentAfterSave = await app.inject({
+    method: "GET",
+    url: `/v1/appointments/${appointment.id}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(appointmentAfterSave.statusCode, 200);
+  const appointmentBody = appointmentAfterSave.json() as { status: string };
+  assert.equal(appointmentBody.status, "in_consultation");
+
+  await app.close();
+});
+
+test("consultation workflow completes appointment mode when prescription has outside items only", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Outside Only ${Date.now()} Patient`);
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      doctorId,
+      scheduledAt: "2026-03-24T13:30:00Z",
+      status: "waiting",
+      priority: "normal",
+      reason: "Outside pharmacy prescription"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
+  const appointment = appointmentResponse.json() as { id: number };
+
+  const consultationResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "appointment",
+      appointmentId: appointment.id,
+      patientId,
+      checkedAt: "2026-03-24T14:00:00Z",
+      prescription: {
+        items: [
+          {
+            drugName: "Vitamin C",
+            dose: "250mg",
+            frequency: "OD",
+            duration: "10 days",
+            quantity: 10,
+            source: "outside"
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(consultationResponse.statusCode, 201);
+  const consultationBody = consultationResponse.json() as {
+    workflow_status: string;
+    dispense_status: string;
+    clinical_item_count: number;
+    outside_item_count: number;
+    prescription_id: number | null;
+    visit: { status: string };
+  };
+  assert.equal(consultationBody.workflow_status, "completed");
+  assert.equal(consultationBody.dispense_status, "none");
+  assert.equal(consultationBody.clinical_item_count, 0);
+  assert.equal(consultationBody.outside_item_count, 1);
+  assert.equal(consultationBody.visit.status, "completed");
+  assert.equal(typeof consultationBody.prescription_id, "number");
+
+  const queueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/prescriptions/queue/pending-dispense",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(queueResponse.statusCode, 200);
+  const queueBody = queueResponse.json() as Array<{ prescriptionId: number }>;
+  assert.equal(queueBody.some((row) => row.prescriptionId === consultationBody.prescription_id), false);
+
+  await app.close();
+});
+
+test("pending dispense queue includes only clinical items for mixed prescriptions", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Mixed Source ${Date.now()} Patient`);
+
+  const appointmentResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId,
+      doctorId,
+      scheduledAt: "2026-03-24T15:00:00Z",
+      status: "waiting",
+      priority: "normal",
+      reason: "Mixed prescription consultation"
+    }
+  });
+
+  assert.equal(appointmentResponse.statusCode, 201);
+  const appointment = appointmentResponse.json() as { id: number };
+
+  const consultationResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "appointment",
+      appointmentId: appointment.id,
+      patientId,
+      checkedAt: "2026-03-24T15:15:00Z",
+      diagnoses: [{ diagnosisName: "Hypertension", icd10Code: "I10" }],
+      prescription: {
+        items: [
+          {
+            drugName: "Paracetamol",
+            dose: "500mg",
+            frequency: "TID",
+            duration: "3 days",
+            quantity: 6,
+            source: "clinical"
+          },
+          {
+            drugName: "Vitamin C",
+            dose: "250mg",
+            frequency: "OD",
+            duration: "10 days",
+            quantity: 10,
+            source: "outside"
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(consultationResponse.statusCode, 201);
+  const consultationBody = consultationResponse.json() as {
+    workflow_status: string;
+    dispense_status: string;
+    clinical_item_count: number;
+    outside_item_count: number;
+    prescription_id: number | null;
+  };
+  assert.equal(consultationBody.workflow_status, "doctor_completed");
+  assert.equal(consultationBody.dispense_status, "pending");
+  assert.equal(consultationBody.clinical_item_count, 1);
+  assert.equal(consultationBody.outside_item_count, 1);
+
+  const queueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/prescriptions/queue/pending-dispense",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(queueResponse.statusCode, 200);
+  const queueBody = queueResponse.json() as Array<{
+    prescriptionId: number;
+    items: Array<{ drugName: string; source: string }>;
+  }>;
+  const queuedPrescription = queueBody.find((row) => row.prescriptionId === consultationBody.prescription_id);
+  assert.ok(queuedPrescription);
+  assert.equal(queuedPrescription.items.length, 1);
+  assert.equal(queuedPrescription.items[0]?.drugName, "Paracetamol");
+  assert.equal(queuedPrescription.items[0]?.source, "clinical");
+
+  await app.close();
+});
+
+test("walk-in consultation save returns conflict when an active consultation already exists for the patient", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Active Walkin ${Date.now()} Patient`);
+
+  const firstSave = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      patientId,
+      checkedAt: "2026-03-24T16:30:00Z",
+      diagnoses: [{ diagnosisName: "Acute pain", icd10Code: "R52" }],
+      prescription: {
+        items: [
+          {
+            drugName: "Paracetamol",
+            dose: "500mg",
+            frequency: "TID",
+            duration: "3 days",
+            quantity: 6,
+            source: "clinical"
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(firstSave.statusCode, 201);
+
+  const secondSave = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      patientId,
+      checkedAt: "2026-03-24T16:45:00Z",
+      diagnoses: [{ diagnosisName: "Follow-up pain review", icd10Code: "R52" }]
+    }
+  });
+
+  assert.equal(secondSave.statusCode, 409);
+  assert.deepEqual(secondSave.json(), {
+    error:
+      "Active walk-in consultation already exists for this patient. Complete or dispense the current consultation before starting a new one."
+  });
+
+  await app.close();
+});
+
 test("consultation workflow can create a guardian patient from guardianDraft and link family automatically", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -2889,6 +3621,113 @@ test("consultation workflow can create a guardian patient from guardianDraft and
     patient: { family_id: number | null };
   };
   assert.equal(guardianDetail.patient.family_id, body.patient.family_id);
+
+  await app.close();
+});
+
+test("consultation workflow supports walk-in doctor direct dispense completion", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+
+  const inventoryResponse = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      name: `Direct Dispense Stock ${Date.now()}`,
+      category: "medicine",
+      unit: "tablet",
+      stock: 20,
+      reorderLevel: 5
+    }
+  });
+
+  assert.equal(inventoryResponse.statusCode, 201);
+  const inventoryItem = inventoryResponse.json() as { id: number };
+
+  const consultationResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      patientDraft: {
+        name: `Direct Dispense ${Date.now()} Patient`,
+        dateOfBirth: "1991-04-18"
+      },
+      checkedAt: "2026-03-24T12:30:00Z",
+      diagnoses: [{ diagnosisName: "Acute pain", icd10Code: "R52" }],
+      prescription: {
+        items: [
+          {
+            drugName: "Ibuprofen",
+            dose: "400mg",
+            frequency: "BD",
+            duration: "3 days",
+            quantity: 6,
+            source: "clinical"
+          }
+        ]
+      },
+      dispense: {
+        mode: "doctor_direct",
+        dispensedAt: "2026-03-24T12:35:00Z",
+        notes: "Handed directly by doctor",
+        items: [{ inventoryItemId: inventoryItem.id, quantity: 6 }]
+      }
+    }
+  });
+
+  assert.equal(consultationResponse.statusCode, 201);
+  const consultationBody = consultationResponse.json() as {
+    prescription_id: number | null;
+    workflow_type: string;
+    workflow_status: string;
+    dispense_status: string;
+    doctor_direct_dispense: boolean;
+  };
+  assert.equal(consultationBody.workflow_type, "walk_in");
+  assert.equal(consultationBody.workflow_status, "completed");
+  assert.equal(consultationBody.dispense_status, "completed");
+  assert.equal(consultationBody.doctor_direct_dispense, true);
+  assert.equal(typeof consultationBody.prescription_id, "number");
+
+  const queueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/prescriptions/queue/pending-dispense",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(queueResponse.statusCode, 200);
+  const queueBody = queueResponse.json() as Array<{ prescriptionId: number }>;
+  assert.equal(queueBody.some((row) => row.prescriptionId === consultationBody.prescription_id), false);
+
+  const prescriptionDetailResponse = await app.inject({
+    method: "GET",
+    url: `/v1/prescriptions/${consultationBody.prescription_id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(prescriptionDetailResponse.statusCode, 200);
+  const prescriptionDetail = prescriptionDetailResponse.json() as {
+    dispenses: Array<{ assistantId: number; status: string }>;
+  };
+  assert.equal(prescriptionDetail.dispenses[0]?.assistantId, doctorId);
+  assert.equal(prescriptionDetail.dispenses[0]?.status, "completed");
 
   await app.close();
 });
