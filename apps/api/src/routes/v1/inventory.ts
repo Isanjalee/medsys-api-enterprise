@@ -1,7 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { inventoryItems, inventoryMovements } from "@medsys/db";
-import { createInventoryItemSchema, createInventoryMovementSchema, idParamSchema, updateInventoryItemSchema } from "@medsys/validation";
+import {
+  createInventoryItemSchema,
+  createInventoryMovementSchema,
+  idParamSchema,
+  searchInventoryQuerySchema,
+  updateInventoryItemSchema
+} from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
@@ -30,11 +36,67 @@ const createInventoryItemBodySchema = {
   }
 } as const;
 
+const inventorySearchQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["q"],
+  properties: {
+    q: { type: "string", minLength: 1 },
+    limit: { type: "integer", minimum: 1, maximum: 50, nullable: true },
+    category: { type: "string", enum: ["medicine", "consumable", "equipment", "other"], nullable: true },
+    activeOnly: { type: "boolean", nullable: true }
+  }
+} as const;
+
+const inventorySearchResponseSchema = {
+  type: "array",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "sku", "name", "category", "unit", "stock", "reorderLevel", "isActive"],
+    properties: {
+      id: { type: "integer" },
+      sku: { type: "string", nullable: true },
+      name: { type: "string" },
+      category: { type: "string", enum: ["medicine", "consumable", "equipment", "other"] },
+      unit: { type: "string" },
+      stock: { type: "string" },
+      reorderLevel: { type: "string" },
+      isActive: { type: "boolean" }
+    }
+  },
+  example: [
+    {
+      id: 12,
+      sku: "PCM-500",
+      name: "Paracetamol 500mg",
+      category: "medicine",
+      unit: "tablet",
+      stock: "40",
+      reorderLevel: "5",
+      isActive: true
+    }
+  ]
+} as const;
+
+const messageErrorResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["message"],
+  properties: {
+    message: { type: "string" }
+  }
+} as const;
+
 const inventoryRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Inventory", "InventoryController", {
     "GET /": {
       operationId: "InventoryController_findAll",
       summary: "List inventory items"
+    },
+    "GET /search": {
+      operationId: "InventoryController_search",
+      summary: "Search inventory items for assistant dispense matching"
     },
     "POST /": {
       operationId: "InventoryController_create",
@@ -109,6 +171,66 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.addHook("preHandler", app.authenticate);
+
+  app.get(
+    "/search",
+    {
+      preHandler: app.authorizePermissions(["inventory.read"]),
+      schema: {
+        tags: ["Inventory"],
+        operationId: "InventoryController_search",
+        summary: "Search inventory items for assistant dispense matching",
+        querystring: inventorySearchQuerySchema,
+        response: {
+          200: inventorySearchResponseSchema,
+          400: {
+            ...messageErrorResponseSchema,
+            example: { message: "Invalid inventory search query" }
+          },
+          403: {
+            ...messageErrorResponseSchema,
+            example: { message: "Forbidden" }
+          }
+        }
+      }
+    },
+    async (request) => {
+      const actor = request.actor!;
+      const query = parseOrThrowValidation(searchInventoryQuerySchema, request.query ?? {});
+    const pattern = `%${query.q}%`;
+    const limit = query.limit ?? 10;
+
+    const conditions = [
+      eq(inventoryItems.organizationId, actor.organizationId),
+      or(ilike(inventoryItems.name, pattern), ilike(inventoryItems.sku, pattern))
+    ];
+
+    if (query.category) {
+      conditions.push(eq(inventoryItems.category, query.category));
+    }
+
+    if (query.activeOnly) {
+      conditions.push(eq(inventoryItems.isActive, true));
+      conditions.push(isNull(inventoryItems.deletedAt));
+    }
+
+    return app.readDb
+      .select({
+        id: inventoryItems.id,
+        sku: inventoryItems.sku,
+        name: inventoryItems.name,
+        category: inventoryItems.category,
+        unit: inventoryItems.unit,
+        stock: inventoryItems.stock,
+        reorderLevel: inventoryItems.reorderLevel,
+        isActive: inventoryItems.isActive
+      })
+      .from(inventoryItems)
+      .where(and(...conditions))
+      .orderBy(inventoryItems.name)
+      .limit(limit);
+    }
+  );
 
   app.get("/", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;

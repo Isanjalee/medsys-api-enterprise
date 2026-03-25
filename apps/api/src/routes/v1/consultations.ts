@@ -1,11 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   appointments,
+  dispenseRecords,
   encounterDiagnoses,
   encounters,
   families,
   familyMembers,
+  inventoryItems,
+  inventoryMovements,
   patientAllergies,
   patientConditions,
   patientHistoryEntries,
@@ -27,6 +30,7 @@ import { applyRouteDocs } from "../../lib/route-docs.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
 const activeVisitStatuses = ["waiting", "in_consultation"] as const;
+const inArrayValue = <T extends string>(value: string, values: readonly T[]): value is T => values.includes(value as T);
 
 type PatientWriteValues = {
   nic?: string | null;
@@ -117,6 +121,8 @@ const saveConsultationBodySchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    workflowType: { type: "string", enum: ["appointment", "walk_in"] },
+    appointmentId: { type: "integer", minimum: 1, nullable: true },
     patientId: { type: "integer", minimum: 1, nullable: true },
     patientDraft: {
       type: "object",
@@ -248,9 +254,35 @@ const saveConsultationBodySchema = {
           }
         }
       }
+    },
+    dispense: {
+      type: "object",
+      nullable: true,
+      additionalProperties: false,
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["assistant_queue", "doctor_direct"]
+        },
+        dispensedAt: { type: "string", format: "date-time", nullable: true },
+        notes: { type: "string", nullable: true },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["inventoryItemId", "quantity"],
+            properties: {
+              inventoryItemId: { type: "integer", minimum: 1 },
+              quantity: { type: "number", minimum: 0.01 }
+            }
+          }
+        }
+      }
     }
   },
   example: {
+    workflowType: "walk_in",
     patientDraft: {
       name: "Kamal Silva",
       dateOfBirth: "1999-06-10",
@@ -270,6 +302,7 @@ const saveConsultationBodySchema = {
     priority: "normal",
     clinicalSummary: "Seen for walk-in fever review. Supportive care advised.",
     diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }],
+    tests: [{ testName: "CBC", status: "ordered" }],
     prescription: {
       items: [
         {
@@ -281,7 +314,125 @@ const saveConsultationBodySchema = {
           source: "clinical"
         }
       ]
+    },
+    dispense: {
+      mode: "assistant_queue"
     }
+  }
+} as const;
+
+const validationErrorResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["error", "issues"],
+  properties: {
+    error: { type: "string", example: "Validation failed." },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["field", "message"],
+        properties: {
+          field: { type: "string" },
+          message: { type: "string" }
+        }
+      }
+    }
+  }
+} as const;
+
+const messageErrorResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["message"],
+  properties: {
+    message: { type: "string" }
+  }
+} as const;
+
+const saveConsultationSuccessResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "patient",
+    "patient_created",
+    "visit",
+    "encounter_id",
+    "prescription_id",
+    "vital",
+    "workflow_type",
+    "workflow_status",
+    "dispense_status",
+    "doctor_direct_dispense",
+    "clinical_item_count",
+    "outside_item_count"
+  ],
+  properties: {
+    patient: {
+      type: "object",
+      additionalProperties: true
+    },
+    patient_created: { type: "boolean" },
+    visit: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "patient_id", "doctor_id", "assistant_id", "scheduled_at", "status", "reason", "priority"],
+      properties: {
+        id: { type: "integer" },
+        patient_id: { type: "integer" },
+        doctor_id: { type: "integer", nullable: true },
+        assistant_id: { type: "integer", nullable: true },
+        scheduled_at: { type: "string", format: "date-time" },
+        status: { type: "string" },
+        reason: { type: "string", nullable: true },
+        priority: { type: "string", enum: ["low", "normal", "high", "critical"] }
+      }
+    },
+    encounter_id: { type: "integer" },
+    prescription_id: { type: "integer", nullable: true },
+    vital: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: true
+        }
+      ]
+    },
+    workflow_type: { type: "string", enum: ["appointment", "walk_in"] },
+    workflow_status: { type: "string", enum: ["doctor_completed", "ready_for_dispense", "completed"] },
+    dispense_status: { type: "string", enum: ["none", "pending", "completed"] },
+    doctor_direct_dispense: { type: "boolean" },
+    clinical_item_count: { type: "integer", minimum: 0 },
+    outside_item_count: { type: "integer", minimum: 0 }
+  },
+  example: {
+    patient: {
+      id: 38,
+      patient_code: "P-000000038",
+      full_name: "Nith Hadaz"
+    },
+    patient_created: false,
+    visit: {
+      id: 90,
+      patient_id: 38,
+      doctor_id: 10,
+      assistant_id: 3,
+      scheduled_at: "2026-03-24T16:59:07.445Z",
+      status: "in_consultation",
+      reason: "Walk-in consultation",
+      priority: "normal"
+    },
+    encounter_id: 120,
+    prescription_id: 44,
+    vital: null,
+    workflow_type: "walk_in",
+    workflow_status: "ready_for_dispense",
+    dispense_status: "pending",
+    doctor_direct_dispense: false,
+    clinical_item_count: 1,
+    outside_item_count: 1
   }
 } as const;
 
@@ -305,16 +456,59 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         tags: ["Consultations"],
         operationId: "ConsultationsController_save",
         summary: "Save a consultation, creating the patient first when needed",
-        body: saveConsultationBodySchema
+        body: saveConsultationBodySchema,
+        response: {
+          201: saveConsultationSuccessResponseSchema,
+          400: {
+            ...validationErrorResponseSchema,
+            example: {
+              error: "Validation failed.",
+              issues: [{ field: "patientDraft.name", message: "First name and last name are required." }]
+            }
+          },
+          403: {
+            ...messageErrorResponseSchema,
+            example: { message: "Forbidden" }
+          },
+          404: {
+            ...messageErrorResponseSchema,
+            example: { message: "Appointment not found" }
+          },
+          409: {
+            ...messageErrorResponseSchema,
+            example: {
+              message:
+                "Active walk-in consultation already exists for this patient. Complete or dispense the current consultation before starting a new one."
+            }
+          },
+          429: {
+            ...messageErrorResponseSchema,
+            example: { message: "Sensitive action rate limit exceeded" }
+          },
+          500: {
+            ...messageErrorResponseSchema,
+            example: { message: "Internal server error" }
+          }
+        }
       }
     },
     async (request, reply) => {
       const actor = request.actor!;
       const payload = parseOrThrowValidation(saveConsultationWorkflowSchema, request.body);
+      const workflowType = payload.workflowType;
+      const directDispenseRequested = payload.dispense?.mode === "doctor_direct";
 
       if ((payload.allergies?.length ?? 0) > 0) {
         assertOrThrow(
           hasAllResolvedPermissions(actor.permissions, ["patient.allergy.write"]),
+          403,
+          "Forbidden"
+        );
+      }
+
+      if (directDispenseRequested) {
+        assertOrThrow(
+          hasAllResolvedPermissions(actor.permissions, ["prescription.dispense"]),
           403,
           "Forbidden"
         );
@@ -338,6 +532,9 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
       const allergies = payload.allergies ?? [];
       const tests = payload.tests ?? [];
       const diagnosesToPersistAsConditions = diagnoses.filter((diagnosis) => diagnosis.persistAsCondition === true);
+      const prescriptionItemsPayload = payload.prescription?.items ?? [];
+      const clinicalPrescriptionItems = prescriptionItemsPayload.filter((item) => item.source === "clinical");
+      const outsidePrescriptionItems = prescriptionItemsPayload.filter((item) => item.source === "outside");
 
       const result = await app.db.transaction(async (tx) => {
         const ensureFamilyMembership = async (
@@ -407,6 +604,64 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
             dateOfBirth: row.dob,
             createdAt: row.createdAt.toISOString()
           });
+        };
+
+        const createDispenseRecord = async (
+          prescriptionId: number,
+          items: Array<{ inventoryItemId: number; quantity: number }>
+        ) => {
+          const dispensingUserId = resolvedAssistantId ?? doctorId;
+          const dispensedAt = new Date(payload.dispense?.dispensedAt ?? payload.checkedAt);
+
+          const dispenseRow = await tx
+            .insert(dispenseRecords)
+            .values({
+              organizationId: actor.organizationId,
+              prescriptionId,
+              assistantId: dispensingUserId,
+              dispensedAt,
+              status: "completed",
+              notes: payload.dispense?.notes ?? null
+            })
+            .returning();
+
+          for (const item of items) {
+            const inventoryRows = await tx
+              .select({ id: inventoryItems.id, stock: inventoryItems.stock })
+              .from(inventoryItems)
+              .where(
+                and(
+                  eq(inventoryItems.id, item.inventoryItemId),
+                  eq(inventoryItems.organizationId, actor.organizationId),
+                  isNull(inventoryItems.deletedAt)
+                )
+              )
+              .limit(1);
+            assertOrThrow(inventoryRows.length === 1, 404, `Inventory item ${item.inventoryItemId} not found`);
+
+            const currentStock = Number(inventoryRows[0].stock);
+            assertOrThrow(currentStock >= item.quantity, 409, "Insufficient stock");
+
+            await tx
+              .update(inventoryItems)
+              .set({
+                stock: sql`${inventoryItems.stock} - ${item.quantity}`,
+                updatedAt: new Date()
+              })
+              .where(eq(inventoryItems.id, item.inventoryItemId));
+
+            await tx.insert(inventoryMovements).values({
+              organizationId: actor.organizationId,
+              inventoryItemId: item.inventoryItemId,
+              movementType: "out",
+              quantity: item.quantity.toString(),
+              referenceType: "prescription",
+              referenceId: prescriptionId,
+              createdById: dispensingUserId
+            });
+          }
+
+          return dispenseRow[0];
         };
 
         const buildValuesFromFrontendDraft = (
@@ -694,49 +949,113 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           );
         }
 
-        const activeRows = await tx
-          .select()
-          .from(appointments)
-          .where(
-            and(
-              eq(appointments.organizationId, actor.organizationId),
-              eq(appointments.patientId, patient.id),
-              inArray(appointments.status, [...activeVisitStatuses]),
-              isNull(appointments.deletedAt)
-            )
-          )
-          .orderBy(desc(appointments.scheduledAt), desc(appointments.id))
-          .limit(1);
-
         const visit =
-          activeRows.length === 1
-            ? (
-                await tx
-                  .update(appointments)
-                  .set({
-                    status: "in_consultation",
-                    doctorId: activeRows[0].doctorId ?? resolvedDoctorId,
-                    assistantId: activeRows[0].assistantId ?? resolvedAssistantId,
-                    updatedAt: new Date()
-                  })
-                  .where(and(eq(appointments.id, activeRows[0].id), eq(appointments.organizationId, actor.organizationId)))
-                  .returning()
-              )[0]
-            : (
-                await tx
-                  .insert(appointments)
-                  .values({
-                    organizationId: actor.organizationId,
-                    patientId: patient.id,
-                    doctorId,
-                    assistantId: resolvedAssistantId,
-                    scheduledAt: new Date(payload.scheduledAt ?? payload.checkedAt),
-                    status: "in_consultation",
-                    reason: payload.reason ?? null,
-                    priority: payload.priority
-                  })
-                  .returning()
-              )[0];
+          workflowType === "appointment"
+            ? await (async () => {
+                const appointmentRows = await tx
+                  .select()
+                  .from(appointments)
+                  .where(
+                    and(
+                      eq(appointments.id, payload.appointmentId as number),
+                      eq(appointments.organizationId, actor.organizationId),
+                      isNull(appointments.deletedAt)
+                    )
+                  )
+                  .limit(1);
+                assertOrThrow(appointmentRows.length === 1, 404, "Appointment not found");
+                assertOrThrow(appointmentRows[0].patientId === patient.id, 409, "Appointment does not belong to patient");
+                assertOrThrow(
+                  inArrayValue(appointmentRows[0].status, activeVisitStatuses),
+                  409,
+                  "Appointment is not available for consultation save"
+                );
+
+                return (
+                  await tx
+                    .update(appointments)
+                    .set({
+                      status: "in_consultation",
+                      doctorId: appointmentRows[0].doctorId ?? resolvedDoctorId,
+                      assistantId: appointmentRows[0].assistantId ?? resolvedAssistantId,
+                      updatedAt: new Date()
+                    })
+                    .where(
+                      and(
+                        eq(appointments.id, appointmentRows[0].id),
+                        eq(appointments.organizationId, actor.organizationId)
+                      )
+                    )
+                    .returning()
+                )[0];
+              })()
+            : await (async () => {
+                const activeRows = await tx
+                  .select()
+                  .from(appointments)
+                  .where(
+                    and(
+                      eq(appointments.organizationId, actor.organizationId),
+                      eq(appointments.patientId, patient.id),
+                      inArray(appointments.status, [...activeVisitStatuses]),
+                      isNull(appointments.deletedAt)
+                    )
+                  )
+                  .orderBy(desc(appointments.scheduledAt), desc(appointments.id))
+                  .limit(1);
+
+                if (activeRows.length === 1) {
+                  const existingEncounter = await tx
+                    .select({ id: encounters.id })
+                    .from(encounters)
+                    .where(
+                      and(
+                        eq(encounters.organizationId, actor.organizationId),
+                        eq(encounters.appointmentId, activeRows[0].id),
+                        eq(encounters.patientId, patient.id),
+                        isNull(encounters.deletedAt)
+                      )
+                    )
+                    .limit(1);
+
+                  assertOrThrow(
+                    existingEncounter.length === 0,
+                    409,
+                    "Active walk-in consultation already exists for this patient. Complete or dispense the current consultation before starting a new one."
+                  );
+
+                  return (
+                    await tx
+                      .update(appointments)
+                      .set({
+                        status: "in_consultation",
+                        doctorId: activeRows[0].doctorId ?? resolvedDoctorId,
+                        assistantId: activeRows[0].assistantId ?? resolvedAssistantId,
+                        updatedAt: new Date()
+                      })
+                      .where(
+                        and(eq(appointments.id, activeRows[0].id), eq(appointments.organizationId, actor.organizationId))
+                      )
+                      .returning()
+                  )[0];
+                }
+
+                return (
+                  await tx
+                    .insert(appointments)
+                    .values({
+                      organizationId: actor.organizationId,
+                      patientId: patient.id,
+                      doctorId,
+                      assistantId: resolvedAssistantId,
+                      scheduledAt: new Date(payload.scheduledAt ?? payload.checkedAt),
+                      status: "in_consultation",
+                      reason: payload.reason ?? null,
+                      priority: payload.priority
+                    })
+                    .returning()
+                )[0];
+              })();
 
         const encounterRows = await tx
           .insert(encounters)
@@ -808,6 +1127,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         }
 
         let prescriptionId: number | null = null;
+        let dispenseStatus: "none" | "pending" | "completed" = "none";
         if (payload.prescription) {
           const prescriptionRows = await tx
             .insert(prescriptions)
@@ -821,7 +1141,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           prescriptionId = prescriptionRows[0].id;
 
           await tx.insert(prescriptionItems).values(
-            payload.prescription.items.map((item) => ({
+            prescriptionItemsPayload.map((item) => ({
               organizationId: actor.organizationId,
               prescriptionId: prescriptionId as number,
               drugName: item.drugName,
@@ -832,6 +1152,15 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
               source: item.source
             }))
           );
+
+          if (clinicalPrescriptionItems.length === 0) {
+            dispenseStatus = "none";
+          } else if (directDispenseRequested) {
+            await createDispenseRecord(prescriptionId, payload.dispense?.items ?? []);
+            dispenseStatus = "completed";
+          } else {
+            dispenseStatus = "pending";
+          }
         }
 
         const timelineTags = [
@@ -870,18 +1199,45 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        await tx
-          .update(appointments)
-          .set({ status: "completed", updatedAt: new Date() })
-          .where(and(eq(appointments.id, visit.id), eq(appointments.organizationId, actor.organizationId)));
+        const workflowStatus =
+          workflowType === "appointment"
+            ? clinicalPrescriptionItems.length === 0
+              ? "completed"
+              : directDispenseRequested
+                ? "completed"
+                : "doctor_completed"
+            : clinicalPrescriptionItems.length === 0
+              ? "completed"
+              : directDispenseRequested
+                ? "completed"
+                : "ready_for_dispense";
+
+        const persistedVisitStatus =
+          clinicalPrescriptionItems.length === 0 || directDispenseRequested
+            ? "completed"
+            : "in_consultation";
+
+        const closedVisit = (
+          await tx
+            .update(appointments)
+            .set({ status: persistedVisitStatus, updatedAt: new Date() })
+            .where(and(eq(appointments.id, visit.id), eq(appointments.organizationId, actor.organizationId)))
+            .returning()
+        )[0];
 
         return {
           patient,
           patientCreated: created,
-          visit,
+          visit: closedVisit,
           encounterId: encounter.id,
           vital,
-          prescriptionId
+          prescriptionId,
+          workflowType,
+          workflowStatus,
+          dispenseStatus,
+          doctorDirectDispense: directDispenseRequested,
+          clinicalItemCount: clinicalPrescriptionItems.length,
+          outsideItemCount: outsidePrescriptionItems.length
         };
       });
 
@@ -893,6 +1249,11 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           patientId: result.patient.id,
           patientCreated: result.patientCreated,
           appointmentId: result.visit.id,
+          workflowType: result.workflowType,
+          workflowStatus: result.workflowStatus,
+          dispenseStatus: result.dispenseStatus,
+          clinicalItemCount: result.clinicalItemCount,
+          outsideItemCount: result.outsideItemCount,
           hasVitals: Boolean(result.vital),
           hasPrescription: Boolean(result.prescriptionId),
           diagnosisCount: diagnoses.length,
@@ -934,7 +1295,13 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         },
         encounter_id: result.encounterId,
         prescription_id: result.prescriptionId,
-        vital: result.vital ? serializePatientVital(result.vital) : null
+        vital: result.vital ? serializePatientVital(result.vital) : null,
+        workflow_type: result.workflowType,
+        workflow_status: result.workflowStatus,
+        dispense_status: result.dispenseStatus,
+        doctor_direct_dispense: result.doctorDirectDispense,
+        clinical_item_count: result.clinicalItemCount,
+        outside_item_count: result.outsideItemCount
       });
     }
   );
