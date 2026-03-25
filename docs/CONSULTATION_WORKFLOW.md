@@ -38,6 +38,71 @@ The backend then performs one atomic workflow:
 - create a patient timeline event
 - optionally create a patient history note from `clinicalSummary`
 
+## Workflow Modes
+
+`POST /v1/consultations/save` now supports two workflow modes:
+
+- `walk_in`
+  - no appointment is required
+  - payload can contain `patientId` or `patientDraft`
+  - if prescription has no `clinical` items, response closes as `workflow_status = completed`
+  - if `clinical` items exist and `dispense.mode = assistant_queue` or no dispense block is sent, response closes as `workflow_status = ready_for_dispense`
+  - if `dispense.mode = doctor_direct`, backend records dispense immediately and response closes as `workflow_status = completed`
+- `appointment`
+  - requires `appointmentId` and `patientId`
+  - payload must use the existing appointment context rather than `patientDraft`
+  - backend validates the appointment belongs to the patient and is still active
+  - if prescription has no `clinical` items, response closes as `workflow_status = completed`
+  - if `clinical` items exist, response closes as `workflow_status = doctor_completed`
+
+Dispense response flags:
+
+- `dispense_status = none` when there is no prescription
+- `dispense_status = pending` when a prescription exists but still waits for dispense
+- `dispense_status = completed` when doctor direct dispense is recorded during consultation save
+
+## Prescription Source Rules
+
+Prescription items are operationally split by `source`:
+
+- `source = clinical`
+  - included in pending dispense queue
+  - affects workflow completion state
+  - requires inventory resolution before dispense finalization
+- `source = outside`
+  - still saved in prescription and history
+  - still included in printed prescription output
+  - does not create pending dispense queue
+  - does not require inventory mapping
+  - does not block completion
+
+This means mixed prescriptions are saved fully, but only `clinical` items drive queueing and handoff behavior.
+
+## Assistant Dispense Matching
+
+Pending queue payload is for assistant workflow:
+
+- use `GET /v1/prescriptions/queue/pending-dispense` to render queue rows
+- queue rows now include only clinic-dispensable `clinical` items
+- if an item still has `inventoryItemId = null`, frontend must resolve stock before dispense
+- use `GET /v1/inventory/search?q=<drug>&category=medicine` to search matching stock items
+- after selection, send `inventoryItemId` in `POST /v1/prescriptions/:id/dispense`
+
+Frontend must not send an empty dispense `items` array.
+
+## Conflict Handling
+
+If frontend tries to save a new walk-in consultation while an active walk-in consultation with an encounter already exists for the same patient, backend now returns:
+
+```json
+{
+  "error": "Active walk-in consultation already exists for this patient. Complete or dispense the current consultation before starting a new one."
+}
+```
+
+Status code:
+- `409 Conflict`
+
 ## Frontend Flow
 
 ### Existing Patient
@@ -92,6 +157,27 @@ Optional:
   - if `true`, backend also creates a `patient_conditions` row
 
 This means frontend does not need a separate manual patient-history save step during the normal doctor workflow.
+
+## Diagnosis And Test Lookup Split
+
+The frontend should treat diagnosis and test search as separate fields:
+
+- Diagnosis field:
+  - use `GET /v1/clinical/diagnoses`
+  - returns normalized diagnosis terminology rows
+- Medical Tests field:
+  - use `GET /v1/clinical/tests`
+  - returns normalized test terminology rows
+  - intended for lab tests and clinical observations
+- Suggested tests:
+  - use `GET /v1/clinical/diagnoses/:code/recommended-tests`
+  - returns backend-curated suggestions after diagnosis selection
+
+Important:
+- frontend should not hardcode test catalogs
+- frontend should not call external terminology vendors directly
+- `/v1/clinical/tests` is provider-backed through backend configuration
+- imaging and procedure catalogs such as X-ray, CT, MRI, or ultrasound should be handled as a separate future terminology source, not mixed into the lab-test field
 
 ## Minor Patient Rule
 

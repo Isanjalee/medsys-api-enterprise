@@ -40,10 +40,10 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.7</div>
-      <div><strong>Date</strong>March 24, 2026</div>
-      <div><strong>Audience</strong>Frontend, BFF, QA, BA, and client delivery teams</div>
-      <div><strong>Scope</strong>Implemented REST contracts, auth behavior, permission model, and integration expectations</div>
+      <div><strong>Version</strong>2.8</div>
+      <div><strong>Date</strong>March 25, 2026</div>
+      <div><strong>Audience</strong>All medical field professionals, technical managers, frontend, QA, BA, and client delivery teams</div>
+      <div><strong>Scope</strong>Implemented REST contracts, workflow behavior, permission model, integration expectations, and current handover-ready implementation state</div>
     </div>
     <div class="foot">This document describes the current implemented backend behavior and replaces older role-only guidance for UI authorization decisions.</div>
   </section>
@@ -178,7 +178,7 @@
         <tr><td>Encounters</td><td><span class="mono">/v1/encounters</span></td><td><span class="mono">encounter.read</span>, <span class="mono">encounter.write</span></td><td>Doctor base permissions already cover clinical encounter authoring.</td></tr>
         <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td><span class="mono">prescription.read</span>, <span class="mono">prescription.dispense</span></td><td>Doctors can access the pending dispense queue and complete dispense workflow under the default doctor permission set.</td></tr>
         <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td><span class="mono">inventory.read</span>, <span class="mono">inventory.write</span></td><td>Mutation routes are permission-checked; selected doctors can inherit inventory write access.</td></tr>
-        <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical</span></td><td><span class="mono">clinical.icd10.read</span></td><td>Reference read flows for ICD-10 search.</td></tr>
+        <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical</span></td><td><span class="mono">clinical.icd10.read</span></td><td>Reference read flows for normalized diagnosis search, test search, curated recommended tests, and backward-compatible ICD-10 search.</td></tr>
         <tr><td>Analytics</td><td><span class="mono">/v1/analytics</span></td><td><span class="mono">analytics.read</span></td><td>Operational dashboards and cache metrics.</td></tr>
         <tr><td>Audit</td><td><span class="mono">/v1/audit</span></td><td><span class="mono">audit.read</span></td><td>Reserved for users with audit visibility, typically owners.</td></tr>
         <tr><td>Search</td><td><span class="mono">/v1/search</span></td><td><span class="mono">patient.read</span></td><td>Patient search surface with accelerated and fallback behavior.</td></tr>
@@ -217,10 +217,14 @@
       <li>Expect a doctor with assistant-support permissions to remain <span class="mono">role = doctor</span>.</li>
       <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor fast-selection by patient/guardian identity (returns <code>patient_code</code>, <code>nic</code>, <code>gender</code>), and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
       <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
-      <li>For the doctor screen, prefer <span class="mono">POST /v1/consultations/save</span> as the one-button workflow endpoint. Send <span class="mono">patientId</span> for an existing patient or <span class="mono">patientDraft</span> for inline quick-create.</li>
+      <li>For the doctor screen, prefer <span class="mono">POST /v1/consultations/save</span> as the one-button workflow endpoint. Use <span class="mono">workflowType = walk_in</span> for direct doctor flow and <span class="mono">workflowType = appointment</span> when saving against an existing appointment. Send <span class="mono">patientId</span> for an existing patient or <span class="mono">patientDraft</span> for inline quick-create in walk-in mode.</li>
       <li>Use <span class="mono">patientDraft.name</span> plus <span class="mono">patientDraft.dateOfBirth</span> as the minimum quick-create fields. Treat date of birth as canonical and use age only as an optional helper.</li>
       <li>For minors without a patient NIC, send guardian details in the same consultation request. If <span class="mono">guardianNic</span> matches an existing patient, backend will auto-link the guardian and inherit family linkage when possible. If frontend has enough guardian demographics to create a real guardian patient, send <span class="mono">guardianDraft</span>.</li>
       <li>Use <span class="mono">clinicalSummary</span> when the doctor wants a narrative clinical note in patient history. Use <span class="mono">persistAsCondition = true</span> on a diagnosis row only when it should become part of the patient's long-term condition list.</li>
+      <li>Use <span class="mono">GET /v1/clinical/diagnoses</span> for diagnosis autocomplete, <span class="mono">GET /v1/clinical/tests</span> for test autocomplete, and <span class="mono">GET /v1/clinical/diagnoses/:code/recommended-tests</span> for backend-owned suggested tests. Frontend should not call external terminology vendors directly.</li>
+      <li><span class="mono">GET /v1/clinical/tests</span> is backed by configured terminology providers and currently defaults to the public NLM Clinical Tables LOINC search endpoint. It is intended for lab tests and clinical observations, not as the final catalog for imaging procedures such as X-ray, CT, MRI, or ultrasound.</li>
+      <li>Prescription items now behave differently by <span class="mono">source</span>: <span class="mono">clinical</span> items drive internal dispense workflow, while <span class="mono">outside</span> items stay on the prescription and history only. Use <span class="mono">workflow_status</span>, <span class="mono">dispense_status</span>, <span class="mono">clinical_item_count</span>, and <span class="mono">outside_item_count</span> from consultation save responses to decide whether assistant handoff is required.</li>
+      <li>Use <span class="mono">GET /v1/prescriptions/queue/pending-dispense</span> for assistant handoff rows and <span class="mono">GET /v1/inventory/search?q=...&amp;category=medicine</span> when a queued clinical item still needs stock matching before final dispense.</li>
       <li>For small walk-in clinics using older resource-level orchestration, <span class="mono">POST /v1/visits/start</span> remains valid. For larger centers with receptionist-led scheduling, keep using <span class="mono">POST /v1/appointments</span> and the waiting queue.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
     </ol>
@@ -232,8 +236,9 @@
       <li>Doctor searches patient using <span class="mono">GET /v1/search/patients</span> by code, NIC, phone, or name.</li>
       <li>If the patient exists, frontend sends <span class="mono">POST /v1/consultations/save</span> with <span class="mono">patientId</span>.</li>
       <li>If the patient does not exist, frontend stays on the same screen and sends <span class="mono">POST /v1/consultations/save</span> with <span class="mono">patientDraft</span>.</li>
-      <li>The same consultation request can carry diagnoses, tests, notes, vitals, prescription items, allergies, and an optional <span class="mono">clinicalSummary</span>.</li>
+      <li>The same consultation request can carry diagnoses, tests, notes, vitals, prescription items, allergies, and an optional <span class="mono">clinicalSummary</span>. Walk-in mode can also send <span class="mono">dispense.mode = doctor_direct</span> to record immediate dispense; otherwise prescriptions remain pending for the dispense queue.</li>
       <li>The backend creates or resolves the patient, reuses an existing active visit in <span class="mono">waiting</span> or <span class="mono">in_consultation</span> if present, otherwise creates a new walk-in visit, then saves the encounter atomically.</li>
+      <li>If an active walk-in consultation with an encounter already exists for the patient, backend now returns a clear <span class="mono">409 Conflict</span> response instead of failing with a generic server error.</li>
       <li>The backend also creates a patient timeline event automatically, optionally stores <span class="mono">clinicalSummary</span> as a narrative history entry, and promotes any diagnosis marked with <span class="mono">persistAsCondition = true</span> into long-term patient conditions.</li>
       <li>For minor patients without a patient NIC, guardian details are part of the same workflow, guardian NIC can auto-link an existing guardian patient record, and <span class="mono">guardianDraft</span> can be used when frontend wants backend to create the guardian patient and family linkage immediately.</li>
       <li>If dispensing inside the clinic, doctor optionally completes the dispense workflow directly after consultation save.</li>
@@ -242,7 +247,7 @@
     <ol>
       <li>Assistant or scheduling staff creates the appointment using <span class="mono">POST /v1/appointments</span> with the required visit metadata such as <span class="mono">scheduledAt</span> and optional <span class="mono">priority</span>.</li>
       <li>Doctor works from the waiting queue and selects the queued patient.</li>
-      <li>Doctor can use <span class="mono">POST /v1/consultations/save</span> as the one-button clinical save flow, or continue using the resource-level visit and encounter routes where needed.</li>
+      <li>Doctor can use <span class="mono">POST /v1/consultations/save</span> as the one-button clinical save flow. Appointment mode returns a doctor-finished workflow outcome, while walk-in mode can end as dispense-ready or fully completed depending on the dispense block.</li>
       <li>The same patient, visit, encounter, and dispense APIs remain available across both operating modes.</li>
     </ol>
 
@@ -251,7 +256,7 @@
       <li>Repository implementation state as of March 24, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
       <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, consultation workflow orchestration, fixed typed vitals workflows, and current database constraints through Flyway V10.</li>
-      <li>Verified automated backend suite status of 65 passing API tests and 6 passing worker tests.</li>
+      <li>Verified automated backend suite status of 75 passing API tests and 6 passing worker tests.</li>
     </ul>
     <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 24, 2026.</div>
   </section>
