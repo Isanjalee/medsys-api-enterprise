@@ -78,6 +78,7 @@ npm run dev -w @medsys/worker
 - `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/register`, `/v1/auth/me`, `/v1/auth/status`
 - `/v1/users`
 - `/v1/clinical/icd10`
+- `/v1/clinical/diagnoses`, `/v1/clinical/tests`, `/v1/clinical/diagnoses/:code/recommended-tests`
 - `/v1/search/patients`
 - `/v1/patients`, `/v1/patients/:id`, `/v1/patients/:id/history`, `/v1/patients/:id/profile`
 - `/v1/patients/:id/family`, `/v1/patients/:id/allergies`, `/v1/patients/:id/conditions`
@@ -127,12 +128,29 @@ npm run dev -w @medsys/worker
   - backend creates the encounter and initial vitals in one workflow
   - if `vitals.recordedAt` is omitted, backend defaults it to `checkedAt`
 - `POST /v1/consultations/save` is the doctor-facing orchestration route:
+  - `workflowType` supports `walk_in` and `appointment`
+  - `appointment` mode requires `appointmentId` plus `patientId`
+  - `walk_in` mode accepts `patientId` or `patientDraft`
+  - optional `dispense.mode` supports `assistant_queue` and `doctor_direct`
   - send `patientId` for an existing patient or `patientDraft` for a quick-created patient
   - backend creates or resolves the patient, reuses or creates the visit, saves the encounter, and optionally persists diagnoses, tests, vitals, prescription items, and allergies
   - backend always creates a patient timeline event for the completed consultation
   - `clinicalSummary` optionally writes a narrative entry to patient history
   - diagnosis rows with `persistAsCondition: true` are also stored in long-term patient conditions
   - `guardianDraft` can be sent for minor flows when frontend wants backend to create a real guardian patient and family linkage in the same save
+  - prescription items are operationally split by `source`:
+    - `clinical` items drive dispense queue and completion state
+    - `outside` items stay on prescription print/history only
+  - response now includes `workflow_type`, `workflow_status`, `dispense_status`, `doctor_direct_dispense`, `clinical_item_count`, and `outside_item_count`
+- `GET /v1/prescriptions/queue/pending-dispense` now returns an assistant-facing queue payload with patient context, diagnosis summary, and only clinic-dispensable prescription items
+- `GET /v1/inventory/search?q=...&category=medicine` supports assistant stock matching when queue items still need inventory resolution before dispense
+- `GET /v1/clinical/diagnoses` is the normalized diagnosis lookup endpoint:
+  - returns `{ code, codeSystem, display }` objects for frontend autocomplete
+- `GET /v1/clinical/tests` is the normalized clinical test lookup endpoint:
+  - returns `{ code, codeSystem, display, category }` objects for frontend autocomplete
+  - uses provider-backed terminology search via `LOINC_API_BASE_URL`; default is the public NLM Clinical Tables LOINC search endpoint
+  - intended for lab tests and clinical observations, not as the final source for imaging procedures such as X-ray, CT, MRI, or ultrasound
+- `GET /v1/clinical/diagnoses/:code/recommended-tests` returns curated backend-owned recommended tests for a selected diagnosis code
 - `patientDraft` follows the frontend patient payload style:
   - minimum fields are `name` and `dateOfBirth`
   - use `dateOfBirth` as the canonical identity field; `age` is optional validation help only
@@ -155,6 +173,7 @@ For clinics operating without an assistant, the doctor workflow natively support
   - if found, call `POST /v1/consultations/save` with `patientId`
   - if not found, call `POST /v1/consultations/save` with `patientDraft`
   - backend reuses or creates the live visit record and persists the encounter in one transaction
+  - if an active walk-in consultation with an encounter already exists, backend now returns `409` with a clear conflict message instead of failing at the DB layer
 - Appointment-first center mode:
   - assistant or scheduling flow creates appointment via `POST /v1/appointments`
   - doctor works from the waiting queue
@@ -206,6 +225,7 @@ For clinics operating without an assistant, the doctor workflow natively support
 - The editable doctor workflow handoff is maintained in [docs/CONSULTATION_WORKFLOW.md](d:/Projects/MEDLINK/Medsys-Backend-git/medsys-api-enterprise/docs/CONSULTATION_WORKFLOW.md).
 - `patient_history_entries` is introduced in `V5__add_patient_history.sql` for note-based patient history separate from timeline events.
 - ICD-10 suggestions are served by `/v1/clinical/icd10`, which currently adapts the NLM Clinical Tables ICD-10-CM API via `ICD10_API_BASE_URL`.
+- Clinical test suggestions are served by `/v1/clinical/tests`, which currently adapts a provider-backed LOINC search via `LOINC_API_BASE_URL`; the default configuration uses the public NLM Clinical Tables LOINC endpoint.
 - Patient search supports OpenSearch-backed fuzzy lookup when `OPENSEARCH_URL` is configured; otherwise it falls back to DB search.
 - Cache stats are available via `/v1/analytics/cache` for the `appointmentQueue` and `patientProfile` namespaces.
 - Observability snapshots are available via `/v1/analytics/observability`.
