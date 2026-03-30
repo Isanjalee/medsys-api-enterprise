@@ -358,6 +358,7 @@ const saveConsultationSuccessResponseSchema = {
     "patient",
     "patient_created",
     "visit",
+    "appointment_id",
     "encounter_id",
     "prescription_id",
     "vital",
@@ -389,6 +390,7 @@ const saveConsultationSuccessResponseSchema = {
         priority: { type: "string", enum: ["low", "normal", "high", "critical"] }
       }
     },
+    appointment_id: { type: "integer", nullable: true },
     encounter_id: { type: "integer" },
     prescription_id: { type: "integer", nullable: true },
     vital: {
@@ -1293,6 +1295,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           reason: result.visit.reason,
           priority: result.visit.priority
         },
+        appointment_id: result.workflowType === "appointment" ? result.visit.id : null,
         encounter_id: result.encounterId,
         prescription_id: result.prescriptionId,
         vital: result.vital ? serializePatientVital(result.vital) : null,
