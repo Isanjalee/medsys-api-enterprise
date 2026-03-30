@@ -1,4 +1,4 @@
-import type { Permission } from "@medsys/types";
+import type { DoctorWorkflowMode, Permission } from "@medsys/types";
 import { buildDisplayName } from "./names.js";
 
 export type AuthUserRow = {
@@ -7,6 +7,7 @@ export type AuthUserRow = {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  doctorWorkflowMode: DoctorWorkflowMode | null;
   permissions: Permission[];
   extraPermissions: Permission[];
   createdAt?: Date;
@@ -59,6 +60,7 @@ export const serializeAuthUser = (row: AuthUserRow) => ({
   name: buildDisplayName(row.firstName, row.lastName),
   email: row.email,
   role: row.role,
+  doctor_workflow_mode: row.doctorWorkflowMode,
   permissions: row.permissions,
   extra_permissions: row.extraPermissions,
   ...(row.createdAt ? { created_at: row.createdAt } : {})
