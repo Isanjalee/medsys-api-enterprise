@@ -111,13 +111,14 @@
         <tr><td><span class="mono">first_name</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required given name.</td></tr>
         <tr><td><span class="mono">last_name</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required surname.</td></tr>
         <tr><td><span class="mono">role</span></td><td>user_role</td><td>Yes</td><td>None</td><td>Enum constrained.</td></tr>
+        <tr><td><span class="mono">doctor_workflow_mode</span></td><td>doctor_workflow_mode</td><td>No</td><td>None</td><td>Explicit doctor business-mode identity. Set for doctor users and added in <span class="mono">V11</span>.</td></tr>
         <tr><td><span class="mono">extra_permissions</span></td><td>JSONB</td><td>Yes</td><td><span class="mono">'[]'::jsonb</span></td><td>Stores per-user permission overrides; added in <span class="mono">V9</span>.</td></tr>
         <tr><td><span class="mono">is_active</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">TRUE</span></td><td>Operational active flag.</td></tr>
         <tr><td><span class="mono">created_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Creation timestamp.</td></tr>
         <tr><td><span class="mono">updated_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Update timestamp.</td></tr>
       </tbody>
     </table>
-    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">uuid</span>; unique on <span class="mono">(organization_id, email)</span>. <strong>Notes:</strong> <span class="mono">extra_permissions</span> is a required JSONB array column with an empty-array default after <span class="mono">V9</span>.</p>
+    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">uuid</span>; unique on <span class="mono">(organization_id, email)</span>. <strong>Notes:</strong> <span class="mono">extra_permissions</span> is a required JSONB array column with an empty-array default after <span class="mono">V9</span>, and <span class="mono">doctor_workflow_mode</span> was added in <span class="mono">V11</span> so frontend clients can identify doctor workflow identity directly.</p>
 
     <h3>5.2 refresh_tokens</h3>
     <table class="small">
@@ -514,6 +515,7 @@
       <li><span class="mono">infra/flyway/sql/V7__enforce_patient_required_fields.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V8__seed_additional_patients.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V9__add_user_extra_permissions.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V11__add_doctor_workflow_mode.sql</span></li>
     </ul>
 
     <div class="foot">This dictionary is intended for review, onboarding, QA, and client walkthroughs. When the schema changes, update this document alongside the relevant Flyway migration.</div>

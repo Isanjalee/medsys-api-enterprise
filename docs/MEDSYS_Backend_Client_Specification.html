@@ -77,6 +77,7 @@
       <tbody>
         <tr><td><strong>role</strong></td><td>Primary user identity such as <span class="mono">owner</span>, <span class="mono">doctor</span>, or <span class="mono">assistant</span>.</td><td>Use for labeling workspace identity and user-management summaries, not as the only authorization source.</td></tr>
         <tr><td><strong>permissions</strong></td><td>Effective allowed actions for the current user.</td><td>Use this array to decide which screens, buttons, and flows should be available.</td></tr>
+        <tr><td><strong>doctor_workflow_mode</strong></td><td>Explicit doctor business-mode identity: <span class="mono">self_service</span> or <span class="mono">clinic_supported</span>. Returns <span class="mono">null</span> for non-doctor users.</td><td>Use this field to decide which doctor workflow UI to show. Do not infer doctor mode from extra permissions.</td></tr>
         <tr><td><strong>extra_permissions</strong></td><td>Per-user permission overrides stored on the user account. These are currently supported for selected doctor accounts only.</td><td>Useful for admin views and auditability, but UI authorization should still rely on the resolved <span class="mono">permissions</span> array.</td></tr>
       </tbody>
     </table>
@@ -102,7 +103,7 @@
         <tr><th style="width:24%">Endpoint</th><th style="width:26%">Purpose</th><th>Contract Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td><span class="mono">POST /v1/auth/login</span></td><td>Authenticate and issue tokens</td><td>Returns <span class="mono">accessToken</span>, <span class="mono">refreshToken</span>, <span class="mono">expiresIn</span>, and a <span class="mono">user</span> object that includes <span class="mono">role</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
+        <tr><td><span class="mono">POST /v1/auth/login</span></td><td>Authenticate and issue tokens</td><td>Returns <span class="mono">accessToken</span>, <span class="mono">refreshToken</span>, <span class="mono">expiresIn</span>, and a <span class="mono">user</span> object that includes <span class="mono">role</span>, <span class="mono">doctor_workflow_mode</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
         <tr><td><span class="mono">POST /v1/auth/refresh</span></td><td>Rotate refresh token</td><td>Use when the access token expires. The refreshed response also returns the current permission set.</td></tr>
         <tr><td><span class="mono">GET /v1/auth/me</span></td><td>Load current session profile</td><td>Frontend should call this after app bootstrap or session restore and treat it as the source of truth for permissions.</td></tr>
         <tr><td><span class="mono">POST /v1/auth/logout</span></td><td>Revoke active refresh tokens</td><td>Authenticated route.</td></tr>
@@ -121,6 +122,7 @@
     "name": "Support Doctor",
     "email": "doctor-support@example.com",
     "role": "doctor",
+    "doctor_workflow_mode": "clinic_supported",
     "permissions": [
       "appointment.read",
       "appointment.create",
@@ -148,20 +150,21 @@
         <tr><th style="width:26%">Endpoint</th><th style="width:24%">Purpose</th><th>Contract Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td><span class="mono">GET /v1/users</span></td><td>List users</td><td>Returns each user with <span class="mono">role</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
-        <tr><td><span class="mono">POST /v1/users</span></td><td>Create user</td><td>Supports both frontend-style <span class="mono">name</span> payloads and direct API <span class="mono">firstName/lastName</span> payloads. Owners can create a doctor with allowed optional extra permissions such as <span class="mono">inventory.write</span> or <span class="mono">family.write</span>.</td></tr>
-        <tr><td><span class="mono">PATCH /v1/users/:id</span></td><td>Update activation or extra permissions</td><td>Used by owners to activate or deactivate users and to grant or clear the remaining allowed doctor extra-permission subset.</td></tr>
+        <tr><td><span class="mono">GET /v1/users</span></td><td>List users</td><td>Returns each user with <span class="mono">role</span>, <span class="mono">doctor_workflow_mode</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
+        <tr><td><span class="mono">POST /v1/users</span></td><td>Create user</td><td>Supports both frontend-style <span class="mono">name</span> payloads and direct API <span class="mono">firstName/lastName</span> payloads. Owners can create a doctor with explicit <span class="mono">doctorWorkflowMode</span> plus allowed optional extra permissions such as <span class="mono">inventory.write</span> or <span class="mono">family.write</span>.</td></tr>
+        <tr><td><span class="mono">PATCH /v1/users/:id</span></td><td>Update activation, doctor workflow mode, or extra permissions</td><td>Used by owners to activate or deactivate users and to manage the allowed doctor workflow identity and remaining extra-permission subset.</td></tr>
       </tbody>
     </table>
 
     <h3>5.1 Example Permission Assignment</h3>
     <pre>{
+  "doctorWorkflowMode": "clinic_supported",
   "extraPermissions": [
     "inventory.write",
     "family.write"
   ]
 }</pre>
-    <p>Only valid permission names are accepted. Unsupported permission names or owner-only permissions are rejected by the backend.</p>
+    <p>Only doctor users can receive <span class="mono">doctorWorkflowMode</span>, and only valid permission names are accepted. Unsupported permission names or owner-only permissions are rejected by the backend.</p>
   </section>
 
   <section class="page">
@@ -223,7 +226,8 @@
       <li>Use <span class="mono">clinicalSummary</span> when the doctor wants a narrative clinical note in patient history. Use <span class="mono">persistAsCondition = true</span> on a diagnosis row only when it should become part of the patient's long-term condition list.</li>
       <li>Use <span class="mono">GET /v1/clinical/diagnoses</span> for diagnosis autocomplete, <span class="mono">GET /v1/clinical/tests</span> for test autocomplete, and <span class="mono">GET /v1/clinical/diagnoses/:code/recommended-tests</span> for backend-owned suggested tests. Frontend should not call external terminology vendors directly.</li>
       <li><span class="mono">GET /v1/clinical/tests</span> is backed by configured terminology providers and currently defaults to the public NLM Clinical Tables LOINC search endpoint. It is intended for lab tests and clinical observations, not as the final catalog for imaging procedures such as X-ray, CT, MRI, or ultrasound.</li>
-      <li>Prescription items now behave differently by <span class="mono">source</span>: <span class="mono">clinical</span> items drive internal dispense workflow, while <span class="mono">outside</span> items stay on the prescription and history only. Use <span class="mono">workflow_status</span>, <span class="mono">dispense_status</span>, <span class="mono">clinical_item_count</span>, and <span class="mono">outside_item_count</span> from consultation save responses to decide whether assistant handoff is required.</li>
+      <li>Prescription items now behave differently by <span class="mono">source</span>: <span class="mono">clinical</span> items drive internal dispense workflow, while <span class="mono">outside</span> items stay on the prescription and history only. Use <span class="mono">workflow_type</span>, <span class="mono">appointment_id</span>, <span class="mono">workflow_status</span>, <span class="mono">dispense_status</span>, <span class="mono">clinical_item_count</span>, and <span class="mono">outside_item_count</span> from consultation save responses to decide whether assistant handoff is required.</li>
+      <li><span class="mono">GET /v1/appointments?status=waiting</span> now returns queue rows in backend-controlled FIFO order and includes an explicit <span class="mono">queuePosition</span> field. Frontend should use that value for queue numbering instead of deriving numbers from array index.</li>
       <li>Use <span class="mono">GET /v1/prescriptions/queue/pending-dispense</span> for assistant handoff rows and <span class="mono">GET /v1/inventory/search?q=...&amp;category=medicine</span> when a queued clinical item still needs stock matching before final dispense.</li>
       <li>For small walk-in clinics using older resource-level orchestration, <span class="mono">POST /v1/visits/start</span> remains valid. For larger centers with receptionist-led scheduling, keep using <span class="mono">POST /v1/appointments</span> and the waiting queue.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
@@ -246,8 +250,8 @@
     <h3>9.2 Appointment-First Center Flow</h3>
     <ol>
       <li>Assistant or scheduling staff creates the appointment using <span class="mono">POST /v1/appointments</span> with the required visit metadata such as <span class="mono">scheduledAt</span> and optional <span class="mono">priority</span>.</li>
-      <li>Doctor works from the waiting queue and selects the queued patient.</li>
-      <li>Doctor can use <span class="mono">POST /v1/consultations/save</span> as the one-button clinical save flow. Appointment mode returns a doctor-finished workflow outcome, while walk-in mode can end as dispense-ready or fully completed depending on the dispense block.</li>
+      <li>Doctor works from the waiting queue and selects the queued patient. Queue numbering should follow the backend-provided <span class="mono">queuePosition</span> value.</li>
+      <li>Doctor can use <span class="mono">POST /v1/consultations/save</span> as the one-button clinical save flow. Appointment mode returns <span class="mono">workflow_type = appointment</span> plus <span class="mono">appointment_id</span>, while walk-in mode returns <span class="mono">workflow_type = walk_in</span> and <span class="mono">appointment_id = null</span>.</li>
       <li>The same patient, visit, encounter, and dispense APIs remain available across both operating modes.</li>
     </ol>
 

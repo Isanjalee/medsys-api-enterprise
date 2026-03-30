@@ -75,7 +75,8 @@ const createUserBodySchema = {
     name: "Jane Doe",
     email: "doctor@example.com",
     password: "strong-pass-123",
-    role: "doctor"
+    role: "doctor",
+    doctorWorkflowMode: "self_service"
   }
 } as const;
 
@@ -93,6 +94,11 @@ const updateUserBodySchema = {
       nullable: true
     },
     isActive: { type: "boolean" }
+  },
+  example: {
+    doctorWorkflowMode: "clinic_supported",
+    extraPermissions: ["inventory.write"],
+    isActive: true
   }
 } as const;
 
@@ -133,7 +139,8 @@ const userRoutes: FastifyPluginAsync = async (app) => {
             name: "Jane Doe",
             email: "doctor@example.com",
             password: "strong-pass-123",
-            role: "doctor"
+            role: "doctor",
+            doctorWorkflowMode: "self_service"
           }
         },
         backend: {
@@ -143,7 +150,8 @@ const userRoutes: FastifyPluginAsync = async (app) => {
             lastName: "Doe",
             email: "doctor@example.com",
             password: "strong-pass-123",
-            role: "doctor"
+            role: "doctor",
+            doctorWorkflowMode: "self_service"
           }
         },
         doctorWithAssistantSupport: {
@@ -251,7 +259,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
               extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
-        : parseOrThrowValidation(createUserSchema.strict(), request.body);
+        : parseOrThrowValidation(createUserSchema, request.body);
       const payload = {
         ...parsedPayload,
         doctorWorkflowMode: resolveDoctorWorkflowMode(parsedPayload.role, parsedPayload.doctorWorkflowMode),

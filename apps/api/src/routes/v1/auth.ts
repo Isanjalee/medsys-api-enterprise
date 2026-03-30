@@ -314,6 +314,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
+        doctorWorkflowMode: users.doctorWorkflowMode,
         extraPermissions: users.extraPermissions,
         createdAt: users.createdAt,
         isActive: users.isActive
@@ -387,7 +388,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
-        : parseOrThrowValidation(createUserSchema.strict(), request.body);
+        : parseOrThrowValidation(createUserSchema, request.body);
       const payload = {
         ...parsedPayload,
         doctorWorkflowMode: resolveDoctorWorkflowMode(parsedPayload.role, parsedPayload.doctorWorkflowMode),

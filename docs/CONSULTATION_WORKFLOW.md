@@ -61,6 +61,13 @@ Dispense response flags:
 - `dispense_status = pending` when a prescription exists but still waits for dispense
 - `dispense_status = completed` when doctor direct dispense is recorded during consultation save
 
+Response alignment fields:
+
+- backend returns `workflow_type` as exactly `appointment` or `walk_in`
+- backend returns `appointment_id` for appointment saves
+- backend returns `appointment_id = null` for walk-in saves
+- frontend should use returned `workflow_type` and `appointment_id` after save instead of inferring mode from stale local state
+
 ## Prescription Source Rules
 
 Prescription items are operationally split by `source`:
@@ -82,6 +89,8 @@ This means mixed prescriptions are saved fully, but only `clinical` items drive 
 
 Pending queue payload is for assistant workflow:
 
+- use `GET /v1/appointments?status=waiting` to render waiting appointments in backend FIFO order
+- waiting appointments now include `queuePosition` for explicit `#1`, `#2`, `#3` numbering
 - use `GET /v1/prescriptions/queue/pending-dispense` to render queue rows
 - queue rows now include only clinic-dispensable `clinical` items
 - if an item still has `inventoryItemId = null`, frontend must resolve stock before dispense
@@ -120,6 +129,30 @@ Status code:
 4. Frontend sends one `POST /v1/consultations/save` request with `patientDraft`.
 
 The doctor should not be redirected into a separate patient registration loop.
+
+## Consultation Save Response Examples
+
+Appointment mode:
+
+```json
+{
+  "workflow_type": "appointment",
+  "appointment_id": 123,
+  "workflow_status": "doctor_completed",
+  "dispense_status": "pending"
+}
+```
+
+Walk-in mode:
+
+```json
+{
+  "workflow_type": "walk_in",
+  "appointment_id": null,
+  "workflow_status": "completed",
+  "dispense_status": "completed"
+}
+```
 
 ## Minimum Patient Draft Fields
 
@@ -393,13 +426,18 @@ The endpoint returns:
 - `patient`
 - `patient_created`
 - `visit`
+- `appointment_id`
 - `encounter_id`
 - `prescription_id`
 - `vital`
+- `workflow_type`
+- `workflow_status`
+- `dispense_status`
 
 Frontend can use this to:
 - show success state
 - update selected patient context
+- align appointment-vs-walk-in UI state after save
 - navigate to encounter detail
 - open prescription detail if needed
 
