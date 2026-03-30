@@ -270,6 +270,67 @@ test("waiting appointment queue uses cache and invalidates on update", async () 
   await app.close();
 });
 
+test("waiting appointment queue returns FIFO order with explicit queue positions", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const patientOneId = await createPatientAs(app, ownerLogin.accessToken, `Queue Order ${Date.now()} Patient A`);
+  const patientTwoId = await createPatientAs(app, ownerLogin.accessToken, `Queue Order ${Date.now()} Patient B`);
+
+  const firstCreateResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId: patientOneId,
+      scheduledAt: "2026-03-15T09:30:00Z",
+      priority: "normal"
+    }
+  });
+  assert.equal(firstCreateResponse.statusCode, 201);
+  const firstAppointmentId = (firstCreateResponse.json() as { id: number }).id;
+
+  const secondCreateResponse = await app.inject({
+    method: "POST",
+    url: "/v1/appointments",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      patientId: patientTwoId,
+      scheduledAt: "2026-03-15T10:00:00Z",
+      priority: "normal"
+    }
+  });
+  assert.equal(secondCreateResponse.statusCode, 201);
+  const secondAppointmentId = (secondCreateResponse.json() as { id: number }).id;
+
+  const queueResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments?status=waiting",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(queueResponse.statusCode, 200);
+  const queueRows = queueResponse.json() as Array<{ id: number; queuePosition: number; scheduledAt: string }>;
+  const relevantRows = queueRows.filter((row) => row.id === firstAppointmentId || row.id === secondAppointmentId);
+
+  assert.equal(relevantRows.length, 2);
+  assert.equal(relevantRows[0].id, firstAppointmentId);
+  assert.equal(relevantRows[0].queuePosition, 1);
+  assert.equal(relevantRows[1].id, secondAppointmentId);
+  assert.equal(relevantRows[1].queuePosition, 2);
+
+  await app.close();
+});
+
 test("patient search supports paginated lookup", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -650,10 +711,12 @@ test("doctor natively has patient and appointment creation permissions", async (
   assert.equal(meResponse.statusCode, 200);
   const meBody = meResponse.json() as {
     role: string;
+    doctor_workflow_mode: string | null;
     permissions: string[];
     extra_permissions: string[];
   };
   assert.equal(meBody.role, "doctor");
+  assert.equal(meBody.doctor_workflow_mode, "self_service");
   assert.equal(meBody.permissions.includes("patient.write"), true);
   assert.equal(meBody.permissions.includes("appointment.create"), true);
   assert.equal(meBody.permissions.includes("prescription.dispense"), true);
@@ -1178,9 +1241,10 @@ test("owner can register and list users after bootstrap", async () => {
 
   assert.equal(registerResponse.statusCode, 201);
   const registerBody = registerResponse.json() as {
-    user: { id: number; email: string; role: string; name: string; created_at: string };
+    user: { id: number; email: string; role: string; name: string; created_at: string; doctor_workflow_mode: string | null };
   };
   assert.equal(registerBody.user.role, "doctor");
+  assert.equal(registerBody.user.doctor_workflow_mode, "self_service");
   assert.equal(registerBody.user.email, `contract-user-${uniqueSuffix}@medsys.local`);
   assert.equal(registerBody.user.name, `Contract User${uniqueSuffix}`);
   assert.equal(typeof registerBody.user.id, "number");
@@ -1965,6 +2029,67 @@ test("assistant cannot assign extra permissions to users", async () => {
   await app.close();
 });
 
+test("owner can create and update a clinic-supported doctor workflow mode", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Clinic",
+      lastName: `Doctor${uniqueSuffix}`,
+      email: `clinic-doctor-${uniqueSuffix}@medsys.local`,
+      password: "strong-pass-123",
+      role: "doctor",
+      doctorWorkflowMode: "clinic_supported",
+      extraPermissions: ["inventory.write"]
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const createdBody = createResponse.json() as {
+    user: {
+      id: number;
+      role: string;
+      doctor_workflow_mode: string | null;
+      extra_permissions: string[];
+    };
+  };
+  assert.equal(createdBody.user.role, "doctor");
+  assert.equal(createdBody.user.doctor_workflow_mode, "clinic_supported");
+  assert.deepEqual(createdBody.user.extra_permissions, ["inventory.write"]);
+
+  const updateResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/users/${createdBody.user.id}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      doctorWorkflowMode: "self_service"
+    }
+  });
+
+  assert.equal(updateResponse.statusCode, 200);
+  const updatedBody = updateResponse.json() as {
+    user: {
+      doctor_workflow_mode: string | null;
+    };
+  };
+  assert.equal(updatedBody.user.doctor_workflow_mode, "self_service");
+
+  await app.close();
+});
+
 test("owner cannot grant owner-only permissions as extra doctor permissions", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -1995,6 +2120,45 @@ test("owner cannot grant owner-only permissions as extra doctor permissions", as
       }
     ]
   });
+  await app.close();
+});
+
+test("non-doctor users cannot receive doctor workflow mode", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Assistant",
+      lastName: `Mode${uniqueSuffix}`,
+      email: `assistant-mode-${uniqueSuffix}@medsys.local`,
+      password: "strong-pass-123",
+      role: "assistant",
+      doctorWorkflowMode: "clinic_supported"
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    error: "Validation failed.",
+    issues: [
+      {
+        field: "doctorWorkflowMode",
+        message: "doctorWorkflowMode is only allowed for doctor users."
+      }
+    ]
+  });
+
   await app.close();
 });
 
@@ -3235,6 +3399,7 @@ test("consultation workflow supports appointment mode with doctor-completed outc
   const consultationBody = consultationResponse.json() as {
     patient_created: boolean;
     visit: { id: number; status: string };
+    appointment_id: number | null;
     prescription_id: number | null;
     workflow_type: string;
     workflow_status: string;
@@ -3243,6 +3408,7 @@ test("consultation workflow supports appointment mode with doctor-completed outc
   };
   assert.equal(consultationBody.patient_created, false);
   assert.equal(consultationBody.visit.id, appointment.id);
+  assert.equal(consultationBody.appointment_id, appointment.id);
   assert.equal(consultationBody.visit.status, "in_consultation");
   assert.equal(consultationBody.workflow_type, "appointment");
   assert.equal(consultationBody.workflow_status, "doctor_completed");
@@ -3691,11 +3857,13 @@ test("consultation workflow supports walk-in doctor direct dispense completion",
   assert.equal(consultationResponse.statusCode, 201);
   const consultationBody = consultationResponse.json() as {
     prescription_id: number | null;
+    appointment_id: number | null;
     workflow_type: string;
     workflow_status: string;
     dispense_status: string;
     doctor_direct_dispense: boolean;
   };
+  assert.equal(consultationBody.appointment_id, null);
   assert.equal(consultationBody.workflow_type, "walk_in");
   assert.equal(consultationBody.workflow_status, "completed");
   assert.equal(consultationBody.dispense_status, "completed");
@@ -3956,6 +4124,7 @@ test("auth me returns authenticated identity shape", async () => {
     name: string;
     email: string;
     role: string;
+    doctor_workflow_mode: string | null;
     permissions: string[];
     extra_permissions: string[];
     created_at: string;
@@ -3964,6 +4133,7 @@ test("auth me returns authenticated identity shape", async () => {
   assert.equal(body.name.length > 0, true);
   assert.equal(body.email, "doctor@medsys.local");
   assert.equal(body.role, "doctor");
+  assert.equal(body.doctor_workflow_mode, "self_service");
   assert.equal(body.permissions.includes("appointment.read"), true);
   assert.equal(body.permissions.includes("appointment.create"), true);
   assert.equal(body.permissions.includes("patient.write"), true);
