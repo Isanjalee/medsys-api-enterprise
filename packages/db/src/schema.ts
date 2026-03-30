@@ -22,6 +22,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const userRoleEnum = pgEnum("user_role", ["owner", "doctor", "assistant"]);
+export const doctorWorkflowModeEnum = pgEnum("doctor_workflow_mode", ["self_service", "clinic_supported"]);
 export const genderEnum = pgEnum("gender", ["male", "female", "other"]);
 export const allergySeverityEnum = pgEnum("allergy_severity", ["low", "moderate", "high"]);
 export const appointmentStatusEnum = pgEnum("appointment_status", [
@@ -66,6 +67,7 @@ export const users = pgTable(
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
     role: userRoleEnum("role").notNull(),
+    doctorWorkflowMode: doctorWorkflowModeEnum("doctor_workflow_mode"),
     extraPermissions: jsonb("extra_permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     isActive: boolean("is_active").notNull().default(true),
     ...auditTimestamps
