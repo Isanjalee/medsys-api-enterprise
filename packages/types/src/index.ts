@@ -1,6 +1,9 @@
 export const USER_ROLES = ["owner", "doctor", "assistant"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
+export const DOCTOR_WORKFLOW_MODES = ["self_service", "clinic_supported"] as const;
+export type DoctorWorkflowMode = (typeof DOCTOR_WORKFLOW_MODES)[number];
+
 export const PERMISSIONS = [
   "patient.read",
   "patient.write",
