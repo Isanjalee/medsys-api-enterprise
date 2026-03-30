@@ -16,7 +16,9 @@ import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import {
   assertAssignableExtraPermissions,
+  normalizeStoredDoctorWorkflowMode,
   normalizeStoredExtraPermissions,
+  resolveDoctorWorkflowMode,
   resolveUserPermissions
 } from "../../lib/user-permissions.js";
 
@@ -38,6 +40,7 @@ const createUserBodySchema = {
         email: { type: "string", format: "email", maxLength: 160 },
         password: { type: "string", minLength: 8, maxLength: 128 },
         role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+        doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
         extraPermissions: {
           type: "array",
           items: {
@@ -57,6 +60,7 @@ const createUserBodySchema = {
         email: { type: "string", format: "email", maxLength: 160 },
         password: { type: "string", minLength: 8, maxLength: 128 },
         role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+        doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
         extraPermissions: {
           type: "array",
           items: {
@@ -79,6 +83,7 @@ const updateUserBodySchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
     extraPermissions: {
       type: "array",
       items: {
@@ -97,12 +102,15 @@ const toSerializedCreatedUser = (row: {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  doctorWorkflowMode: unknown;
   extraPermissions: unknown;
   createdAt: Date;
 }) => {
   const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
+  const doctorWorkflowMode = normalizeStoredDoctorWorkflowMode(row.doctorWorkflowMode);
   return serializeCreatedUser({
     ...row,
+    doctorWorkflowMode,
     extraPermissions,
     permissions: resolveUserPermissions(row.role, extraPermissions)
   });
@@ -146,6 +154,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
             email: "doctor-support@example.com",
             password: "strong-pass-123",
             role: "doctor",
+            doctorWorkflowMode: "clinic_supported",
             extraPermissions: ["appointment.create", "prescription.dispense"]
           }
         }
@@ -159,6 +168,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
         grantAssistantSupport: {
           summary: "Grant assistant-support permissions",
           value: {
+            doctorWorkflowMode: "clinic_supported",
             extraPermissions: ["patient.write", "appointment.create", "prescription.dispense"]
           }
         },
@@ -198,6 +208,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         })
@@ -236,12 +247,14 @@ const userRoutes: FastifyPluginAsync = async (app) => {
               email: frontendPayload.email,
               password: frontendPayload.password,
               role: frontendPayload.role,
+              doctorWorkflowMode: frontendPayload.doctorWorkflowMode,
               extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
         : parseOrThrowValidation(createUserSchema.strict(), request.body);
       const payload = {
         ...parsedPayload,
+        doctorWorkflowMode: resolveDoctorWorkflowMode(parsedPayload.role, parsedPayload.doctorWorkflowMode),
         extraPermissions: assertAssignableExtraPermissions(
           parsedPayload.role,
           parsedPayload.extraPermissions ?? []
@@ -264,6 +277,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           firstName: payload.firstName,
           lastName: payload.lastName,
           role: payload.role,
+          doctorWorkflowMode: payload.doctorWorkflowMode,
           extraPermissions: payload.extraPermissions
         })
         .returning({
@@ -272,6 +286,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         });
@@ -309,6 +324,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          doctorWorkflowMode: users.doctorWorkflowMode,
           isActive: users.isActive,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
@@ -318,6 +334,11 @@ const userRoutes: FastifyPluginAsync = async (app) => {
         .limit(1);
       assertOrThrow(existingRows.length === 1, 404, "User not found");
 
+      const nextDoctorWorkflowMode =
+        payload.doctorWorkflowMode === undefined
+          ? normalizeStoredDoctorWorkflowMode(existingRows[0].doctorWorkflowMode)
+          : resolveDoctorWorkflowMode(existingRows[0].role, payload.doctorWorkflowMode);
+
       const nextExtraPermissions =
         payload.extraPermissions === undefined
           ? normalizeStoredExtraPermissions(existingRows[0].extraPermissions)
@@ -326,6 +347,9 @@ const userRoutes: FastifyPluginAsync = async (app) => {
       const patch: Record<string, unknown> = {
         updatedAt: new Date()
       };
+      if (payload.doctorWorkflowMode !== undefined) {
+        patch.doctorWorkflowMode = nextDoctorWorkflowMode;
+      }
       if (payload.extraPermissions !== undefined) {
         patch.extraPermissions = nextExtraPermissions;
       }
@@ -343,6 +367,7 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         });
