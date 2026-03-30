@@ -141,7 +141,8 @@ npm run dev -w @medsys/worker
   - prescription items are operationally split by `source`:
     - `clinical` items drive dispense queue and completion state
     - `outside` items stay on prescription print/history only
-  - response now includes `workflow_type`, `workflow_status`, `dispense_status`, `doctor_direct_dispense`, `clinical_item_count`, and `outside_item_count`
+  - response now includes `workflow_type`, `appointment_id`, `workflow_status`, `dispense_status`, `doctor_direct_dispense`, `clinical_item_count`, and `outside_item_count`
+- `GET /v1/appointments?status=waiting` now returns the waiting queue in backend-controlled FIFO order and includes `queuePosition` for explicit queue numbering
 - `GET /v1/prescriptions/queue/pending-dispense` now returns an assistant-facing queue payload with patient context, diagnosis summary, and only clinic-dispensable prescription items
 - `GET /v1/inventory/search?q=...&category=medicine` supports assistant stock matching when queue items still need inventory resolution before dispense
 - `GET /v1/clinical/diagnoses` is the normalized diagnosis lookup endpoint:
@@ -197,6 +198,7 @@ For clinics operating without an assistant, the doctor workflow natively support
 - JWT access + refresh rotation
 - Refresh-token replay detection with family revocation
 - Role-based access checks (`owner`, `doctor`, `assistant`)
+- explicit `doctor_workflow_mode` identity for doctor accounts (`self_service` or `clinic_supported`)
 - Request ID correlation via `x-request-id`
 - Rate limiting:
   - login: 5/min
