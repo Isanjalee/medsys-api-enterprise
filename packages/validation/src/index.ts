@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const USER_ROLES = ["owner", "doctor", "assistant"] as const;
+const DOCTOR_WORKFLOW_MODES = ["self_service", "clinic_supported"] as const;
 const GENDERS = ["male", "female", "other"] as const;
 const PERMISSIONS = [
   "patient.read",
@@ -48,6 +49,7 @@ const guardianNameSchema = z.string().trim().min(1).max(120);
 const guardianRelationshipSchema = z.string().trim().min(1).max(40);
 
 export const userRoleSchema = z.enum(USER_ROLES);
+export const doctorWorkflowModeSchema = z.enum(DOCTOR_WORKFLOW_MODES);
 export const genderSchema = z.enum(GENDERS);
 export const permissionSchema = z.enum(PERMISSIONS);
 export const appointmentStatusSchema = z.enum(APPOINTMENT_STATUSES);
@@ -248,7 +250,20 @@ export const createUserSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(160),
   password: z.string().min(8).max(128),
   role: userRoleSchema,
+  doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
   extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional()
+}).superRefine((value, ctx) => {
+  if (value.role === "doctor") {
+    return;
+  }
+
+  if (value.doctorWorkflowMode !== undefined && value.doctorWorkflowMode !== null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["doctorWorkflowMode"],
+      message: "doctorWorkflowMode is only allowed for doctor users."
+    });
+  }
 });
 
 export const createUserFrontendSchema = z
@@ -257,18 +272,34 @@ export const createUserFrontendSchema = z
     email: z.string().trim().toLowerCase().email().max(160),
     password: z.string().min(8).max(128),
     role: userRoleSchema,
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
     extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional()
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.role === "doctor") {
+      return;
+    }
+
+    if (value.doctorWorkflowMode !== undefined && value.doctorWorkflowMode !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["doctorWorkflowMode"],
+        message: "doctorWorkflowMode is only allowed for doctor users."
+      });
+    }
+  });
 
 export const updateUserSchema = z
   .object({
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
     extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional().nullable(),
     isActive: z.boolean().optional()
   })
   .strict()
   .refine(
-    (value) => value.extraPermissions !== undefined || value.isActive !== undefined,
+    (value) =>
+      value.doctorWorkflowMode !== undefined || value.extraPermissions !== undefined || value.isActive !== undefined,
     "At least one field must be provided"
   );
 
