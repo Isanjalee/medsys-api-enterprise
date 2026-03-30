@@ -1,9 +1,11 @@
 import {
+  DOCTOR_WORKFLOW_MODES,
   PERMISSIONS,
   canRoleReceiveExtraPermissions,
   isAssistantSupportPermission,
   normalizePermissions,
   resolveEffectivePermissions,
+  type DoctorWorkflowMode,
   type Permission,
   type UserRole
 } from "@medsys/types";
@@ -18,6 +20,35 @@ export const normalizeStoredExtraPermissions = (value: unknown): Permission[] =>
   }
 
   return normalizePermissions(value.filter(isPermission));
+};
+
+export const normalizeStoredDoctorWorkflowMode = (value: unknown): DoctorWorkflowMode | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return DOCTOR_WORKFLOW_MODES.includes(value as DoctorWorkflowMode) ? (value as DoctorWorkflowMode) : null;
+};
+
+export const resolveDoctorWorkflowMode = (
+  role: UserRole,
+  doctorWorkflowMode: DoctorWorkflowMode | null | undefined,
+  field = "doctorWorkflowMode"
+): DoctorWorkflowMode | null => {
+  if (role !== "doctor") {
+    if (doctorWorkflowMode !== undefined && doctorWorkflowMode !== null) {
+      throw validationError([
+        {
+          field,
+          message: "doctorWorkflowMode is only allowed for doctor users."
+        }
+      ]);
+    }
+
+    return null;
+  }
+
+  return doctorWorkflowMode ?? "self_service";
 };
 
 export const assertAssignableExtraPermissions = (
