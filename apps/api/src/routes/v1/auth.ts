@@ -12,7 +12,9 @@ import { splitFullName } from "../../lib/names.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
 import {
   assertAssignableExtraPermissions,
+  normalizeStoredDoctorWorkflowMode,
   normalizeStoredExtraPermissions,
+  resolveDoctorWorkflowMode,
   resolveUserPermissions
 } from "../../lib/user-permissions.js";
 
@@ -29,12 +31,15 @@ const toSerializedUser = (row: {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  doctorWorkflowMode: unknown;
   extraPermissions: unknown;
   createdAt?: Date;
 }) => {
   const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
+  const doctorWorkflowMode = normalizeStoredDoctorWorkflowMode(row.doctorWorkflowMode);
   return serializeAuthUser({
     ...row,
+    doctorWorkflowMode,
     extraPermissions,
     permissions: resolveUserPermissions(row.role, extraPermissions)
   });
@@ -63,12 +68,15 @@ const toSerializedCreatedUser = (row: {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  doctorWorkflowMode: unknown;
   extraPermissions: unknown;
   createdAt: Date;
 }) => {
   const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
+  const doctorWorkflowMode = normalizeStoredDoctorWorkflowMode(row.doctorWorkflowMode);
   return serializeCreatedUser({
     ...row,
+    doctorWorkflowMode,
     extraPermissions,
     permissions: resolveUserPermissions(row.role, extraPermissions)
   });
@@ -143,6 +151,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: { type: "string", format: "email", maxLength: 160 },
               password: { type: "string", minLength: 8, maxLength: 128 },
               role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+              doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
               extraPermissions: {
                 type: "array",
                 items: { type: "string", enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"] }
@@ -159,6 +168,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: { type: "string", format: "email", maxLength: 160 },
               password: { type: "string", minLength: 8, maxLength: 128 },
               role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+              doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
               extraPermissions: {
                 type: "array",
                 items: { type: "string", enum: ["patient.write", "appointment.create", "family.write", "inventory.write", "prescription.dispense"] }
@@ -195,6 +205,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: "doctor-support@example.com",
               password: "doctor-pass-123",
               role: "doctor",
+              doctorWorkflowMode: "clinic_supported",
               extraPermissions: ["inventory.write"]
             }
           }
@@ -242,6 +253,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           firstName: users.firstName,
           lastName: users.lastName,
           role: users.role,
+          doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt,
           organizationId: users.organizationId,
@@ -371,12 +383,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: frontendPayload.email,
               password: frontendPayload.password,
               role: frontendPayload.role,
+              doctorWorkflowMode: frontendPayload.doctorWorkflowMode,
               extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
         : parseOrThrowValidation(createUserSchema.strict(), request.body);
       const payload = {
         ...parsedPayload,
+        doctorWorkflowMode: resolveDoctorWorkflowMode(parsedPayload.role, parsedPayload.doctorWorkflowMode),
         extraPermissions: assertAssignableExtraPermissions(
           parsedPayload.role,
           parsedPayload.extraPermissions ?? []
@@ -430,6 +444,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           firstName: payload.firstName,
           lastName: payload.lastName,
           role: payload.role,
+          doctorWorkflowMode: payload.doctorWorkflowMode,
           extraPermissions: payload.extraPermissions
         })
         .returning({
@@ -438,6 +453,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         });
@@ -461,6 +477,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
+        doctorWorkflowMode: users.doctorWorkflowMode,
         extraPermissions: users.extraPermissions,
         createdAt: users.createdAt,
         isActive: users.isActive
