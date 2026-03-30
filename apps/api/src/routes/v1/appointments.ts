@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { appointments, patients } from "@medsys/db";
 import { createAppointmentSchema, idParamSchema, listAppointmentsQuerySchema, updateAppointmentSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
@@ -7,6 +7,12 @@ import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
+
+const withQueuePosition = <T extends Record<string, unknown>>(rows: T[]): Array<T & { queuePosition: number }> =>
+  rows.map((row, index) => ({
+    ...row,
+    queuePosition: index + 1
+  }));
 
 const createAppointmentBodySchema = {
   type: "object",
@@ -117,14 +123,15 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
         .from(appointments)
         .innerJoin(patients, eq(appointments.patientId, patients.id))
         .where(and(baseCondition, eq(appointments.status, validatedStatus)))
-        .orderBy(desc(appointments.scheduledAt));
+        .orderBy(asc(appointments.scheduledAt), asc(appointments.id));
+      const queueRows = withQueuePosition(rows);
       await app.cacheService.setJson(
         "appointmentQueue",
         queueCacheKey,
-        rows,
+        queueRows,
         app.env.APPOINTMENT_QUEUE_CACHE_TTL_SECONDS
       );
-      return rows;
+      return queueRows;
     }
 
     const queryBuilder = app.readDb
