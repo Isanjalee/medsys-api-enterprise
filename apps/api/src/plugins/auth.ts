@@ -1,10 +1,16 @@
 import fp from "fastify-plugin";
 import { and, eq } from "drizzle-orm";
 import fastifyJwt from "@fastify/jwt";
-import { users } from "@medsys/db";
-import { hasAllResolvedPermissions, type Permission } from "@medsys/types";
+import { userRoles, users } from "@medsys/db";
+import { hasAllResolvedPermissions, resolveWorkflowProfiles, type Permission } from "@medsys/types";
 import { assertOrThrow } from "../lib/http-error.js";
-import { normalizeStoredExtraPermissions, resolveUserPermissions } from "../lib/user-permissions.js";
+import {
+  normalizeStoredRoles,
+  normalizeStoredDoctorWorkflowMode,
+  normalizeStoredExtraPermissions,
+  resolveActiveRole,
+  resolveUserPermissionsForRoles
+} from "../lib/user-permissions.js";
 
 const authPlugin = fp(async (app) => {
   await app.register(fastifyJwt, {
@@ -27,6 +33,8 @@ const authPlugin = fp(async (app) => {
       .select({
         id: users.id,
         role: users.role,
+        activeRole: users.activeRole,
+        doctorWorkflowMode: users.doctorWorkflowMode,
         organizationId: users.organizationId,
         isActive: users.isActive,
         extraPermissions: users.extraPermissions
@@ -38,12 +46,23 @@ const authPlugin = fp(async (app) => {
     assertOrThrow(actor.length === 1, 401, "Unauthorized");
     assertOrThrow(actor[0].isActive, 403, "Inactive account");
 
+    const storedRoles = await app.db
+      .select({ role: userRoles.role })
+      .from(userRoles)
+      .where(eq(userRoles.userId, actor[0].id));
+
+    const roles = normalizeStoredRoles(actor[0].role, storedRoles.map((row) => row.role));
+    const activeRole = resolveActiveRole(roles, actor[0].activeRole, actor[0].role);
     const extraPermissions = normalizeStoredExtraPermissions(actor[0].extraPermissions);
+    const doctorWorkflowMode = normalizeStoredDoctorWorkflowMode(actor[0].doctorWorkflowMode);
     request.actor = {
       userId: actor[0].id,
-      role: actor[0].role,
+      role: activeRole,
+      roles,
+      activeRole,
       organizationId: actor[0].organizationId,
-      permissions: resolveUserPermissions(actor[0].role, extraPermissions),
+      permissions: resolveUserPermissionsForRoles(roles, extraPermissions),
+      workflowProfiles: resolveWorkflowProfiles(roles, doctorWorkflowMode),
       extraPermissions
     };
   });

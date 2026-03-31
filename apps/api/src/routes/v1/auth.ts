@@ -1,8 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq, sql } from "drizzle-orm";
-import { users } from "@medsys/db";
-import { hasAllResolvedPermissions } from "@medsys/types";
-import { authLoginSchema, createUserFrontendSchema, createUserSchema, refreshTokenSchema } from "@medsys/validation";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { userRoles, users } from "@medsys/db";
+import { hasAllResolvedPermissions, normalizeRoles, type UserRole } from "@medsys/types";
+import {
+  authLoginSchema,
+  createUserFrontendSchema,
+  createUserSchema,
+  refreshTokenSchema,
+  switchActiveRoleSchema
+} from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { revokeRefreshTokens, rotateRefreshToken, signAccessToken, validateRefreshToken } from "../../lib/auth.js";
 import { serializeAuthUser, serializeCreatedUser } from "../../lib/api-serializers.js";
@@ -12,9 +18,12 @@ import { splitFullName } from "../../lib/names.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
 import {
   assertAssignableExtraPermissions,
+  normalizeStoredRoles,
   normalizeStoredDoctorWorkflowMode,
   normalizeStoredExtraPermissions,
+  resolveActiveRole,
   resolveDoctorWorkflowMode,
+  resolveUserPermissionsForRoles,
   resolveUserPermissions
 } from "../../lib/user-permissions.js";
 
@@ -31,17 +40,23 @@ const toSerializedUser = (row: {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  activeRole?: unknown;
+  roles?: readonly UserRole[];
   doctorWorkflowMode: unknown;
   extraPermissions: unknown;
   createdAt?: Date;
 }) => {
+  const roles = normalizeStoredRoles(row.role, row.roles ?? []);
+  const activeRole = resolveActiveRole(roles, row.activeRole as UserRole | null | undefined, row.role);
   const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
   const doctorWorkflowMode = normalizeStoredDoctorWorkflowMode(row.doctorWorkflowMode);
   return serializeAuthUser({
     ...row,
+    roles,
+    activeRole,
     doctorWorkflowMode,
     extraPermissions,
-    permissions: resolveUserPermissions(row.role, extraPermissions)
+    permissions: resolveUserPermissionsForRoles(roles, extraPermissions)
   });
 };
 
@@ -68,18 +83,60 @@ const toSerializedCreatedUser = (row: {
   lastName: string;
   email: string;
   role: "owner" | "doctor" | "assistant";
+  activeRole?: unknown;
+  roles?: readonly UserRole[];
   doctorWorkflowMode: unknown;
   extraPermissions: unknown;
   createdAt: Date;
 }) => {
+  const roles = normalizeStoredRoles(row.role, row.roles ?? []);
+  const activeRole = resolveActiveRole(roles, row.activeRole as UserRole | null | undefined, row.role);
   const extraPermissions = normalizeStoredExtraPermissions(row.extraPermissions);
   const doctorWorkflowMode = normalizeStoredDoctorWorkflowMode(row.doctorWorkflowMode);
   return serializeCreatedUser({
     ...row,
+    roles,
+    activeRole,
     doctorWorkflowMode,
     extraPermissions,
-    permissions: resolveUserPermissions(row.role, extraPermissions)
+    permissions: resolveUserPermissionsForRoles(roles, extraPermissions)
   });
+};
+
+const normalizePayloadRoles = (payload: {
+  role?: UserRole;
+  roles?: UserRole[];
+  activeRole?: UserRole | null;
+}): { roles: UserRole[]; activeRole: UserRole } => {
+  const roles = normalizeRoles(payload.roles ?? (payload.role ? [payload.role] : []));
+  const activeRole = resolveActiveRole(roles, payload.activeRole, payload.role);
+  return { roles, activeRole };
+};
+
+const loadRolesByUserIds = async (
+  app: { db: { select: Function } },
+  userIds: number[]
+): Promise<Map<number, UserRole[]>> => {
+  const roleMap = new Map<number, UserRole[]>();
+  if (userIds.length === 0) {
+    return roleMap;
+  }
+
+  const rows = await app.db
+    .select({
+      userId: userRoles.userId,
+      role: userRoles.role
+    })
+    .from(userRoles)
+    .where(inArray(userRoles.userId, userIds));
+
+  for (const row of rows as Array<{ userId: number; role: UserRole }>) {
+    const existing = roleMap.get(row.userId) ?? [];
+    existing.push(row.role);
+    roleMap.set(row.userId, normalizeRoles(existing));
+  }
+
+  return roleMap;
 };
 
 const getLoginThrottleKey = (request: {
@@ -151,6 +208,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: { type: "string", format: "email", maxLength: 160 },
               password: { type: "string", minLength: 8, maxLength: 128 },
               role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+              roles: { type: "array", items: { type: "string", enum: ["owner", "doctor", "assistant"] } },
+              activeRole: { type: "string", enum: ["owner", "doctor", "assistant"], nullable: true },
               doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
               extraPermissions: {
                 type: "array",
@@ -168,6 +227,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: { type: "string", format: "email", maxLength: 160 },
               password: { type: "string", minLength: 8, maxLength: 128 },
               role: { type: "string", enum: ["owner", "doctor", "assistant"] },
+              roles: { type: "array", items: { type: "string", enum: ["owner", "doctor", "assistant"] } },
+              activeRole: { type: "string", enum: ["owner", "doctor", "assistant"], nullable: true },
               doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
               extraPermissions: {
                 type: "array",
@@ -197,14 +258,27 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               role: "owner"
             }
           },
-          doctorWithAssistantSupport: {
-            summary: "Doctor with assistant-support permissions",
+          doctorSelfService: {
+            summary: "Doctor self-service payload",
+            value: {
+              firstName: "Solo",
+              lastName: "Doctor",
+              email: "doctor-solo@example.com",
+              password: "doctor-pass-123",
+              roles: ["doctor"],
+              activeRole: "doctor",
+              doctorWorkflowMode: "self_service"
+            }
+          },
+          doctorClinicSupported: {
+            summary: "Doctor clinic-supported payload",
             value: {
               firstName: "Support",
               lastName: "Doctor",
               email: "doctor-support@example.com",
               password: "doctor-pass-123",
-              role: "doctor",
+              roles: ["owner", "doctor"],
+              activeRole: "doctor",
               doctorWorkflowMode: "clinic_supported",
               extraPermissions: ["inventory.write"]
             }
@@ -214,6 +288,32 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     "GET /me": {
       operationId: "AuthController_me",
       summary: "Get the authenticated user profile"
+    },
+    "POST /active-role": {
+      operationId: "AuthController_switchActiveRole",
+      summary: "Switch the active role for the authenticated user",
+      bodySchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["activeRole"],
+        properties: {
+          activeRole: { type: "string", enum: ["owner", "doctor", "assistant"] }
+        }
+      },
+      bodyExamples: {
+        switchToDoctor: {
+          summary: "Switch to doctor workspace",
+          value: {
+            activeRole: "doctor"
+          }
+        },
+        switchToOwner: {
+          summary: "Switch to owner workspace",
+          value: {
+            activeRole: "owner"
+          }
+        }
+      }
     },
     "GET /status": {
       operationId: "AuthController_status",
@@ -253,6 +353,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           firstName: users.firstName,
           lastName: users.lastName,
           role: users.role,
+          activeRole: users.activeRole,
           doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt,
@@ -284,12 +385,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         entityId: found[0].id
       });
 
+      const foundRoleMap = await loadRolesByUserIds(app, [found[0].id]);
       return reply.send(
         buildAuthTokenPayload(
           accessToken,
           refreshToken,
           app.env.ACCESS_TOKEN_TTL_SECONDS,
-          toSerializedUser(found[0])
+          toSerializedUser({
+            ...found[0],
+            roles: foundRoleMap.get(found[0].id) ?? [found[0].role]
+          })
         )
       );
     }
@@ -314,6 +419,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
+        activeRole: users.activeRole,
         doctorWorkflowMode: users.doctorWorkflowMode,
         extraPermissions: users.extraPermissions,
         createdAt: users.createdAt,
@@ -323,6 +429,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(users.id, validatedTokenState.userId))
       .limit(1);
     assertOrThrow(userRows.length === 1 && userRows[0].isActive, 401, "User not found");
+    const refreshedRoleMap = await loadRolesByUserIds(app, [userRows[0].id]);
 
     const accessToken = await signAccessToken(app, {
         sub: String(userRows[0].id),
@@ -344,7 +451,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         accessToken,
         refreshToken,
         app.env.ACCESS_TOKEN_TTL_SECONDS,
-        toSerializedUser(userRows[0])
+        toSerializedUser({
+          ...userRows[0],
+          roles: refreshedRoleMap.get(userRows[0].id) ?? [userRows[0].role]
+        })
       )
     );
   });
@@ -384,16 +494,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               email: frontendPayload.email,
               password: frontendPayload.password,
               role: frontendPayload.role,
+              roles: frontendPayload.roles,
+              activeRole: frontendPayload.activeRole,
               doctorWorkflowMode: frontendPayload.doctorWorkflowMode,
               extraPermissions: frontendPayload.extraPermissions ?? []
             };
           })()
         : parseOrThrowValidation(createUserSchema, request.body);
+      const normalizedRoleState = normalizePayloadRoles(parsedPayload);
       const payload = {
         ...parsedPayload,
-        doctorWorkflowMode: resolveDoctorWorkflowMode(parsedPayload.role, parsedPayload.doctorWorkflowMode),
+        role: normalizedRoleState.activeRole,
+        roles: normalizedRoleState.roles,
+        activeRole: normalizedRoleState.activeRole,
+        doctorWorkflowMode: resolveDoctorWorkflowMode(normalizedRoleState.roles, parsedPayload.doctorWorkflowMode),
         extraPermissions: assertAssignableExtraPermissions(
-          parsedPayload.role,
+          normalizedRoleState.roles,
           parsedPayload.extraPermissions ?? []
         )
       };
@@ -403,11 +519,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       let action = "register_bootstrap";
 
       if (userCount === 0) {
-        if (payload.role !== "owner") {
+        if (!payload.roles.includes("owner")) {
           throw validationError([
             {
-              field: "role",
-              message: "First registered user must have owner role."
+              field: "roles",
+              message: "First registered user must include owner role."
             }
           ]);
         }
@@ -445,6 +561,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           firstName: payload.firstName,
           lastName: payload.lastName,
           role: payload.role,
+          activeRole: payload.activeRole,
           doctorWorkflowMode: payload.doctorWorkflowMode,
           extraPermissions: payload.extraPermissions
         })
@@ -454,10 +571,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           lastName: users.lastName,
           email: users.email,
           role: users.role,
+          activeRole: users.activeRole,
           doctorWorkflowMode: users.doctorWorkflowMode,
           extraPermissions: users.extraPermissions,
           createdAt: users.createdAt
         });
+
+      if (payload.roles.length > 0) {
+        await app.db.insert(userRoles).values(
+          payload.roles.map((role) => ({
+            userId: inserted[0].id,
+            role
+          }))
+        );
+      }
+
+      const insertedRoleMap = await loadRolesByUserIds(app, [inserted[0].id]);
 
       await writeAuditLog(request, {
         entityType: "user",
@@ -465,7 +594,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         entityId: inserted[0].id
       });
 
-      return reply.code(201).send({ user: toSerializedCreatedUser(inserted[0]) });
+      return reply.code(201).send({
+        user: toSerializedCreatedUser({
+          ...inserted[0],
+          roles: insertedRoleMap.get(inserted[0].id) ?? payload.roles
+        })
+      });
     }
   );
 
@@ -478,6 +612,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         firstName: users.firstName,
         lastName: users.lastName,
         role: users.role,
+        activeRole: users.activeRole,
         doctorWorkflowMode: users.doctorWorkflowMode,
         extraPermissions: users.extraPermissions,
         createdAt: users.createdAt,
@@ -489,8 +624,55 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     assertOrThrow(rows.length === 1, 401, "User not found");
     assertOrThrow(rows[0].isActive, 403, "Inactive account");
+    const meRoleMap = await loadRolesByUserIds(app, [rows[0].id]);
 
-    return toSerializedUser(rows[0]);
+    return toSerializedUser({
+      ...rows[0],
+      roles: meRoleMap.get(rows[0].id) ?? [rows[0].role]
+    });
+  });
+
+  app.post("/active-role", { preHandler: app.authenticate }, async (request) => {
+    const actor = request.actor!;
+    const payload = parseOrThrowValidation(switchActiveRoleSchema, request.body);
+    assertOrThrow(actor.roles.includes(payload.activeRole), 400, "activeRole must be assigned to the user");
+
+    const updatedRows = await app.db
+      .update(users)
+      .set({
+        role: payload.activeRole,
+        activeRole: payload.activeRole,
+        updatedAt: new Date()
+      })
+      .where(and(eq(users.id, actor.userId), eq(users.organizationId, actor.organizationId)))
+      .returning({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        role: users.role,
+        activeRole: users.activeRole,
+        doctorWorkflowMode: users.doctorWorkflowMode,
+        extraPermissions: users.extraPermissions,
+        createdAt: users.createdAt,
+        isActive: users.isActive
+      });
+
+    assertOrThrow(updatedRows.length === 1, 404, "User not found");
+    assertOrThrow(updatedRows[0].isActive, 403, "Inactive account");
+
+    await writeAuditLog(request, {
+      entityType: "auth",
+      action: "switch_active_role",
+      entityId: actor.userId
+    });
+
+    return {
+      user: toSerializedUser({
+        ...updatedRows[0],
+        roles: actor.roles
+      })
+    };
   });
 
   app.get("/status", async () => {
