@@ -67,12 +67,29 @@ export const users = pgTable(
     firstName: varchar("first_name", { length: 80 }).notNull(),
     lastName: varchar("last_name", { length: 80 }).notNull(),
     role: userRoleEnum("role").notNull(),
+    activeRole: userRoleEnum("active_role"),
     doctorWorkflowMode: doctorWorkflowModeEnum("doctor_workflow_mode"),
     extraPermissions: jsonb("extra_permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     isActive: boolean("is_active").notNull().default(true),
     ...auditTimestamps
   },
   (table) => [uniqueIndex("users_org_email_idx").on(table.organizationId, table.email)]
+);
+
+export const userRoles = pgTable(
+  "user_roles",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    role: userRoleEnum("role").notNull(),
+    ...auditTimestamps
+  },
+  (table) => [
+    unique("user_roles_user_role_unique").on(table.userId, table.role),
+    index("user_roles_user_idx").on(table.userId)
+  ]
 );
 
 export const refreshTokens = pgTable(
