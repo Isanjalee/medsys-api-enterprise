@@ -225,6 +225,12 @@ export const refreshTokenSchema = z
   })
   .strict();
 
+export const switchActiveRoleSchema = z
+  .object({
+    activeRole: userRoleSchema
+  })
+  .strict();
+
 export const clinicalIcd10QuerySchema = z
   .object({
     terms: z.string().trim().max(100).optional()
@@ -249,11 +255,32 @@ export const createUserSchema = z.object({
   lastName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid last name"),
   email: z.string().trim().toLowerCase().email().max(160),
   password: z.string().min(8).max(128),
-  role: userRoleSchema,
+  role: userRoleSchema.optional(),
+  roles: z.array(userRoleSchema).min(1).optional(),
+  activeRole: userRoleSchema.optional().nullable(),
   doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
   extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional()
 }).superRefine((value, ctx) => {
-  if (value.role === "doctor") {
+  const roles = value.roles ?? (value.role ? [value.role] : []);
+
+  if (roles.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["roles"],
+      message: "Provide role or roles."
+    });
+    return;
+  }
+
+  if (value.activeRole && !roles.includes(value.activeRole)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["activeRole"],
+      message: "activeRole must be included in roles."
+    });
+  }
+
+  if (roles.includes("doctor")) {
     return;
   }
 
@@ -271,13 +298,34 @@ export const createUserFrontendSchema = z
     name: z.string().trim().min(1).max(120),
     email: z.string().trim().toLowerCase().email().max(160),
     password: z.string().min(8).max(128),
-    role: userRoleSchema,
+    role: userRoleSchema.optional(),
+    roles: z.array(userRoleSchema).min(1).optional(),
+    activeRole: userRoleSchema.optional().nullable(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
     extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional()
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.role === "doctor") {
+    const roles = value.roles ?? (value.role ? [value.role] : []);
+
+    if (roles.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["roles"],
+        message: "Provide role or roles."
+      });
+      return;
+    }
+
+    if (value.activeRole && !roles.includes(value.activeRole)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["activeRole"],
+        message: "activeRole must be included in roles."
+      });
+    }
+
+    if (roles.includes("doctor")) {
       return;
     }
 
@@ -292,6 +340,8 @@ export const createUserFrontendSchema = z
 
 export const updateUserSchema = z
   .object({
+    roles: z.array(userRoleSchema).min(1).optional().nullable(),
+    activeRole: userRoleSchema.optional().nullable(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
     extraPermissions: z.array(permissionSchema).max(PERMISSIONS.length).optional().nullable(),
     isActive: z.boolean().optional()
@@ -299,7 +349,11 @@ export const updateUserSchema = z
   .strict()
   .refine(
     (value) =>
-      value.doctorWorkflowMode !== undefined || value.extraPermissions !== undefined || value.isActive !== undefined,
+      value.roles !== undefined ||
+      value.activeRole !== undefined ||
+      value.doctorWorkflowMode !== undefined ||
+      value.extraPermissions !== undefined ||
+      value.isActive !== undefined,
     "At least one field must be provided"
   );
 

@@ -4,6 +4,15 @@ export type UserRole = (typeof USER_ROLES)[number];
 export const DOCTOR_WORKFLOW_MODES = ["self_service", "clinic_supported"] as const;
 export type DoctorWorkflowMode = (typeof DOCTOR_WORKFLOW_MODES)[number];
 
+export const STANDARD_WORKFLOW_MODES = ["standard"] as const;
+export type StandardWorkflowMode = (typeof STANDARD_WORKFLOW_MODES)[number];
+
+export type WorkflowProfiles = {
+  doctor: { mode: DoctorWorkflowMode } | null;
+  assistant: { mode: StandardWorkflowMode } | null;
+  owner: { mode: StandardWorkflowMode } | null;
+};
+
 export const PERMISSIONS = [
   "patient.read",
   "patient.write",
@@ -118,10 +127,31 @@ export const hasAllResolvedPermissions = (
 export const normalizePermissions = (permissions: readonly Permission[]): Permission[] =>
   [...new Set(permissions)].sort();
 
+export const normalizeRoles = (roles: readonly UserRole[]): UserRole[] =>
+  [...new Set(roles)].sort((a, b) => USER_ROLES.indexOf(a) - USER_ROLES.indexOf(b));
+
 export const resolveEffectivePermissions = (
   role: UserRole,
   extraPermissions: readonly Permission[] = []
 ): Permission[] => normalizePermissions([...ROLE_PERMISSIONS[role], ...extraPermissions]);
+
+export const resolveEffectivePermissionsForRoles = (
+  roles: readonly UserRole[],
+  extraPermissions: readonly Permission[] = []
+): Permission[] =>
+  normalizePermissions([
+    ...roles.flatMap((role) => ROLE_PERMISSIONS[role]),
+    ...normalizePermissions(extraPermissions)
+  ]);
+
+export const resolveWorkflowProfiles = (
+  roles: readonly UserRole[],
+  doctorWorkflowMode: DoctorWorkflowMode | null
+): WorkflowProfiles => ({
+  doctor: roles.includes("doctor") ? { mode: doctorWorkflowMode ?? "self_service" } : null,
+  assistant: roles.includes("assistant") ? { mode: "standard" } : null,
+  owner: roles.includes("owner") ? { mode: "standard" } : null
+});
 
 export const canRoleReceiveExtraPermissions = (role: UserRole): boolean => role === "doctor";
 
