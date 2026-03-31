@@ -3,10 +3,24 @@ import { ZodError } from "zod";
 
 export class HttpError extends Error {
   readonly statusCode: number;
+  readonly code: string;
+  readonly severity: "warning" | "error";
+  readonly userMessage: string;
 
-  constructor(statusCode: number, message: string) {
+  constructor(
+    statusCode: number,
+    message: string,
+    options?: {
+      code?: string;
+      severity?: "warning" | "error";
+      userMessage?: string;
+    }
+  ) {
     super(message);
     this.statusCode = statusCode;
+    this.code = options?.code ?? "HTTP_ERROR";
+    this.severity = options?.severity ?? (statusCode >= 500 ? "error" : "warning");
+    this.userMessage = options?.userMessage ?? message;
   }
 }
 
@@ -19,7 +33,11 @@ export class ValidationError extends HttpError {
   readonly issues: ValidationIssue[];
 
   constructor(issues: ValidationIssue[]) {
-    super(400, "Validation failed.");
+    super(400, "Validation failed.", {
+      code: "VALIDATION_ERROR",
+      severity: "warning",
+      userMessage: "Please check the highlighted fields and try again."
+    });
     this.issues = issues;
   }
 }
@@ -65,6 +83,22 @@ export const parseOrThrowValidation = <T>(schema: ZodType<T>, input: unknown): T
 
 export const assertOrThrow = (condition: unknown, statusCode: number, message: string): void => {
   if (!condition) {
-    throw new HttpError(statusCode, message);
+    throw new HttpError(statusCode, message, {
+      code:
+        statusCode === 401
+          ? "UNAUTHORIZED"
+          : statusCode === 403
+            ? "FORBIDDEN"
+            : statusCode === 404
+              ? "NOT_FOUND"
+              : statusCode === 409
+                ? "CONFLICT"
+                : statusCode === 429
+                  ? "RATE_LIMITED"
+                  : statusCode === 503
+                    ? "SERVICE_UNAVAILABLE"
+                    : "HTTP_ERROR",
+      severity: statusCode >= 500 ? "error" : "warning"
+    });
   }
 };
