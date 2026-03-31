@@ -26,6 +26,10 @@ export type RecommendedTest = TerminologySuggestion & {
   category: "laboratory" | "observation" | "screening";
 };
 
+export type FallbackTestSuggestion = TerminologySuggestion & {
+  category: string | null;
+};
+
 const CURATED_RECOMMENDED_TESTS: Array<{
   match: { exact?: string; prefix?: string };
   tests: RecommendedTest[];
@@ -128,6 +132,32 @@ export const getRecommendedTestsForDiagnosis = (code: string): RecommendedTest[]
     }
   }
   return [];
+};
+
+export const searchFallbackTests = (terms: string, limit: number): FallbackTestSuggestion[] => {
+  const normalizedTerms = terms.trim().toLowerCase();
+  if (!normalizedTerms) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+
+  return CURATED_RECOMMENDED_TESTS
+    .flatMap((entry) => entry.tests)
+    .filter((item) => {
+      const key = `${item.code}|${item.display}`.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+
+      const haystack = `${item.code} ${item.display} ${item.category ?? ""}`.toLowerCase();
+      const isMatch = haystack.includes(normalizedTerms);
+      if (isMatch) {
+        seen.add(key);
+      }
+      return isMatch;
+    })
+    .slice(0, limit);
 };
 
 export const searchFallbackDiagnoses = (terms: string, limit: number): TerminologySuggestion[] => {
