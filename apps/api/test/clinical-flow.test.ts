@@ -121,6 +121,7 @@ test("analytics overview returns numeric counters for authorized users", async (
     "lowStockItems",
     "patients",
     "prescriptions",
+    "role_context",
     "waitingAppointments"
   ]);
   const body = response.json() as Record<string, unknown>;
@@ -128,6 +129,12 @@ test("analytics overview returns numeric counters for authorized users", async (
   assert.equal(typeof body.waitingAppointments, "number");
   assert.equal(typeof body.prescriptions, "number");
   assert.equal(typeof body.lowStockItems, "number");
+  assert.deepEqual(body.role_context, {
+    role: "owner",
+    active_role: "owner",
+    roles: ["owner"],
+    workflow_profile: { mode: "standard" }
+  });
   await app.close();
 });
 
@@ -528,9 +535,17 @@ test("auth logout revokes the current refresh token", async () => {
     token_type: string;
     user: {
       id: number;
+      user_id: number;
       email: string;
       role: string;
+      roles: string[];
+      active_role: string;
       name: string;
+      workflow_profiles: {
+        doctor: { mode: string } | null;
+        assistant: { mode: string } | null;
+        owner: { mode: string } | null;
+      };
       permissions: string[];
       extra_permissions: string[];
       created_at: string;
@@ -543,6 +558,14 @@ test("auth logout revokes the current refresh token", async () => {
   assert.equal(loginBody.tokenType, "Bearer");
   assert.equal(loginBody.token_type, "Bearer");
   assert.equal(loginBody.user.email, "owner@medsys.local");
+  assert.equal(loginBody.user.user_id, loginBody.user.id);
+  assert.deepEqual(loginBody.user.roles, ["owner"]);
+  assert.equal(loginBody.user.active_role, "owner");
+  assert.deepEqual(loginBody.user.workflow_profiles, {
+    doctor: null,
+    assistant: null,
+    owner: { mode: "standard" }
+  });
   assert.equal(typeof loginBody.user.created_at, "string");
 
   const logoutResponse = await app.inject({
@@ -711,12 +734,26 @@ test("doctor natively has patient and appointment creation permissions", async (
   assert.equal(meResponse.statusCode, 200);
   const meBody = meResponse.json() as {
     role: string;
+    roles: string[];
+    active_role: string;
     doctor_workflow_mode: string | null;
+    workflow_profiles: {
+      doctor: { mode: string } | null;
+      assistant: { mode: string } | null;
+      owner: { mode: string } | null;
+    };
     permissions: string[];
     extra_permissions: string[];
   };
   assert.equal(meBody.role, "doctor");
+  assert.deepEqual(meBody.roles, ["doctor"]);
+  assert.equal(meBody.active_role, "doctor");
   assert.equal(meBody.doctor_workflow_mode, "self_service");
+  assert.deepEqual(meBody.workflow_profiles, {
+    doctor: { mode: "self_service" },
+    assistant: null,
+    owner: null
+  });
   assert.equal(meBody.permissions.includes("patient.write"), true);
   assert.equal(meBody.permissions.includes("appointment.create"), true);
   assert.equal(meBody.permissions.includes("prescription.dispense"), true);
@@ -1241,10 +1278,31 @@ test("owner can register and list users after bootstrap", async () => {
 
   assert.equal(registerResponse.statusCode, 201);
   const registerBody = registerResponse.json() as {
-    user: { id: number; email: string; role: string; name: string; created_at: string; doctor_workflow_mode: string | null };
+    user: {
+      id: number;
+      email: string;
+      role: string;
+      roles: string[];
+      active_role: string;
+      name: string;
+      created_at: string;
+      doctor_workflow_mode: string | null;
+      workflow_profiles: {
+        doctor: { mode: string } | null;
+        assistant: { mode: string } | null;
+        owner: { mode: string } | null;
+      };
+    };
   };
   assert.equal(registerBody.user.role, "doctor");
+  assert.deepEqual(registerBody.user.roles, ["doctor"]);
+  assert.equal(registerBody.user.active_role, "doctor");
   assert.equal(registerBody.user.doctor_workflow_mode, "self_service");
+  assert.deepEqual(registerBody.user.workflow_profiles, {
+    doctor: { mode: "self_service" },
+    assistant: null,
+    owner: null
+  });
   assert.equal(registerBody.user.email, `contract-user-${uniqueSuffix}@medsys.local`);
   assert.equal(registerBody.user.name, `Contract User${uniqueSuffix}`);
   assert.equal(typeof registerBody.user.id, "number");
@@ -1267,6 +1325,189 @@ test("owner can register and list users after bootstrap", async () => {
     listUsersBody.users.some((user) => user.email === `contract-user-${uniqueSuffix}@medsys.local`),
     true
   );
+  await app.close();
+});
+
+test("owner can register a multi-role user and auth reflects persisted roles", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+  const email = `multi-role-${uniqueSuffix}@medsys.local`;
+
+  const registerResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/register",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Multi",
+      lastName: "Role",
+      email,
+      password: "ChangeMe123!",
+      roles: ["owner", "doctor"],
+      activeRole: "doctor",
+      doctorWorkflowMode: "clinic_supported"
+    }
+  });
+
+  assert.equal(registerResponse.statusCode, 201);
+  const registerBody = registerResponse.json() as {
+    user: {
+      role: string;
+      roles: string[];
+      active_role: string;
+      doctor_workflow_mode: string | null;
+      workflow_profiles: {
+        doctor: { mode: string } | null;
+        assistant: { mode: string } | null;
+        owner: { mode: string } | null;
+      };
+      permissions: string[];
+    };
+  };
+  assert.equal(registerBody.user.role, "doctor");
+  assert.deepEqual(registerBody.user.roles, ["owner", "doctor"]);
+  assert.equal(registerBody.user.active_role, "doctor");
+  assert.equal(registerBody.user.doctor_workflow_mode, "clinic_supported");
+  assert.deepEqual(registerBody.user.workflow_profiles, {
+    doctor: { mode: "clinic_supported" },
+    assistant: null,
+    owner: { mode: "standard" }
+  });
+  assert.equal(registerBody.user.permissions.includes("user.write"), true);
+  assert.equal(registerBody.user.permissions.includes("patient.delete"), true);
+
+  const multiRoleLogin = await loginAs(app, email);
+  const meResponse = await app.inject({
+    method: "GET",
+    url: "/v1/auth/me",
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+
+  assert.equal(meResponse.statusCode, 200);
+  const meBody = meResponse.json() as {
+    role: string;
+    roles: string[];
+    active_role: string;
+    permissions: string[];
+  };
+  assert.equal(meBody.role, "doctor");
+  assert.deepEqual(meBody.roles, ["owner", "doctor"]);
+  assert.equal(meBody.active_role, "doctor");
+  assert.equal(meBody.permissions.includes("user.write"), true);
+
+  const userListResponse = await app.inject({
+    method: "GET",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+
+  assert.equal(userListResponse.statusCode, 200);
+  await app.close();
+});
+
+test("multi-role user can switch active role and see updated role context", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+  const email = `role-switch-${uniqueSuffix}@medsys.local`;
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Switch",
+      lastName: "User",
+      email,
+      password: "ChangeMe123!",
+      roles: ["owner", "doctor"],
+      activeRole: "doctor",
+      doctorWorkflowMode: "self_service"
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+
+  const multiRoleLogin = await loginAs(app, email);
+  const switchResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/active-role",
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    },
+    payload: {
+      activeRole: "owner"
+    }
+  });
+
+  assert.equal(switchResponse.statusCode, 200);
+  const switchBody = switchResponse.json() as {
+    user: {
+      role: string;
+      roles: string[];
+      active_role: string;
+      workflow_profiles: {
+        doctor: { mode: string } | null;
+        assistant: { mode: string } | null;
+        owner: { mode: string } | null;
+      };
+    };
+  };
+  assert.equal(switchBody.user.role, "owner");
+  assert.deepEqual(switchBody.user.roles, ["owner", "doctor"]);
+  assert.equal(switchBody.user.active_role, "owner");
+  assert.deepEqual(switchBody.user.workflow_profiles, {
+    doctor: { mode: "self_service" },
+    assistant: null,
+    owner: { mode: "standard" }
+  });
+
+  const meResponse = await app.inject({
+    method: "GET",
+    url: "/v1/auth/me",
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+
+  assert.equal(meResponse.statusCode, 200);
+  const meBody = meResponse.json() as {
+    role: string;
+    active_role: string;
+    roles: string[];
+  };
+  assert.equal(meBody.role, "owner");
+  assert.equal(meBody.active_role, "owner");
+  assert.deepEqual(meBody.roles, ["owner", "doctor"]);
+
+  const invalidSwitchResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/active-role",
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    },
+    payload: {
+      activeRole: "assistant"
+    }
+  });
+
+  assert.equal(invalidSwitchResponse.statusCode, 400);
   await app.close();
 });
 
@@ -1988,18 +2229,37 @@ test("users create accepts frontend-compatible name payload", async () => {
   });
 
   assert.equal(response.statusCode, 201);
-  assert.deepEqual(response.json(), {
+  const responseBody = response.json() as {
     user: {
-      id: (response.json() as { user: { id: number } }).user.id,
-      name: `Frontend User ${uniqueSuffix}`,
-      email: `frontend-user-${uniqueSuffix}@medsys.local`,
-      role: "assistant",
-      permissions: (response.json() as { user: { permissions: string[] } }).user.permissions,
-      extra_permissions: [],
-      created_at: (response.json() as { user: { created_at: string } }).user.created_at
-    }
+      id: number;
+      name: string;
+      email: string;
+      role: string;
+      roles: string[];
+      active_role: string;
+      permissions: string[];
+      workflow_profiles: {
+        doctor: { mode: string } | null;
+        assistant: { mode: string } | null;
+        owner: { mode: string } | null;
+      };
+      extra_permissions: string[];
+      created_at: string;
+    };
+  };
+  assert.equal(responseBody.user.name, `Frontend User ${uniqueSuffix}`);
+  assert.equal(responseBody.user.email, `frontend-user-${uniqueSuffix}@medsys.local`);
+  assert.equal(responseBody.user.role, "assistant");
+  assert.deepEqual(responseBody.user.roles, ["assistant"]);
+  assert.equal(responseBody.user.active_role, "assistant");
+  assert.deepEqual(responseBody.user.workflow_profiles, {
+    doctor: null,
+    assistant: { mode: "standard" },
+    owner: null
   });
-  const body = response.json() as { user: { permissions: string[] } };
+  assert.deepEqual(responseBody.user.extra_permissions, []);
+  assert.equal(typeof responseBody.user.created_at, "string");
+  const body = responseBody as { user: { permissions: string[] } };
   assert.equal(body.user.permissions.includes("appointment.create"), true);
   await app.close();
 });
@@ -2291,6 +2551,39 @@ test("clinical icd10 rejects oversized terms with validation envelope", async ()
   }
 });
 
+test("clinical icd10 endpoint falls back to curated suggestions when ICD10 provider is unavailable", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () => {
+      throw new Error("network unavailable");
+    };
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/icd10?terms=gas",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json() as { suggestions: string[] };
+    assert.equal(body.suggestions.length > 0, true);
+    assert.equal(body.suggestions.some((item) => item.toLowerCase().includes("gas")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
 test("clinical diagnoses endpoint returns normalized diagnosis objects", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -2336,6 +2629,41 @@ test("clinical diagnoses endpoint returns normalized diagnosis objects", async (
         { code: "J18.9", codeSystem: "ICD-10-CM", display: "Pneumonia, unspecified organism" }
       ]
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
+test("clinical diagnoses endpoint falls back to curated diagnoses when ICD10 provider is unavailable", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () => {
+      throw new Error("network unavailable");
+    };
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/diagnoses?terms=gas&limit=10",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json() as {
+      diagnoses: Array<{ code: string; codeSystem: string; display: string }>;
+    };
+    assert.equal(body.diagnoses.length > 0, true);
+    assert.equal(body.diagnoses.some((item) => item.display.toLowerCase().includes("gas")), true);
   } finally {
     globalThis.fetch = originalFetch;
     await app.close();
@@ -4121,19 +4449,35 @@ test("auth me returns authenticated identity shape", async () => {
   assert.equal(response.statusCode, 200);
   const body = response.json() as {
     id: number;
+    user_id: number;
     name: string;
     email: string;
     role: string;
+    roles: string[];
+    active_role: string;
     doctor_workflow_mode: string | null;
+    workflow_profiles: {
+      doctor: { mode: string } | null;
+      assistant: { mode: string } | null;
+      owner: { mode: string } | null;
+    };
     permissions: string[];
     extra_permissions: string[];
     created_at: string;
   };
   assert.equal(typeof body.id, "number");
+  assert.equal(body.user_id, body.id);
   assert.equal(body.name.length > 0, true);
   assert.equal(body.email, "doctor@medsys.local");
   assert.equal(body.role, "doctor");
+  assert.deepEqual(body.roles, ["doctor"]);
+  assert.equal(body.active_role, "doctor");
   assert.equal(body.doctor_workflow_mode, "self_service");
+  assert.deepEqual(body.workflow_profiles, {
+    doctor: { mode: "self_service" },
+    assistant: null,
+    owner: null
+  });
   assert.equal(body.permissions.includes("appointment.read"), true);
   assert.equal(body.permissions.includes("appointment.create"), true);
   assert.equal(body.permissions.includes("patient.write"), true);
