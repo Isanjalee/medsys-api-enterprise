@@ -86,13 +86,15 @@ MEDSYS currently follows a layered architecture:
 Implemented:
 
 - login, refresh, logout, current-user session
-- effective permission model using role plus extra permissions
+- effective permission model using assigned roles plus extra permissions
+- multi-role identity with `roles`, `active_role`, and `workflow_profiles`
+- authenticated active-role switching through `POST /v1/auth/active-role`
 - sensitive action throttling
 - doctor, assistant, and owner operational permissions
 
 Important implemented rule:
 
-- frontend should use returned `permissions`, not role name alone, for access decisions
+- frontend should use returned `permissions` for actions, `active_role` for workspace selection, and `workflow_profiles` for role-specific behavior
 
 ### 4.2 Patient Management
 
@@ -216,6 +218,7 @@ This is one of the key workflow-hardening changes in the current implementation.
 | Area | Endpoint |
 |---|---|
 | Auth | `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/me`, `/v1/auth/logout` |
+| Auth role switch | `/v1/auth/active-role` |
 | Patient search | `/v1/search/patients` |
 | Patients | `/v1/patients`, `/v1/patients/:id/profile` |
 | Families | `/v1/families` |
@@ -295,7 +298,7 @@ Current verified state:
 
 - `npm run typecheck` passing
 - `npm run test --workspace @medsys/api` passing
-- 76 API tests passing at the time of this document
+- 83 API tests passing at the time of this document
 
 ---
 
