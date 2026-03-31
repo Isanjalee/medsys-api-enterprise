@@ -1,4 +1,4 @@
-import type { DoctorWorkflowMode, Permission } from "@medsys/types";
+import { resolveWorkflowProfiles, type DoctorWorkflowMode, type Permission, type UserRole } from "@medsys/types";
 import { buildDisplayName } from "./names.js";
 
 export type AuthUserRow = {
@@ -6,7 +6,9 @@ export type AuthUserRow = {
   firstName: string;
   lastName: string;
   email: string;
-  role: "owner" | "doctor" | "assistant";
+  role: UserRole;
+  roles: UserRole[];
+  activeRole: UserRole;
   doctorWorkflowMode: DoctorWorkflowMode | null;
   permissions: Permission[];
   extraPermissions: Permission[];
@@ -57,11 +59,15 @@ export type PatientVitalRow = {
 
 export const serializeAuthUser = (row: AuthUserRow) => ({
   id: row.id,
+  user_id: row.id,
   name: buildDisplayName(row.firstName, row.lastName),
   email: row.email,
   role: row.role,
+  roles: row.roles,
+  active_role: row.activeRole,
   doctor_workflow_mode: row.doctorWorkflowMode,
   permissions: row.permissions,
+  workflow_profiles: resolveWorkflowProfiles(row.roles, row.doctorWorkflowMode),
   extra_permissions: row.extraPermissions,
   ...(row.createdAt ? { created_at: row.createdAt } : {})
 });
