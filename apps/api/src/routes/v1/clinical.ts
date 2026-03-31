@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { clinicalCodeParamSchema, clinicalIcd10QuerySchema, clinicalTerminologyQuerySchema } from "@medsys/validation";
-import { getRecommendedTestsForDiagnosis } from "../../lib/clinical-terminology.js";
+import { getRecommendedTestsForDiagnosis, searchFallbackDiagnoses } from "../../lib/clinical-terminology.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { HttpError, parseOrThrowValidation } from "../../lib/http-error.js";
 
@@ -203,6 +203,9 @@ const fetchJson = async (
   }
 };
 
+const isProviderUnavailableError = (error: unknown): error is HttpError =>
+  error instanceof HttpError && error.statusCode === 503;
+
 const clinicalRoutes: FastifyPluginAsync = async (app) => {
   const terminologyQuerySchema = {
     type: "object",
@@ -266,8 +269,18 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
       url.searchParams.set("terms", terms);
       url.searchParams.set("count", "10");
 
-      const payload = await fetchJson(request, url, "ICD10");
-      const suggestions = normalizeIcd10Payload(payload).map((item) => `${item.code} - ${item.display}`);
+      let suggestions: string[];
+      try {
+        const payload = await fetchJson(request, url, "ICD10");
+        suggestions = normalizeIcd10Payload(payload).map((item) => `${item.code} - ${item.display}`);
+      } catch (error) {
+        if (!isProviderUnavailableError(error)) {
+          throw error;
+        }
+
+        request.log.warn({ providerName: "ICD10", terms }, "Falling back to curated ICD10 suggestions");
+        suggestions = searchFallbackDiagnoses(terms, 10).map((item) => `${item.code} - ${item.display}`);
+      }
       return { suggestions };
     }
   );
@@ -325,6 +338,7 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
     async (request) => {
       const query = parseOrThrowValidation(clinicalTerminologyQuerySchema, request.query ?? {});
       const terms = query.terms ?? "";
+      const limit = query.limit ?? 10;
       if (terms.length < 2) {
         return { diagnoses: [] };
       }
@@ -333,12 +347,23 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
       url.searchParams.set("sf", "code,name");
       url.searchParams.set("df", "code,name");
       url.searchParams.set("terms", terms);
-      url.searchParams.set("count", String(query.limit));
+      url.searchParams.set("count", String(limit));
 
-      const payload = await fetchJson(request, url, "ICD10");
-      return {
-        diagnoses: normalizeIcd10Payload(payload)
-      };
+      try {
+        const payload = await fetchJson(request, url, "ICD10");
+        return {
+          diagnoses: normalizeIcd10Payload(payload)
+        };
+      } catch (error) {
+        if (!isProviderUnavailableError(error)) {
+          throw error;
+        }
+
+        request.log.warn({ providerName: "ICD10", terms, limit: query.limit }, "Falling back to curated ICD10 diagnoses");
+        return {
+          diagnoses: searchFallbackDiagnoses(terms, limit)
+        };
+      }
     }
   );
 
