@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { clinicalCodeParamSchema, clinicalIcd10QuerySchema, clinicalTerminologyQuerySchema } from "@medsys/validation";
-import { getRecommendedTestsForDiagnosis, searchFallbackDiagnoses } from "../../lib/clinical-terminology.js";
+import { getRecommendedTestsForDiagnosis, searchFallbackDiagnoses, searchFallbackTests } from "../../lib/clinical-terminology.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { HttpError, parseOrThrowValidation } from "../../lib/http-error.js";
 
@@ -20,6 +20,36 @@ type TerminologyItem = {
 
 type TestTerminologyItem = TerminologyItem & {
   category: string | null;
+};
+
+type ProviderCacheEntry = {
+  expiresAt: number;
+  value: unknown;
+};
+
+const PROVIDER_CACHE_TTL_MS = 60_000;
+const PROVIDER_TIMEOUT_MS = 2_500;
+const providerResponseCache = new Map<string, ProviderCacheEntry>();
+const providerCacheKey = (providerName: "ICD10" | "LOINC", url: URL): string => `${providerName}:${url.toString()}`;
+const getCachedProviderResponse = (cacheKey: string, allowStale = false): unknown | null => {
+  const cached = providerResponseCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+
+  if (allowStale || cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  providerResponseCache.delete(cacheKey);
+  return null;
+};
+
+const setCachedProviderResponse = (cacheKey: string, value: unknown): void => {
+  providerResponseCache.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + PROVIDER_CACHE_TTL_MS
+  });
 };
 
 const blockedLoincDisplayPatterns = [
@@ -178,25 +208,48 @@ const fetchJson = async (
   url: URL,
   providerName: "ICD10" | "LOINC"
 ): Promise<unknown> => {
+  const cacheKey = providerCacheKey(providerName, url);
+  const cached = getCachedProviderResponse(cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(url, {
       headers: {
         accept: "application/json"
-      }
+      },
+      signal: controller.signal
     });
   } catch (error) {
+    const stale = getCachedProviderResponse(cacheKey, true);
+    if (stale !== null) {
+      request.log.warn({ providerName, url: url.toString() }, `${providerName} provider unavailable, serving stale cached response`);
+      return stale;
+    }
     request.log.error({ err: error, providerName }, `${providerName} provider request failed`);
     throw new HttpError(503, `${providerName} provider unavailable`);
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
+    const stale = getCachedProviderResponse(cacheKey, true);
+    if (stale !== null) {
+      request.log.warn({ providerName, status: response.status, url: url.toString() }, `${providerName} provider returned non-success status, serving stale cached response`);
+      return stale;
+    }
     request.log.error({ providerName, status: response.status }, `${providerName} provider returned non-success status`);
     throw new HttpError(503, `${providerName} provider unavailable`);
   }
 
   try {
-    return await response.json();
+    const payload = await response.json();
+    setCachedProviderResponse(cacheKey, payload);
+    return payload;
   } catch (error) {
     request.log.error({ err: error, providerName }, `${providerName} provider returned invalid JSON`);
     throw new HttpError(502, `Invalid ${providerName} provider response`);
@@ -438,10 +491,21 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
         url.searchParams.set("count", String(limit));
       }
 
-      const payload = await fetchJson(request, url, "LOINC");
-      return {
-        tests: normalizeAndFilterLoincPayload(payload, limit)
-      };
+      try {
+        const payload = await fetchJson(request, url, "LOINC");
+        return {
+          tests: normalizeAndFilterLoincPayload(payload, limit)
+        };
+      } catch (error) {
+        if (!isProviderUnavailableError(error)) {
+          throw error;
+        }
+
+        request.log.warn({ providerName: "LOINC", terms, limit: query.limit }, "Falling back to curated LOINC tests");
+        return {
+          tests: searchFallbackTests(terms, limit)
+        };
+      }
     }
   );
 
