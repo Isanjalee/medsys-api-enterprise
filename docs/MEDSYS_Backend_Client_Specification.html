@@ -40,8 +40,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.8</div>
-      <div><strong>Date</strong>March 25, 2026</div>
+      <div><strong>Version</strong>2.9</div>
+      <div><strong>Date</strong>March 31, 2026</div>
       <div><strong>Audience</strong>All medical field professionals, technical managers, frontend, QA, BA, and client delivery teams</div>
       <div><strong>Scope</strong>Implemented REST contracts, workflow behavior, permission model, integration expectations, and current handover-ready implementation state</div>
     </div>
@@ -75,17 +75,20 @@
         <tr><th style="width:24%">Concept</th><th>Meaning</th><th style="width:32%">Client Impact</th></tr>
       </thead>
       <tbody>
-        <tr><td><strong>role</strong></td><td>Primary user identity such as <span class="mono">owner</span>, <span class="mono">doctor</span>, or <span class="mono">assistant</span>.</td><td>Use for labeling workspace identity and user-management summaries, not as the only authorization source.</td></tr>
-        <tr><td><strong>permissions</strong></td><td>Effective allowed actions for the current user.</td><td>Use this array to decide which screens, buttons, and flows should be available.</td></tr>
-        <tr><td><strong>doctor_workflow_mode</strong></td><td>Explicit doctor business-mode identity: <span class="mono">self_service</span> or <span class="mono">clinic_supported</span>. Returns <span class="mono">null</span> for non-doctor users.</td><td>Use this field to decide which doctor workflow UI to show. Do not infer doctor mode from extra permissions.</td></tr>
+        <tr><td><strong>role</strong></td><td>Legacy compatibility field aligned to the current <span class="mono">active_role</span>.</td><td>Keep supporting older clients, but treat <span class="mono">active_role</span> as the new source of truth.</td></tr>
+        <tr><td><strong>roles</strong></td><td>All assigned identity categories for the user, such as <span class="mono">["owner", "doctor"]</span>.</td><td>Use to understand workspace-switch options and multi-role behavior.</td></tr>
+        <tr><td><strong>active_role</strong></td><td>The current workspace context selected for the user session.</td><td>Use this field to decide which high-level workspace to render.</td></tr>
+        <tr><td><strong>permissions</strong></td><td>Effective allowed actions for the current user, resolved across assigned roles plus extra permissions.</td><td>Use this array to decide which screens, buttons, and flows should be available.</td></tr>
+        <tr><td><strong>workflow_profiles</strong></td><td>Operational behavior by role. Today this includes doctor mode plus standard owner/assistant defaults.</td><td>Use this object for workflow-aware UI behavior instead of inferring from permissions.</td></tr>
+        <tr><td><strong>doctor_workflow_mode</strong></td><td>Legacy compatibility field that mirrors <span class="mono">workflow_profiles.doctor.mode</span>.</td><td>Keep existing doctor clients working during migration.</td></tr>
         <tr><td><strong>extra_permissions</strong></td><td>Per-user permission overrides stored on the user account. These are currently supported for selected doctor accounts only.</td><td>Useful for admin views and auditability, but UI authorization should still rely on the resolved <span class="mono">permissions</span> array.</td></tr>
       </tbody>
     </table>
 
     <h3>3.1 Effective Permission Resolution</h3>
     <p>The backend resolves a user's effective permissions centrally as:</p>
-    <p><span class="mono">effective permissions = role base permissions + extra_permissions</span></p>
-    <p>This means a doctor can stay a doctor while receiving controlled per-user permission additions on top of the base doctor workflow. The system does not model this as two concurrent roles.</p>
+    <p><span class="mono">effective permissions = union of assigned role permissions + extra_permissions</span></p>
+    <p>This means a multi-role user such as <span class="mono">["owner", "doctor"]</span> can switch workspace with <span class="mono">active_role</span> while still receiving the effective permission union expected by current backend authorization.</p>
 
     <h3>3.2 Assistant-Support Permission Subset</h3>
     <p>Owners can currently grant the following extra permissions to doctor accounts:</p>
@@ -103,9 +106,10 @@
         <tr><th style="width:24%">Endpoint</th><th style="width:26%">Purpose</th><th>Contract Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td><span class="mono">POST /v1/auth/login</span></td><td>Authenticate and issue tokens</td><td>Returns <span class="mono">accessToken</span>, <span class="mono">refreshToken</span>, <span class="mono">expiresIn</span>, and a <span class="mono">user</span> object that includes <span class="mono">role</span>, <span class="mono">doctor_workflow_mode</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
+        <tr><td><span class="mono">POST /v1/auth/login</span></td><td>Authenticate and issue tokens</td><td>Returns <span class="mono">accessToken</span>, <span class="mono">refreshToken</span>, <span class="mono">expiresIn</span>, and a <span class="mono">user</span> object that includes <span class="mono">roles</span>, <span class="mono">active_role</span>, <span class="mono">workflow_profiles</span>, legacy <span class="mono">role</span>, legacy <span class="mono">doctor_workflow_mode</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
         <tr><td><span class="mono">POST /v1/auth/refresh</span></td><td>Rotate refresh token</td><td>Use when the access token expires. The refreshed response also returns the current permission set.</td></tr>
         <tr><td><span class="mono">GET /v1/auth/me</span></td><td>Load current session profile</td><td>Frontend should call this after app bootstrap or session restore and treat it as the source of truth for permissions.</td></tr>
+        <tr><td><span class="mono">POST /v1/auth/active-role</span></td><td>Switch workspace role</td><td>Authenticated users can switch to any assigned role. Backend persists the choice in <span class="mono">active_role</span>.</td></tr>
         <tr><td><span class="mono">POST /v1/auth/logout</span></td><td>Revoke active refresh tokens</td><td>Authenticated route.</td></tr>
         <tr><td><span class="mono">GET /v1/auth/status</span></td><td>Bootstrap status</td><td>Unauthenticated helper for initial setup state.</td></tr>
         <tr><td><span class="mono">POST /v1/auth/register</span></td><td>Create a user or bootstrap first owner</td><td>Supports standard user creation and doctor accounts with optional extra permissions beyond the default doctor workflow.</td></tr>
@@ -119,10 +123,18 @@
   "expiresIn": 900,
   "user": {
     "id": 12,
+    "user_id": 12,
     "name": "Support Doctor",
     "email": "doctor-support@example.com",
     "role": "doctor",
+    "roles": ["owner", "doctor"],
+    "active_role": "doctor",
     "doctor_workflow_mode": "clinic_supported",
+    "workflow_profiles": {
+      "doctor": { "mode": "clinic_supported" },
+      "assistant": null,
+      "owner": { "mode": "standard" }
+    },
     "permissions": [
       "appointment.read",
       "appointment.create",
@@ -142,7 +154,7 @@
 }</pre>
 
     <h3>4.2 Frontend Authorization Rule</h3>
-    <p>Frontend clients should render actions based on the returned <span class="mono">permissions</span> array. A doctor must still appear as a doctor in identity displays, and optional extra permissions should only expand that base workflow.</p>
+    <p>Frontend clients should render actions based on the returned <span class="mono">permissions</span> array, render workspaces from <span class="mono">active_role</span>, and use <span class="mono">workflow_profiles</span> for role-specific workflow behavior. Legacy fields remain available for compatibility only.</p>
 
     <h2>5. User Management Contract</h2>
     <table>
@@ -150,9 +162,9 @@
         <tr><th style="width:26%">Endpoint</th><th style="width:24%">Purpose</th><th>Contract Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td><span class="mono">GET /v1/users</span></td><td>List users</td><td>Returns each user with <span class="mono">role</span>, <span class="mono">doctor_workflow_mode</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
-        <tr><td><span class="mono">POST /v1/users</span></td><td>Create user</td><td>Supports both frontend-style <span class="mono">name</span> payloads and direct API <span class="mono">firstName/lastName</span> payloads. Owners can create a doctor with explicit <span class="mono">doctorWorkflowMode</span> plus allowed optional extra permissions such as <span class="mono">inventory.write</span> or <span class="mono">family.write</span>.</td></tr>
-        <tr><td><span class="mono">PATCH /v1/users/:id</span></td><td>Update activation, doctor workflow mode, or extra permissions</td><td>Used by owners to activate or deactivate users and to manage the allowed doctor workflow identity and remaining extra-permission subset.</td></tr>
+        <tr><td><span class="mono">GET /v1/users</span></td><td>List users</td><td>Returns each user with <span class="mono">roles</span>, <span class="mono">active_role</span>, <span class="mono">workflow_profiles</span>, legacy <span class="mono">role</span>, legacy <span class="mono">doctor_workflow_mode</span>, <span class="mono">permissions</span>, and <span class="mono">extra_permissions</span>.</td></tr>
+        <tr><td><span class="mono">POST /v1/users</span></td><td>Create user</td><td>Supports both frontend-style <span class="mono">name</span> payloads and direct API <span class="mono">firstName/lastName</span> payloads. Owners can create users with one or more assigned roles, optional <span class="mono">activeRole</span>, and doctor workflow identity when the doctor role is present.</td></tr>
+        <tr><td><span class="mono">PATCH /v1/users/:id</span></td><td>Update activation, roles, active role, doctor workflow mode, or extra permissions</td><td>Used by owners to manage role assignments, <span class="mono">activeRole</span>, allowed doctor workflow identity, and the remaining extra-permission subset.</td></tr>
       </tbody>
     </table>
 
@@ -164,7 +176,7 @@
     "family.write"
   ]
 }</pre>
-    <p>Only doctor users can receive <span class="mono">doctorWorkflowMode</span>, and only valid permission names are accepted. Unsupported permission names or owner-only permissions are rejected by the backend.</p>
+    <p>Only doctor users can receive <span class="mono">doctorWorkflowMode</span>, <span class="mono">activeRole</span> must be one of the assigned <span class="mono">roles</span>, and only valid permission names are accepted. Unsupported permission names or owner-only permissions are rejected by the backend.</p>
   </section>
 
   <section class="page">
@@ -182,7 +194,7 @@
         <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td><span class="mono">prescription.read</span>, <span class="mono">prescription.dispense</span></td><td>Doctors can access the pending dispense queue and complete dispense workflow under the default doctor permission set.</td></tr>
         <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td><span class="mono">inventory.read</span>, <span class="mono">inventory.write</span></td><td>Mutation routes are permission-checked; selected doctors can inherit inventory write access.</td></tr>
         <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical</span></td><td><span class="mono">clinical.icd10.read</span></td><td>Reference read flows for normalized diagnosis search, test search, curated recommended tests, and backward-compatible ICD-10 search.</td></tr>
-        <tr><td>Analytics</td><td><span class="mono">/v1/analytics</span></td><td><span class="mono">analytics.read</span></td><td>Operational dashboards and cache metrics.</td></tr>
+        <tr><td>Analytics</td><td><span class="mono">/v1/analytics</span></td><td><span class="mono">analytics.read</span></td><td>Operational dashboards and cache metrics. Overview now includes additive <span class="mono">role_context</span> for role-aware frontend framing.</td></tr>
         <tr><td>Audit</td><td><span class="mono">/v1/audit</span></td><td><span class="mono">audit.read</span></td><td>Reserved for users with audit visibility, typically owners.</td></tr>
         <tr><td>Search</td><td><span class="mono">/v1/search</span></td><td><span class="mono">patient.read</span></td><td>Patient search surface with accelerated and fallback behavior.</td></tr>
       </tbody>
@@ -215,9 +227,9 @@
     <h2>8. Recommended Frontend Behavior</h2>
     <ol>
       <li>Load <span class="mono">GET /v1/auth/me</span> on session restore and keep the returned <span class="mono">permissions</span> list as the UI authorization source.</li>
-      <li>Use <span class="mono">role</span> for display identity and workspace semantics, not for allow-or-deny logic.</li>
+      <li>Use <span class="mono">active_role</span> for workspace selection, <span class="mono">roles</span> for switcher options, and <span class="mono">role</span> only as a legacy compatibility alias.</li>
       <li>Hide or disable create, update, dispense, and inventory mutation actions when the required permission is absent.</li>
-      <li>Expect a doctor with assistant-support permissions to remain <span class="mono">role = doctor</span>.</li>
+      <li>Expect a multi-role user to keep the full assigned <span class="mono">roles</span> set while <span class="mono">role</span> mirrors the currently selected <span class="mono">active_role</span>.</li>
       <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor fast-selection by patient/guardian identity (returns <code>patient_code</code>, <code>nic</code>, <code>gender</code>), and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
       <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
       <li>For the doctor screen, prefer <span class="mono">POST /v1/consultations/save</span> as the one-button workflow endpoint. Use <span class="mono">workflowType = walk_in</span> for direct doctor flow and <span class="mono">workflowType = appointment</span> when saving against an existing appointment. Send <span class="mono">patientId</span> for an existing patient or <span class="mono">patientDraft</span> for inline quick-create in walk-in mode.</li>
@@ -257,12 +269,12 @@
 
     <h2>9. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 24, 2026.</li>
+      <li>Repository implementation state as of March 31, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
-      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, consultation workflow orchestration, fixed typed vitals workflows, and current database constraints through Flyway V10.</li>
-      <li>Verified automated backend suite status of 75 passing API tests and 6 passing worker tests.</li>
+      <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, consultation workflow orchestration, fixed typed vitals workflows, doctor workflow identity, persisted multi-role support through Flyway V12, and current database constraints.</li>
+      <li>Verified automated backend suite status of 83 passing API tests and 6 passing worker tests.</li>
     </ul>
-    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 24, 2026.</div>
+    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 31, 2026.</div>
   </section>
 </body>
 </html>

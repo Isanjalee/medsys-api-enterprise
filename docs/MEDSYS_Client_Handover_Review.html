@@ -40,7 +40,7 @@
     <p>This PDF is intentionally separate from the backend API client specification so it can be reviewed as an independent management handover artifact.</p>
 
     <h2>1. Executive Summary</h2>
-    <p>MEDSYS is a role-based healthcare operations platform for clinic and medical-center workflows. The current implementation supports patient management, appointment and walk-in consultation flows, diagnosis and medical test search, prescription lifecycle handling, assistant-driven dispensing, inventory search and stock deduction, user management, analytics, and audit logging.</p>
+    <p>MEDSYS is a role-based healthcare operations platform for clinic and medical-center workflows. The current implementation supports patient management, appointment and walk-in consultation flows, diagnosis and medical test search, prescription lifecycle handling, assistant-driven dispensing, inventory search and stock deduction, user management, multi-role identity, analytics, and audit logging.</p>
     <p>The strongest implementation area today is the doctor and assistant operational flow. Doctors can save a complete consultation through a single workflow endpoint, appointment and walk-in modes are both supported, prescription items are operationally split into <span class="mono">clinical</span> and <span class="mono">outside</span>, only clinical items enter the dispense queue, and patient history is recorded structurally through encounters, timeline events, narrative history notes, and long-term conditions.</p>
 
     <h2>2. Document Control</h2>
@@ -81,9 +81,11 @@
     <h3>Authentication and Access Control</h3>
     <ul>
       <li>Login, refresh, logout, and current-user session are implemented.</li>
-      <li>Effective permission model uses role plus extra permissions.</li>
+      <li>Effective permission model uses assigned roles plus extra permissions.</li>
+      <li>Multi-role identity is implemented with <span class="mono">roles</span>, <span class="mono">active_role</span>, and <span class="mono">workflow_profiles</span>.</li>
+      <li>Authenticated active-role switching is implemented through <span class="mono">POST /v1/auth/active-role</span>.</li>
       <li>Sensitive action throttling is in place.</li>
-      <li>Frontend should use returned permissions, not role name alone, for access decisions.</li>
+      <li>Frontend should use returned permissions for actions, <span class="mono">active_role</span> for workspace selection, and <span class="mono">workflow_profiles</span> for role-specific behavior.</li>
     </ul>
 
     <h3>Patient Management</h3>
@@ -141,7 +143,7 @@
     <h2>6. API Integration Model</h2>
     <table>
       <tr><th>Area</th><th>Implemented Endpoint</th></tr>
-      <tr><td>Auth</td><td><span class="mono">/v1/auth/login</span>, <span class="mono">/v1/auth/refresh</span>, <span class="mono">/v1/auth/me</span>, <span class="mono">/v1/auth/logout</span></td></tr>
+      <tr><td>Auth</td><td><span class="mono">/v1/auth/login</span>, <span class="mono">/v1/auth/refresh</span>, <span class="mono">/v1/auth/me</span>, <span class="mono">/v1/auth/logout</span>, <span class="mono">/v1/auth/active-role</span></td></tr>
       <tr><td>Patient search</td><td><span class="mono">/v1/search/patients</span></td></tr>
       <tr><td>Patients</td><td><span class="mono">/v1/patients</span>, <span class="mono">/v1/patients/:id/profile</span></td></tr>
       <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td></tr>
@@ -200,7 +202,7 @@
     <ul>
       <li><span class="mono">npm run typecheck</span> passing</li>
       <li><span class="mono">npm run test --workspace @medsys/api</span> passing</li>
-      <li>76 API tests passing at the time of this document</li>
+      <li>83 API tests passing at the time of this document</li>
     </ul>
 
     <h2>9. Known Limitations and Future Scope</h2>
