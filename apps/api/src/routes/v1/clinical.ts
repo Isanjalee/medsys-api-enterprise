@@ -29,8 +29,15 @@ type ProviderCacheEntry = {
 
 const PROVIDER_CACHE_TTL_MS = 60_000;
 const PROVIDER_TIMEOUT_MS = 2_500;
+const TERMINOLOGY_RESULT_CACHE_TTL_SECONDS = 300;
 const providerResponseCache = new Map<string, ProviderCacheEntry>();
+const inFlightTerminologyRequests = new Map<string, Promise<unknown>>();
 const providerCacheKey = (providerName: "ICD10" | "LOINC", url: URL): string => `${providerName}:${url.toString()}`;
+const terminologyCacheKey = (
+  kind: "icd10" | "diagnoses" | "tests",
+  terms: string,
+  limit: number
+): string => `${kind}:${terms.trim().toLowerCase()}:${limit}`;
 const getCachedProviderResponse = (cacheKey: string, allowStale = false): unknown | null => {
   const cached = providerResponseCache.get(cacheKey);
   if (!cached) {
@@ -259,6 +266,36 @@ const fetchJson = async (
 const isProviderUnavailableError = (error: unknown): error is HttpError =>
   error instanceof HttpError && error.statusCode === 503;
 
+const getOrCreateTerminologyResult = async <T>(
+  request: FastifyRequest,
+  cacheKey: string,
+  loader: () => Promise<T>
+): Promise<T> => {
+  const cached = await request.server.cacheService.getJson<T>("clinicalTerminology", cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const inFlight = inFlightTerminologyRequests.get(cacheKey);
+  if (inFlight) {
+    return (await inFlight) as T;
+  }
+
+  const nextPromise = (async () => {
+    const result = await loader();
+    await request.server.cacheService.setJson("clinicalTerminology", cacheKey, result, TERMINOLOGY_RESULT_CACHE_TTL_SECONDS);
+    return result;
+  })();
+
+  inFlightTerminologyRequests.set(cacheKey, nextPromise);
+
+  try {
+    return await nextPromise;
+  } finally {
+    inFlightTerminologyRequests.delete(cacheKey);
+  }
+};
+
 const clinicalRoutes: FastifyPluginAsync = async (app) => {
   const terminologyQuerySchema = {
     type: "object",
@@ -316,25 +353,27 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
         return { suggestions: [] };
       }
 
-      const url = new URL(app.env.ICD10_API_BASE_URL);
-      url.searchParams.set("sf", "code,name");
-      url.searchParams.set("df", "code,name");
-      url.searchParams.set("terms", terms);
-      url.searchParams.set("count", "10");
+      return getOrCreateTerminologyResult(request, terminologyCacheKey("icd10", terms, 10), async () => {
+        const url = new URL(app.env.ICD10_API_BASE_URL);
+        url.searchParams.set("sf", "code,name");
+        url.searchParams.set("df", "code,name");
+        url.searchParams.set("terms", terms);
+        url.searchParams.set("count", "10");
 
-      let suggestions: string[];
-      try {
-        const payload = await fetchJson(request, url, "ICD10");
-        suggestions = normalizeIcd10Payload(payload).map((item) => `${item.code} - ${item.display}`);
-      } catch (error) {
-        if (!isProviderUnavailableError(error)) {
-          throw error;
+        let suggestions: string[];
+        try {
+          const payload = await fetchJson(request, url, "ICD10");
+          suggestions = normalizeIcd10Payload(payload).map((item) => `${item.code} - ${item.display}`);
+        } catch (error) {
+          if (!isProviderUnavailableError(error)) {
+            throw error;
+          }
+
+          request.log.warn({ providerName: "ICD10", terms }, "Falling back to curated ICD10 suggestions");
+          suggestions = searchFallbackDiagnoses(terms, 10).map((item) => `${item.code} - ${item.display}`);
         }
-
-        request.log.warn({ providerName: "ICD10", terms }, "Falling back to curated ICD10 suggestions");
-        suggestions = searchFallbackDiagnoses(terms, 10).map((item) => `${item.code} - ${item.display}`);
-      }
-      return { suggestions };
+        return { suggestions };
+      });
     }
   );
 
@@ -396,27 +435,29 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
         return { diagnoses: [] };
       }
 
-      const url = new URL(app.env.ICD10_API_BASE_URL);
-      url.searchParams.set("sf", "code,name");
-      url.searchParams.set("df", "code,name");
-      url.searchParams.set("terms", terms);
-      url.searchParams.set("count", String(limit));
+      return getOrCreateTerminologyResult(request, terminologyCacheKey("diagnoses", terms, limit), async () => {
+        const url = new URL(app.env.ICD10_API_BASE_URL);
+        url.searchParams.set("sf", "code,name");
+        url.searchParams.set("df", "code,name");
+        url.searchParams.set("terms", terms);
+        url.searchParams.set("count", String(limit));
 
-      try {
-        const payload = await fetchJson(request, url, "ICD10");
-        return {
-          diagnoses: normalizeIcd10Payload(payload)
-        };
-      } catch (error) {
-        if (!isProviderUnavailableError(error)) {
-          throw error;
+        try {
+          const payload = await fetchJson(request, url, "ICD10");
+          return {
+            diagnoses: normalizeIcd10Payload(payload)
+          };
+        } catch (error) {
+          if (!isProviderUnavailableError(error)) {
+            throw error;
+          }
+
+          request.log.warn({ providerName: "ICD10", terms, limit: query.limit }, "Falling back to curated ICD10 diagnoses");
+          return {
+            diagnoses: searchFallbackDiagnoses(terms, limit)
+          };
         }
-
-        request.log.warn({ providerName: "ICD10", terms, limit: query.limit }, "Falling back to curated ICD10 diagnoses");
-        return {
-          diagnoses: searchFallbackDiagnoses(terms, limit)
-        };
-      }
+      });
     }
   );
 
@@ -480,32 +521,34 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
         return { tests: [] };
       }
 
-      const url = new URL(app.env.LOINC_API_BASE_URL);
-      const lowerBaseUrl = app.env.LOINC_API_BASE_URL.toLowerCase();
-      if (lowerBaseUrl.includes("clinicaltables.nlm.nih.gov")) {
-        url.searchParams.set("terms", terms);
-        url.searchParams.set("count", String(limit));
-        url.searchParams.set("df", "LOINC_NUM,LONG_COMMON_NAME");
-      } else {
-        url.searchParams.set("filter", terms);
-        url.searchParams.set("count", String(limit));
-      }
-
-      try {
-        const payload = await fetchJson(request, url, "LOINC");
-        return {
-          tests: normalizeAndFilterLoincPayload(payload, limit)
-        };
-      } catch (error) {
-        if (!isProviderUnavailableError(error)) {
-          throw error;
+      return getOrCreateTerminologyResult(request, terminologyCacheKey("tests", terms, limit), async () => {
+        const url = new URL(app.env.LOINC_API_BASE_URL);
+        const lowerBaseUrl = app.env.LOINC_API_BASE_URL.toLowerCase();
+        if (lowerBaseUrl.includes("clinicaltables.nlm.nih.gov")) {
+          url.searchParams.set("terms", terms);
+          url.searchParams.set("count", String(limit));
+          url.searchParams.set("df", "LOINC_NUM,LONG_COMMON_NAME");
+        } else {
+          url.searchParams.set("filter", terms);
+          url.searchParams.set("count", String(limit));
         }
 
-        request.log.warn({ providerName: "LOINC", terms, limit: query.limit }, "Falling back to curated LOINC tests");
-        return {
-          tests: searchFallbackTests(terms, limit)
-        };
-      }
+        try {
+          const payload = await fetchJson(request, url, "LOINC");
+          return {
+            tests: normalizeAndFilterLoincPayload(payload, limit)
+          };
+        } catch (error) {
+          if (!isProviderUnavailableError(error)) {
+            throw error;
+          }
+
+          request.log.warn({ providerName: "LOINC", terms, limit: query.limit }, "Falling back to curated LOINC tests");
+          return {
+            tests: searchFallbackTests(terms, limit)
+          };
+        }
+      });
     }
   );
 
