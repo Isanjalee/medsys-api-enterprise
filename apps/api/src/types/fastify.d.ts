@@ -1,7 +1,7 @@
 import "fastify";
 import type { AppEnv } from "@medsys/config";
 import type { buildDbClient } from "@medsys/db";
-import type { Permission, UserRole } from "@medsys/types";
+import type { Permission, UserRole, WorkflowProfiles } from "@medsys/types";
 import type { FastifyRequest, preHandlerHookHandler } from "fastify";
 import type { AuditPublisher } from "../lib/audit-publisher.js";
 import type { CacheService } from "../lib/cache-service.js";
@@ -32,8 +32,11 @@ declare module "fastify" {
     actor?: {
       userId: number;
       role: UserRole;
+      roles: UserRole[];
+      activeRole: UserRole;
       organizationId: string;
       permissions: Permission[];
+      workflowProfiles: WorkflowProfiles;
       extraPermissions: Permission[];
     };
     traceId?: string;
