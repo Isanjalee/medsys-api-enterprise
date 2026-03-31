@@ -14,6 +14,19 @@ import { ZodError } from "zod";
 import { HttpError, ValidationError, validationIssuesFromZodError } from "./lib/http-error.js";
 import { createSafeErrorLog, createSafeRequestLog, scrubPhi } from "./lib/phi-scrub.js";
 
+const buildValidationErrorEnvelope = (
+  requestId: string,
+  issues: Array<{ field: string; message: string }>
+) => ({
+  error: "Validation failed.",
+  code: "VALIDATION_ERROR",
+  severity: "warning" as const,
+  userMessage: "Please check the highlighted fields and try again.",
+  requestId,
+  statusCode: 400,
+  issues
+});
+
 export const buildApp = async () => {
   const app = Fastify({
     ajv: {
@@ -112,25 +125,25 @@ export const buildApp = async () => {
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ValidationError) {
-      return reply.status(400).send({
-        error: "Validation failed.",
-        issues: error.issues
-      });
+      return reply.status(400).send(buildValidationErrorEnvelope(request.id, error.issues));
     }
     if (error instanceof ZodError) {
-      return reply.status(400).send({
-        error: "Validation failed.",
-        issues: validationIssuesFromZodError(error)
-      });
+      return reply.status(400).send(buildValidationErrorEnvelope(request.id, validationIssuesFromZodError(error)));
     }
     if ((error as { code?: string }).code === "FST_ERR_CTP_INVALID_JSON_BODY") {
-      return reply.status(400).send({
-        error: "Validation failed.",
-        issues: [{ field: "body", message: "Must be valid JSON." }]
-      });
+      return reply
+        .status(400)
+        .send(buildValidationErrorEnvelope(request.id, [{ field: "body", message: "Must be valid JSON." }]));
     }
     if (error instanceof HttpError) {
-      return reply.status(error.statusCode).send({ message: error.message, requestId: request.id });
+      return reply.status(error.statusCode).send({
+        message: error.message,
+        code: error.code,
+        severity: error.severity,
+        userMessage: error.userMessage,
+        requestId: request.id,
+        statusCode: error.statusCode
+      });
     }
     request.log.error(
       {
@@ -140,7 +153,14 @@ export const buildApp = async () => {
       },
       "Unhandled error"
     );
-    return reply.status(500).send({ message: "Internal server error", requestId: request.id });
+    return reply.status(500).send({
+      message: "Internal server error",
+      code: "INTERNAL_SERVER_ERROR",
+      severity: "error",
+      userMessage: "Something went wrong. Please try again.",
+      requestId: request.id,
+      statusCode: 500
+    });
   });
 
   app.get("/docs", async (_request, reply) => {
