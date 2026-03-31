@@ -67,6 +67,27 @@ const getUserIdByEmail = async (
   return user.id;
 };
 
+const assertValidationEnvelope = (
+  body: {
+    error: string;
+    code: string;
+    severity: string;
+    userMessage: string;
+    requestId: string;
+    statusCode: number;
+    issues: Array<{ field: string; message: string }>;
+  },
+  issues: Array<{ field: string; message: string }>
+) => {
+  assert.equal(body.error, "Validation failed.");
+  assert.equal(body.code, "VALIDATION_ERROR");
+  assert.equal(body.severity, "warning");
+  assert.equal(body.userMessage, "Please check the highlighted fields and try again.");
+  assert.equal(body.statusCode, 400);
+  assert.equal(typeof body.requestId, "string");
+  assert.deepEqual(body.issues, issues);
+};
+
 test("health endpoint", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -500,10 +521,7 @@ test("auth login rejects unknown fields with validation envelope", async () => {
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "extra", message: "Unknown field." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "extra", message: "Unknown field." }]);
   await app.close();
 });
 
@@ -2371,15 +2389,12 @@ test("owner cannot grant owner-only permissions as extra doctor permissions", as
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [
-      {
-        field: "extraPermissions",
-        message: "Only assistant-support permissions can be granted: user.write"
-      }
-    ]
-  });
+  assertValidationEnvelope(response.json() as any, [
+    {
+      field: "extraPermissions",
+      message: "Only assistant-support permissions can be granted: user.write"
+    }
+  ]);
   await app.close();
 });
 
@@ -2409,15 +2424,12 @@ test("non-doctor users cannot receive doctor workflow mode", async () => {
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [
-      {
-        field: "doctorWorkflowMode",
-        message: "doctorWorkflowMode is only allowed for doctor users."
-      }
-    ]
-  });
+  assertValidationEnvelope(response.json() as any, [
+    {
+      field: "doctorWorkflowMode",
+      message: "doctorWorkflowMode is only allowed for doctor users."
+    }
+  ]);
 
   await app.close();
 });
@@ -3021,10 +3033,7 @@ test("patient create rejects unknown fields with validation envelope", async () 
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "unknownField", message: "Unknown field." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "unknownField", message: "Unknown field." }]);
   await app.close();
 });
 
@@ -3063,10 +3072,7 @@ test("patient patch rejects empty body with validation envelope", async () => {
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "body", message: "At least one field must be provided." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "body", message: "At least one field must be provided." }]);
   await app.close();
 });
 
@@ -3108,10 +3114,7 @@ test("patient vitals rejects unknown fields with validation envelope", async () 
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "extra", message: "Unknown field." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "extra", message: "Unknown field." }]);
   await app.close();
 });
 
@@ -3152,10 +3155,7 @@ test("patient vitals rejects payloads without any measurement values", async () 
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "body", message: "At least one vital measurement must be provided" }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "body", message: "At least one vital measurement must be provided" }]);
   await app.close();
 });
 
@@ -3412,10 +3412,7 @@ test("patient vitals patch rejects an empty body with validation envelope", asyn
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "body", message: "At least one field must be provided" }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "body", message: "At least one field must be provided" }]);
   await app.close();
 });
 
@@ -4533,10 +4530,7 @@ test("patient create rejects mismatched age and DOB with validation envelope", a
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "age", message: "Age does not match DOB." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "age", message: "Age does not match DOB." }]);
   await app.close();
 });
 
@@ -4648,10 +4642,7 @@ test("users create rejects unknown fields with validation envelope", async () =>
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "extra", message: "Unknown field." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "extra", message: "Unknown field." }]);
   await app.close();
 });
 
@@ -4801,10 +4792,7 @@ test("family member add rejects unknown fields with validation envelope", async 
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "extra", message: "Unknown field." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "extra", message: "Unknown field." }]);
   await app.close();
 });
 
@@ -4848,10 +4836,7 @@ test("inventory movement rejects unknown fields with validation envelope", async
   });
 
   assert.equal(response.statusCode, 400);
-  assert.deepEqual(response.json(), {
-    error: "Validation failed.",
-    issues: [{ field: "extra", message: "Unknown field." }]
-  });
+  assertValidationEnvelope(response.json() as any, [{ field: "extra", message: "Unknown field." }]);
   await app.close();
 });
 
