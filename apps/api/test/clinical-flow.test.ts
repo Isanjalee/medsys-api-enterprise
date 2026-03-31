@@ -2647,6 +2647,61 @@ test("clinical diagnoses endpoint returns normalized diagnosis objects", async (
   }
 });
 
+test("clinical diagnoses endpoint reuses cached terminology results for identical queries", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () => {
+      fetchCount += 1;
+      return new Response(
+        JSON.stringify([
+          1,
+          ["K29.70"],
+          null,
+          [["K29.70", "Gastritis, unspecified, without bleeding"]]
+        ]),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    };
+
+    const firstResponse = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/diagnoses?terms=gas&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    const secondResponse = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/diagnoses?terms=gas&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(firstResponse.statusCode, 200);
+    assert.equal(secondResponse.statusCode, 200);
+    assert.equal(fetchCount, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
 test("clinical diagnoses endpoint falls back to curated diagnoses when ICD10 provider is unavailable", async () => {
   if (!process.env.DATABASE_URL) {
     return;
