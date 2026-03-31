@@ -4,6 +4,24 @@ export type TerminologySuggestion = {
   display: string;
 };
 
+const CURATED_ICD10_DIAGNOSES: TerminologySuggestion[] = [
+  { code: "R14.1", codeSystem: "ICD-10-CM", display: "Gas pain" },
+  { code: "R14.3", codeSystem: "ICD-10-CM", display: "Flatulence" },
+  { code: "K29.70", codeSystem: "ICD-10-CM", display: "Gastritis, unspecified, without bleeding" },
+  { code: "K21.9", codeSystem: "ICD-10-CM", display: "Gastro-esophageal reflux disease without esophagitis" },
+  { code: "K52.9", codeSystem: "ICD-10-CM", display: "Noninfective gastroenteritis and colitis, unspecified" },
+  { code: "R10.13", codeSystem: "ICD-10-CM", display: "Epigastric pain" },
+  { code: "R10.9", codeSystem: "ICD-10-CM", display: "Unspecified abdominal pain" },
+  { code: "R11.0", codeSystem: "ICD-10-CM", display: "Nausea" },
+  { code: "R19.7", codeSystem: "ICD-10-CM", display: "Diarrhea, unspecified" },
+  { code: "K59.00", codeSystem: "ICD-10-CM", display: "Constipation, unspecified" },
+  { code: "J06.9", codeSystem: "ICD-10-CM", display: "Acute upper respiratory infection, unspecified" },
+  { code: "J18.9", codeSystem: "ICD-10-CM", display: "Pneumonia, unspecified organism" },
+  { code: "J45.909", codeSystem: "ICD-10-CM", display: "Unspecified asthma, uncomplicated" },
+  { code: "I10", codeSystem: "ICD-10-CM", display: "Essential (primary) hypertension" },
+  { code: "E11.9", codeSystem: "ICD-10-CM", display: "Type 2 diabetes mellitus without complications" }
+];
+
 export type RecommendedTest = TerminologySuggestion & {
   category: "laboratory" | "observation" | "screening";
 };
@@ -110,4 +128,18 @@ export const getRecommendedTestsForDiagnosis = (code: string): RecommendedTest[]
     }
   }
   return [];
+};
+
+export const searchFallbackDiagnoses = (terms: string, limit: number): TerminologySuggestion[] => {
+  const normalizedTerms = terms.trim().toLowerCase();
+  if (!normalizedTerms) {
+    return [];
+  }
+
+  return CURATED_ICD10_DIAGNOSES
+    .filter((item) => {
+      const haystack = `${item.code} ${item.display}`.toLowerCase();
+      return haystack.includes(normalizedTerms);
+    })
+    .slice(0, limit);
 };
