@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { and, eq, sql } from "drizzle-orm";
 import { appointments, inventoryItems, patients, prescriptions } from "@medsys/db";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import { resolveActiveWorkflowProfile } from "../../lib/user-permissions.js";
 
 const analyticsRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Analytics", "AnalyticsController", {
@@ -46,7 +47,17 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       patients: Number(patientCount[0]?.count ?? 0),
       waitingAppointments: Number(waitingCount[0]?.count ?? 0),
       prescriptions: Number(prescriptionCount[0]?.count ?? 0),
-      lowStockItems: Number(lowStockCount[0]?.count ?? 0)
+      lowStockItems: Number(lowStockCount[0]?.count ?? 0),
+      role_context: {
+        role: actor.role,
+        active_role: actor.activeRole,
+        roles: actor.roles,
+        workflow_profile: resolveActiveWorkflowProfile(
+          actor.roles,
+          actor.activeRole,
+          actor.workflowProfiles.doctor?.mode ?? null
+        )
+      }
     };
   });
 
