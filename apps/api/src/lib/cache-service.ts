@@ -1,4 +1,4 @@
-export type CacheNamespace = "appointmentQueue" | "patientProfile";
+export type CacheNamespace = "appointmentQueue" | "patientProfile" | "clinicalTerminology";
 type CacheStatMetric = "hits" | "misses" | "sets" | "invalidations";
 
 export type CacheNamespaceStats = Record<CacheStatMetric, number>;
@@ -12,11 +12,12 @@ type RedisCacheClient = {
   hGetAll: (key: string) => Promise<Record<string, string>>;
 };
 
-const CACHE_NAMESPACES: CacheNamespace[] = ["appointmentQueue", "patientProfile"];
+const CACHE_NAMESPACES: CacheNamespace[] = ["appointmentQueue", "patientProfile", "clinicalTerminology"];
 
 const emptyStats = (): CacheStatsSnapshot => ({
   appointmentQueue: { hits: 0, misses: 0, sets: 0, invalidations: 0 },
-  patientProfile: { hits: 0, misses: 0, sets: 0, invalidations: 0 }
+  patientProfile: { hits: 0, misses: 0, sets: 0, invalidations: 0 },
+  clinicalTerminology: { hits: 0, misses: 0, sets: 0, invalidations: 0 }
 });
 
 const statKey = (namespace: CacheNamespace): string => `medsys:cache:stats:${namespace}`;
@@ -63,7 +64,8 @@ export const createMemoryCacheService = (): CacheService => {
     },
     getStats: async () => ({
       appointmentQueue: { ...stats.appointmentQueue },
-      patientProfile: { ...stats.patientProfile }
+      patientProfile: { ...stats.patientProfile },
+      clinicalTerminology: { ...stats.clinicalTerminology }
     })
   };
 };
