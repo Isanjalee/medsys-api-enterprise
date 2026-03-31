@@ -1,10 +1,11 @@
 import {
   DOCTOR_WORKFLOW_MODES,
   PERMISSIONS,
-  canRoleReceiveExtraPermissions,
   isAssistantSupportPermission,
   normalizePermissions,
+  normalizeRoles,
   resolveEffectivePermissions,
+  resolveEffectivePermissionsForRoles,
   type DoctorWorkflowMode,
   type Permission,
   type UserRole
@@ -31,11 +32,11 @@ export const normalizeStoredDoctorWorkflowMode = (value: unknown): DoctorWorkflo
 };
 
 export const resolveDoctorWorkflowMode = (
-  role: UserRole,
+  roles: readonly UserRole[],
   doctorWorkflowMode: DoctorWorkflowMode | null | undefined,
   field = "doctorWorkflowMode"
 ): DoctorWorkflowMode | null => {
-  if (role !== "doctor") {
+  if (!roles.includes("doctor")) {
     if (doctorWorkflowMode !== undefined && doctorWorkflowMode !== null) {
       throw validationError([
         {
@@ -52,7 +53,7 @@ export const resolveDoctorWorkflowMode = (
 };
 
 export const assertAssignableExtraPermissions = (
-  role: UserRole,
+  roles: readonly UserRole[],
   extraPermissions: readonly Permission[],
   field = "extraPermissions"
 ): Permission[] => {
@@ -62,7 +63,7 @@ export const assertAssignableExtraPermissions = (
     return normalized;
   }
 
-  if (!canRoleReceiveExtraPermissions(role)) {
+  if (!roles.includes("doctor")) {
     throw validationError([
       {
         field,
@@ -86,3 +87,49 @@ export const assertAssignableExtraPermissions = (
 
 export const resolveUserPermissions = (role: UserRole, extraPermissions: readonly Permission[]): Permission[] =>
   resolveEffectivePermissions(role, normalizePermissions(extraPermissions));
+
+export const resolveActiveWorkflowProfile = (
+  roles: readonly UserRole[],
+  activeRole: UserRole,
+  doctorWorkflowMode: DoctorWorkflowMode | null
+): { mode: string } | null => {
+  if (activeRole === "doctor" && roles.includes("doctor")) {
+    return { mode: doctorWorkflowMode ?? "self_service" };
+  }
+
+  if (activeRole === "assistant" && roles.includes("assistant")) {
+    return { mode: "standard" };
+  }
+
+  if (activeRole === "owner" && roles.includes("owner")) {
+    return { mode: "standard" };
+  }
+
+  return null;
+};
+
+export const resolveUserPermissionsForRoles = (
+  roles: readonly UserRole[],
+  extraPermissions: readonly Permission[]
+): Permission[] => resolveEffectivePermissionsForRoles(normalizeRoles(roles), normalizePermissions(extraPermissions));
+
+export const normalizeStoredRoles = (primaryRole: UserRole, storedRoles: readonly UserRole[] = []): UserRole[] =>
+  normalizeRoles(storedRoles.length > 0 ? storedRoles : [primaryRole]);
+
+export const resolveActiveRole = (
+  roles: readonly UserRole[],
+  activeRole: UserRole | null | undefined,
+  fallbackRole?: UserRole
+): UserRole => {
+  const normalizedRoles = normalizeRoles(roles);
+
+  if (activeRole && normalizedRoles.includes(activeRole)) {
+    return activeRole;
+  }
+
+  if (fallbackRole && normalizedRoles.includes(fallbackRole)) {
+    return fallbackRole;
+  }
+
+  return normalizedRoles[0] ?? fallbackRole ?? "doctor";
+};
