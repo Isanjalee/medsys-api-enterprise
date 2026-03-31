@@ -2855,6 +2855,116 @@ test("clinical tests endpoint filters out note and questionnaire style loinc noi
   }
 });
 
+test("clinical tests endpoint falls back to curated tests when LOINC provider is unavailable", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () => {
+      throw new Error("provider offline");
+    };
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/tests?terms=glucose&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      tests: [
+        {
+          code: "1558-6",
+          codeSystem: "LOINC",
+          display: "Fasting glucose [Mass/volume] in Serum or Plasma",
+          category: "laboratory"
+        }
+      ]
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
+test("clinical tests endpoint serves cached provider results when the next provider call fails", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  try {
+    const loginBody = await loginAs(app, "doctor@medsys.local");
+
+    globalThis.fetch = async () => {
+      fetchCount += 1;
+
+      if (fetchCount === 1) {
+        return new Response(
+          JSON.stringify([
+            1,
+            ["3016-3"],
+            null,
+            [["3016-3", "Thyrotropin (TSH) [Units/volume] in Serum or Plasma"]]
+          ]),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        );
+      }
+
+      throw new Error("provider offline");
+    };
+
+    const firstResponse = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/tests?terms=TSH&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(firstResponse.statusCode, 200);
+
+    const secondResponse = await app.inject({
+      method: "GET",
+      url: "/v1/clinical/tests?terms=TSH&limit=5",
+      headers: {
+        authorization: `Bearer ${loginBody.accessToken}`
+      }
+    });
+
+    assert.equal(secondResponse.statusCode, 200);
+    assert.deepEqual(secondResponse.json(), {
+      tests: [
+        {
+          code: "3016-3",
+          codeSystem: "LOINC",
+          display: "Thyrotropin (TSH) [Units/volume] in Serum or Plasma",
+          category: null
+        }
+      ]
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+  }
+});
+
 test("clinical recommended tests endpoint returns curated mappings for a diagnosis code", async () => {
   if (!process.env.DATABASE_URL) {
     return;
