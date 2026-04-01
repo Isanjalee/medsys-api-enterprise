@@ -101,11 +101,11 @@ Important implemented rule:
 Implemented:
 
 - patient search and quick selection
-- patient summary list and full patient profile
+- patient summary list, full patient profile, and consultation-centric patient history
 - patient creation and update
 - guardian-aware patient creation
 - family auto-creation and family linking
-- patient allergies, conditions, history, timeline, and vitals
+- patient allergies, conditions, history, timeline, vitals, and bundled family detail in profile
 
 Important implemented rule:
 
@@ -220,7 +220,7 @@ This is one of the key workflow-hardening changes in the current implementation.
 | Auth | `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/me`, `/v1/auth/logout` |
 | Auth role switch | `/v1/auth/active-role` |
 | Patient search | `/v1/search/patients` |
-| Patients | `/v1/patients`, `/v1/patients/:id/profile` |
+| Patients | `/v1/patients`, `/v1/patients/:id/profile`, `/v1/patients/:id/consultations` |
 | Families | `/v1/families` |
 | Appointments | `/v1/appointments` |
 | Visit start | `/v1/visits/start` |
@@ -283,6 +283,7 @@ This is important for frontend and operational workflows because it prevents dup
 - guardian linking and guardian draft creation
 - patient timeline and history integration
 - diagnosis persistence into patient conditions
+- patient profile now includes bundled family detail and patient consultation history can be loaded encounter-first from one endpoint
 - terminology lookup endpoints
 - noisy medical-test result filtering
 - pending dispense queue enrichment
@@ -298,7 +299,7 @@ Current verified state:
 
 - `npm run typecheck` passing
 - `npm run test --workspace @medsys/api` passing
-- 83 API tests passing at the time of this document
+- 86 API tests passing at the time of this document
 
 ---
 
