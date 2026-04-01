@@ -957,6 +957,8 @@ test("patient routes expose frontend-compatible list/detail/update shapes", asyn
       id: number;
       name: string;
       date_of_birth: string | null;
+      age: number | null;
+      gender: string | null;
       phone: string | null;
       address: string | null;
       created_at: string;
@@ -964,6 +966,8 @@ test("patient routes expose frontend-compatible list/detail/update shapes", asyn
   };
   assert.equal(createBody.patient.name, `Contract ${uniqueSuffix} Patient`);
   assert.equal(createBody.patient.date_of_birth, "1990-06-01");
+  assert.equal(createBody.patient.age, 35);
+  assert.equal(createBody.patient.gender, "other");
 
   const listPatientsResponse = await app.inject({
     method: "GET",
@@ -975,9 +979,31 @@ test("patient routes expose frontend-compatible list/detail/update shapes", asyn
 
   assert.equal(listPatientsResponse.statusCode, 200);
   const listBody = listPatientsResponse.json() as {
-    patients: Array<{ id: number; name: string; date_of_birth: string | null; created_at: string }>;
+    patients: Array<{
+      id: number;
+      name: string;
+      nic: string | null;
+      date_of_birth: string | null;
+      age: number | null;
+      gender: string | null;
+      family_name: string | null;
+      visit_count: number;
+      last_visit_at: string | null;
+      next_appointment: { id: number; scheduled_at: string; status: string } | null;
+      allergy_highlights: string[];
+      major_active_condition: string | null;
+      created_at: string;
+    }>;
   };
   assert.equal(Array.isArray(listBody.patients), true);
+  const listedPatient = listBody.patients.find((patient) => patient.id === createBody.patient.id);
+  assert.ok(listedPatient);
+  assert.equal(listedPatient?.nic, null);
+  assert.equal(listedPatient?.gender, "other");
+  assert.equal(typeof listedPatient?.visit_count, "number");
+  assert.equal(listedPatient?.next_appointment, null);
+  assert.equal(Array.isArray(listedPatient?.allergy_highlights), true);
+  assert.equal(listedPatient?.major_active_condition, null);
   assert.equal(listBody.patients.some((patient) => patient.id === createBody.patient.id), true);
 
   const getPatientResponse = await app.inject({
