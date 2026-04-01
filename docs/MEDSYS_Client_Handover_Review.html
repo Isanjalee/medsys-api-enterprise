@@ -92,7 +92,7 @@
     <ul>
       <li>Patient search and quick selection are implemented.</li>
       <li>Patient summary list and full profile are implemented.</li>
-      <li>Patient creation, update, guardian-aware flows, family auto-creation, allergies, conditions, history, timeline, and vitals are implemented.</li>
+      <li>Patient creation, update, guardian-aware flows, family auto-creation, allergies, conditions, history, timeline, vitals, bundled family detail in profile, and consultation-centric history are implemented.</li>
       <li><span class="mono">dateOfBirth</span> is canonical; <span class="mono">age</span> is only a helper.</li>
     </ul>
 
@@ -145,7 +145,7 @@
       <tr><th>Area</th><th>Implemented Endpoint</th></tr>
       <tr><td>Auth</td><td><span class="mono">/v1/auth/login</span>, <span class="mono">/v1/auth/refresh</span>, <span class="mono">/v1/auth/me</span>, <span class="mono">/v1/auth/logout</span>, <span class="mono">/v1/auth/active-role</span></td></tr>
       <tr><td>Patient search</td><td><span class="mono">/v1/search/patients</span></td></tr>
-      <tr><td>Patients</td><td><span class="mono">/v1/patients</span>, <span class="mono">/v1/patients/:id/profile</span></td></tr>
+      <tr><td>Patients</td><td><span class="mono">/v1/patients</span>, <span class="mono">/v1/patients/:id/profile</span>, <span class="mono">/v1/patients/:id/consultations</span></td></tr>
       <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td></tr>
       <tr><td>Visit start</td><td><span class="mono">/v1/visits/start</span></td></tr>
       <tr><td>Consultation workflow</td><td><span class="mono">/v1/consultations/save</span></td></tr>
@@ -190,6 +190,7 @@
       <li>Guardian linking and guardian draft creation implemented and verified.</li>
       <li>Patient timeline and history integration implemented and verified.</li>
       <li>Diagnosis persistence into patient conditions implemented and verified.</li>
+      <li>Patient profile now bundles family detail, and consultation history can be loaded from one encounter-grouped patient endpoint.</li>
       <li>Terminology lookup endpoints implemented and verified.</li>
       <li>Pending dispense queue enrichment implemented and verified.</li>
       <li>Inventory search for assistant stock matching implemented and verified.</li>
