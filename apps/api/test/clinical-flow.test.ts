@@ -1030,7 +1030,8 @@ test("patient routes expose frontend-compatible list/detail/update shapes", asyn
       authorization: `Bearer ${loginBody.accessToken}`
     },
     payload: {
-      address: "84 Updated Street"
+      address: "84 Updated Street",
+      bloodGroup: "O+"
     }
   });
 
@@ -1090,11 +1091,15 @@ test("patient create accepts compatibility fields used by the frontend BFF", asy
   assert.equal(profileResponse.statusCode, 200);
   const profileBody = profileResponse.json() as {
     patient: { nic: string | null; age: number | null; gender: string | null; phone: string | null };
+    family: { familyId: number | null; family: { id: number; familyName: string } | null; members: unknown[] };
   };
   assert.equal(profileBody.patient.nic, `NIC-${uniqueSuffix}`);
   assert.equal(profileBody.patient.age, 35);
   assert.equal(profileBody.patient.gender, "female");
   assert.equal(profileBody.patient.phone, "555-3000");
+  assert.equal(profileBody.family.familyId, null);
+  assert.equal(profileBody.family.family, null);
+  assert.equal(Array.isArray(profileBody.family.members), true);
   await app.close();
 });
 
@@ -1716,10 +1721,25 @@ test("minor patients can link to a guardian patient and be found by guardian NIC
       guardianNic: string | null;
       guardianRelationship: string | null;
     };
+    family: {
+      familyId: number | null;
+      family: { id: number; familyName: string } | null;
+      guardianPatientId: number | null;
+      guardianRelationship: string | null;
+      members: Array<{ patientId: number; relationship: string | null }>;
+    };
   };
   assert.equal(profileBody.patient.familyId, createdFamily.id);
   assert.equal(profileBody.patient.guardianPatientId, guardianBody.patient.id);
   assert.equal(profileBody.patient.guardianRelationship, "mother");
+  assert.equal(profileBody.family.familyId, createdFamily.id);
+  assert.equal(profileBody.family.family?.id, createdFamily.id);
+  assert.equal(profileBody.family.guardianPatientId, guardianBody.patient.id);
+  assert.equal(profileBody.family.guardianRelationship, "mother");
+  assert.equal(
+    profileBody.family.members.some((member) => member.patientId === childBody.patient.id && member.relationship === "child"),
+    true
+  );
 
   const searchResponse = await app.inject({
     method: "GET",
@@ -3815,9 +3835,16 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
 
   assert.equal(profileResponse.statusCode, 200);
   const profileBody = profileResponse.json() as {
+    family: { members: Array<{ patientId: number; relationship: string | null }> };
     conditions: Array<{ conditionName: string; icd10Code: string | null }>;
     timeline: Array<{ title: string; eventKind: string | null; description: string | null }>;
   };
+  assert.equal(
+    profileBody.family.members.some(
+      (member) => member.patientId === consultationBody.patient.id && member.relationship === "child"
+    ),
+    true
+  );
   assert.equal(
     profileBody.conditions.some(
       (condition) => condition.conditionName === "Childhood asthma" && condition.icd10Code === "J45.909"
@@ -3833,6 +3860,36 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
     ),
     true
   );
+
+  const consultationsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${consultationBody.patient.id}/consultations`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(consultationsResponse.statusCode, 200);
+  const consultationsBody = consultationsResponse.json() as {
+    consultations: Array<{
+      encounter_id: number;
+      reason: string | null;
+      diagnoses: Array<{ name: string; code: string | null }>;
+      tests: Array<{ name: string; status: string }>;
+      drugs: Array<{ name: string; source: string }>;
+    }>;
+  };
+  const savedConsultation = consultationsBody.consultations.find(
+    (consultation) => consultation.encounter_id === consultationBody.encounter_id
+  );
+  assert.ok(savedConsultation);
+  assert.equal(savedConsultation?.reason, "Walk-in consultation");
+  assert.equal(
+    savedConsultation?.diagnoses.some((diagnosis) => diagnosis.name === "Acute viral fever"),
+    true
+  );
+  assert.equal(savedConsultation?.tests.length, 0);
+  assert.equal(savedConsultation?.drugs.some((drug) => drug.name === "Paracetamol" && drug.source === "clinical"), true);
 
   const historyResponse = await app.inject({
     method: "GET",
