@@ -80,7 +80,7 @@ npm run dev -w @medsys/worker
 - `/v1/clinical/icd10`
 - `/v1/clinical/diagnoses`, `/v1/clinical/tests`, `/v1/clinical/diagnoses/:code/recommended-tests`
 - `/v1/search/patients`
-- `/v1/patients`, `/v1/patients/:id`, `/v1/patients/:id/history`, `/v1/patients/:id/profile`
+- `/v1/patients`, `/v1/patients/:id`, `/v1/patients/:id/history`, `/v1/patients/:id/profile`, `/v1/patients/:id/consultations`
 - `/v1/patients/:id/family`, `/v1/patients/:id/allergies`, `/v1/patients/:id/conditions`
 - `/v1/patients/:id/vitals`, `/v1/patients/:id/timeline`
 - `/v1/families`
@@ -99,12 +99,18 @@ npm run dev -w @medsys/worker
 
 ## Patient API behavior
 - `GET /v1/patients` returns a summary list for browsing:
-  - `id`, `name`, `date_of_birth`, `patient_code`, `phone`, `address`, `created_at`, `family_id`, `guardian_patient_id`
+  - `id`, `name`, `date_of_birth`, `patient_code`, `nic`, `age`, `gender`, `phone`, `address`, `created_at`, `family_id`, `family_name`, `guardian_patient_id`
+  - `visit_count`, `last_visit_at`, `next_appointment`, `allergy_highlights`, `major_active_condition`
 - `GET /v1/search/patients` is the doctor-facing lookup by code/NIC/guardian NIC/phone/name:
   - searches by patient name, patient code, patient NIC, phone, guardian name, guardian NIC, and guardian phone
   - returns quick-selection fields: `patient_code`, `nic`, `guardian_nic`, `date_of_birth`, `gender`
 - `GET /v1/patients/:id/profile` returns the full patient details record:
   - includes identity and guardian fields such as `nic`, `age`, `gender`, `guardian_patient_id`, `guardian_nic`, `guardian_phone`, and `guardian_relationship`
+  - includes a bundled `family` section with family header data plus members, so profile screens do not need a second family fetch
+  - includes `allergies`, `conditions`, `vitals`, and `timeline`
+- `GET /v1/patients/:id/consultations` returns consultation-centric patient history:
+  - grouped by encounter for UI-friendly history cards
+  - each item includes `encounter_id`, `appointment_id`, `checked_at`, `event_date`, `title`, `status`, `reason`, `diagnoses`, `tests`, and `drugs`
 - Patient creation and update support guardian-aware fields:
   - `familyId`, `familyCode`, `guardianPatientId`, `guardianName`, `guardianNic`, `guardianPhone`, `guardianRelationship`
 - Patient creation supports profile enrichment fields in both payload styles:
@@ -186,7 +192,7 @@ For clinics operating without an assistant, the doctor workflow natively support
 - Patient profile update is atomic:
   - `PATCH /v1/patients/:id` rolls back patient, family, and allergy changes together if any part fails
 - Patient summary responses remain stable:
-  - `/v1/patients` uses snake_case fields such as `patient_code`, `family_id`, `guardian_patient_id`, and `created_at`
+  - `/v1/patients` uses snake_case fields such as `patient_code`, `family_id`, `guardian_patient_id`, `allergy_highlights`, and `created_at`
 - Encounter bundle save is atomic:
   - encounter + diagnoses + tests + prescription + items + appointment status update
 - Consultation workflow save is atomic:
