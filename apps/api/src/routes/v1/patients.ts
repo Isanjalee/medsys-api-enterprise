@@ -3,6 +3,7 @@ import { and, count, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import { z } from "zod";
 import {
   appointments,
+  encounterDiagnoses,
   encounters,
   families,
   familyMembers,
@@ -12,6 +13,9 @@ import {
   patientTimelineEvents,
   patientVitals,
   patients,
+  prescriptionItems,
+  prescriptions,
+  testOrders,
   users
 } from "@medsys/db";
 import {
@@ -150,6 +154,88 @@ const ensureMinorGuardianDetails = (values: PatientWriteValues): void => {
 
 const patientProfileCacheKey = (organizationId: string, patientId: number): string =>
   `${organizationId}:${patientId}`;
+
+const readPatientFamilyBundle = async (
+  readDb: any,
+  organizationId: string,
+  patientId: number
+): Promise<{
+  familyId: number | null;
+  family: { id: number; familyCode: string; familyName: string } | null;
+  guardianPatientId: number | null;
+  guardianRelationship: string | null;
+  members: Array<{
+    membershipId: number;
+    patientId: number;
+    patientCode: string | null;
+    firstName: string;
+    lastName: string;
+    nic: string | null;
+    relationship: string | null;
+  }>;
+}> => {
+  const row = await readDb
+    .select({
+      familyId: patients.familyId,
+      guardianPatientId: patients.guardianPatientId,
+      guardianRelationship: patients.guardianRelationship
+    })
+    .from(patients)
+    .where(and(eq(patients.id, patientId), eq(patients.organizationId, organizationId), isNull(patients.deletedAt)))
+    .limit(1);
+  assertOrThrow(row.length === 1, 404, "Patient not found");
+
+  if (!row[0].familyId) {
+    return {
+      familyId: null,
+      family: null,
+      guardianPatientId: row[0].guardianPatientId,
+      guardianRelationship: row[0].guardianRelationship,
+      members: []
+    };
+  }
+
+  const [family, members] = await Promise.all([
+    readDb
+      .select({ id: families.id, familyCode: families.familyCode, familyName: families.familyName })
+      .from(families)
+      .where(
+        and(
+          eq(families.id, row[0].familyId),
+          eq(families.organizationId, organizationId),
+          isNull(families.deletedAt)
+        )
+      )
+      .limit(1),
+    readDb
+      .select({
+        membershipId: familyMembers.id,
+        patientId: patients.id,
+        patientCode: patients.patientCode,
+        firstName: patients.firstName,
+        lastName: patients.lastName,
+        nic: patients.nic,
+        relationship: familyMembers.relationship
+      })
+      .from(familyMembers)
+      .innerJoin(patients, eq(familyMembers.patientId, patients.id))
+      .where(
+        and(
+          eq(familyMembers.familyId, row[0].familyId),
+          eq(familyMembers.organizationId, organizationId),
+          isNull(patients.deletedAt)
+        )
+      )
+  ]);
+
+  return {
+    familyId: row[0].familyId,
+    family: family[0] ?? null,
+    guardianPatientId: row[0].guardianPatientId,
+    guardianRelationship: row[0].guardianRelationship,
+    members
+  };
+};
 
 const createPatientBodySchema = {
   anyOf: [
@@ -298,6 +384,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
               dateOfBirth: { type: "string", format: "date" },
               phone: { type: "string", nullable: true },
               address: { type: "string", nullable: true },
+              bloodGroup: { type: "string", nullable: true },
               familyId: { type: "integer", minimum: 1, nullable: true },
               guardianPatientId: { type: "integer", minimum: 1, nullable: true },
               guardianName: { type: "string", nullable: true },
@@ -334,7 +421,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           summary: "Frontend-compatible payload",
           value: {
             address: "No.10, Main Street, Colombo",
-            phone: "+94770000002"
+            phone: "+94770000002",
+            bloodGroup: "O+"
           }
         },
         backend: {
@@ -373,6 +461,10 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     "GET /:id/profile": {
       operationId: "PatientsController_profile",
       summary: "Get patient full profile"
+    },
+    "GET /:id/consultations": {
+      operationId: "PatientsController_consultations",
+      summary: "List patient consultation history"
     },
     "GET /:id/family": {
       operationId: "PatientsController_family",
@@ -1514,6 +1606,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       const cacheKey = patientProfileCacheKey(actor.organizationId, id);
       const cached = await app.cacheService.getJson<{
         patient: unknown;
+        family: unknown;
         allergies: unknown[];
         conditions: unknown[];
         vitals: unknown[];
@@ -1537,7 +1630,8 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         .limit(1);
       assertOrThrow(patient, 404, "Patient not found");
 
-      const [allergies, conditions, vitals, timeline] = await Promise.all([
+      const [family, allergies, conditions, vitals, timeline] = await Promise.all([
+        readPatientFamilyBundle(app.readDb, actor.organizationId, id),
         app.readDb
           .select()
           .from(patientAllergies)
@@ -1584,7 +1678,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           .limit(100)
       ]);
 
-      const payload = { patient, allergies, conditions, vitals, timeline };
+      const payload = { patient, family, allergies, conditions, vitals, timeline };
       await app.cacheService.setJson(
         "patientProfile",
         cacheKey,
@@ -1595,71 +1689,170 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
+  app.get(
+    "/:id/consultations",
+    { preHandler: app.authorizePermissions(["patient.profile.read"]) },
+    async (request) => {
+      const actor = request.actor!;
+      const { id } = parseOrThrowValidation(idParamSchema, request.params);
+      await assertPatientExists(actor.organizationId, id);
+
+      const encounterRows = await app.readDb
+        .select({
+          encounterId: encounters.id,
+          checkedAt: encounters.checkedAt,
+          status: encounters.status,
+          appointmentId: encounters.appointmentId,
+          reason: appointments.reason
+        })
+        .from(encounters)
+        .innerJoin(
+          appointments,
+          and(
+            eq(appointments.id, encounters.appointmentId),
+            eq(appointments.organizationId, actor.organizationId),
+            isNull(appointments.deletedAt)
+          )
+        )
+        .where(
+          and(
+            eq(encounters.patientId, id),
+            eq(encounters.organizationId, actor.organizationId),
+            isNull(encounters.deletedAt)
+          )
+        )
+        .orderBy(desc(encounters.checkedAt));
+
+      const encounterIds = encounterRows.map((row) => row.encounterId);
+      const [diagnosisRows, testRows, prescriptionRows] =
+        encounterIds.length === 0
+          ? [[], [], []] as const
+          : await Promise.all([
+              app.readDb
+                .select({
+                  encounterId: encounterDiagnoses.encounterId,
+                  diagnosisName: encounterDiagnoses.diagnosisName,
+                  icd10Code: encounterDiagnoses.icd10Code
+                })
+                .from(encounterDiagnoses)
+                .where(
+                  and(
+                    inArray(encounterDiagnoses.encounterId, encounterIds),
+                    eq(encounterDiagnoses.organizationId, actor.organizationId)
+                  )
+                ),
+              app.readDb
+                .select({
+                  encounterId: testOrders.encounterId,
+                  testName: testOrders.testName,
+                  status: testOrders.status
+                })
+                .from(testOrders)
+                .where(and(inArray(testOrders.encounterId, encounterIds), eq(testOrders.organizationId, actor.organizationId))),
+              app.readDb
+                .select({
+                  prescriptionId: prescriptions.id,
+                  encounterId: prescriptions.encounterId
+                })
+                .from(prescriptions)
+                .where(
+                  and(
+                    inArray(prescriptions.encounterId, encounterIds),
+                    eq(prescriptions.organizationId, actor.organizationId),
+                    isNull(prescriptions.deletedAt)
+                  )
+                )
+            ]);
+
+      const prescriptionIds = prescriptionRows.map((row) => row.prescriptionId);
+      const itemRows =
+        prescriptionIds.length === 0
+          ? []
+          : await app.readDb
+              .select({
+                prescriptionId: prescriptionItems.prescriptionId,
+                drugName: prescriptionItems.drugName,
+                dose: prescriptionItems.dose,
+                frequency: prescriptionItems.frequency,
+                duration: prescriptionItems.duration,
+                quantity: prescriptionItems.quantity,
+                source: prescriptionItems.source
+              })
+              .from(prescriptionItems)
+              .where(
+                and(
+                  inArray(prescriptionItems.prescriptionId, prescriptionIds),
+                  eq(prescriptionItems.organizationId, actor.organizationId),
+                  isNull(prescriptionItems.deletedAt)
+                )
+              );
+
+      const diagnosesByEncounterId = new Map<number, Array<{ name: string; code: string | null }>>();
+      for (const row of diagnosisRows) {
+        const current = diagnosesByEncounterId.get(row.encounterId) ?? [];
+        current.push({ name: row.diagnosisName, code: row.icd10Code ?? null });
+        diagnosesByEncounterId.set(row.encounterId, current);
+      }
+
+      const testsByEncounterId = new Map<number, Array<{ name: string; status: string }>>();
+      for (const row of testRows) {
+        const current = testsByEncounterId.get(row.encounterId) ?? [];
+        current.push({ name: row.testName, status: row.status });
+        testsByEncounterId.set(row.encounterId, current);
+      }
+
+      const encounterIdsByPrescriptionId = new Map(
+        prescriptionRows.map((row) => [row.prescriptionId, row.encounterId] as const)
+      );
+      const drugsByEncounterId = new Map<
+        number,
+        Array<{
+          name: string;
+          dose: string;
+          frequency: string;
+          duration: string | null;
+          quantity: string;
+          source: "clinical" | "outside";
+        }>
+      >();
+      for (const row of itemRows) {
+        const encounterId = encounterIdsByPrescriptionId.get(row.prescriptionId);
+        if (!encounterId) {
+          continue;
+        }
+        const current = drugsByEncounterId.get(encounterId) ?? [];
+        current.push({
+          name: row.drugName,
+          dose: row.dose,
+          frequency: row.frequency,
+          duration: row.duration,
+          quantity: row.quantity,
+          source: row.source
+        });
+        drugsByEncounterId.set(encounterId, current);
+      }
+
+      return {
+        consultations: encounterRows.map((row) => ({
+          encounter_id: row.encounterId,
+          appointment_id: row.appointmentId,
+          checked_at: row.checkedAt,
+          event_date: row.checkedAt.toISOString().slice(0, 10),
+          title: "Consultation completed",
+          status: row.status,
+          reason: row.reason ?? null,
+          diagnoses: diagnosesByEncounterId.get(row.encounterId) ?? [],
+          tests: testsByEncounterId.get(row.encounterId) ?? [],
+          drugs: drugsByEncounterId.get(row.encounterId) ?? []
+        }))
+      };
+    }
+  );
+
   app.get("/:id/family", { preHandler: app.authorizePermissions(["patient.family.read"]) }, async (request) => {
     const actor = request.actor!;
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
-
-    const row = await app.readDb
-      .select({
-        familyId: patients.familyId,
-        guardianPatientId: patients.guardianPatientId,
-        guardianRelationship: patients.guardianRelationship
-      })
-      .from(patients)
-      .where(and(eq(patients.id, id), eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
-      .limit(1);
-    assertOrThrow(row.length === 1, 404, "Patient not found");
-
-    if (!row[0].familyId) {
-      return {
-        familyId: null,
-        family: null,
-        guardianPatientId: row[0].guardianPatientId,
-        guardianRelationship: row[0].guardianRelationship,
-        members: []
-      };
-    }
-
-    const [family, members] = await Promise.all([
-      app.readDb
-        .select({ id: families.id, familyCode: families.familyCode, familyName: families.familyName })
-        .from(families)
-        .where(
-          and(
-            eq(families.id, row[0].familyId),
-            eq(families.organizationId, actor.organizationId),
-            isNull(families.deletedAt)
-          )
-        )
-        .limit(1),
-      app.readDb
-        .select({
-          membershipId: familyMembers.id,
-          patientId: patients.id,
-          patientCode: patients.patientCode,
-          firstName: patients.firstName,
-          lastName: patients.lastName,
-          nic: patients.nic,
-          relationship: familyMembers.relationship
-        })
-        .from(familyMembers)
-        .innerJoin(patients, eq(familyMembers.patientId, patients.id))
-        .where(
-          and(
-            eq(familyMembers.familyId, row[0].familyId),
-            eq(familyMembers.organizationId, actor.organizationId),
-            isNull(patients.deletedAt)
-          )
-        )
-    ]);
-
-    return {
-      familyId: row[0].familyId,
-      family: family[0] ?? null,
-      guardianPatientId: row[0].guardianPatientId,
-      guardianRelationship: row[0].guardianRelationship,
-      members
-    };
+    return readPatientFamilyBundle(app.readDb, actor.organizationId, id);
   });
 
   app.get(
