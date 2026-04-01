@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildApp } from "../src/app.js";
+import { calculateAgeFromDob } from "../src/lib/date.js";
 
 const ORGANIZATION_ID = "11111111-1111-1111-1111-111111111111";
 const DEFAULT_PATIENT_DOB = "1990-06-01";
@@ -1041,6 +1042,119 @@ test("patient routes expose frontend-compatible list/detail/update shapes", asyn
   };
   assert.equal(patchBody.patient.id, createBody.patient.id);
   assert.equal(patchBody.patient.address, "84 Updated Street");
+
+  await app.close();
+});
+
+test("patient patch updates identity fields and refreshed profile reflects them immediately", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      firstName: "Dulan",
+      lastName: `Nis ${uniqueSuffix}`,
+      dob: "1999-03-15",
+      gender: "male",
+      nic: `19990315${uniqueSuffix.slice(-4)}`,
+      phone: "0776347519",
+      bloodGroup: "B+"
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const createBody = createResponse.json() as { patient: { id: number; family_id: number | null } };
+
+  const patchResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/patients/${createBody.patient.id}`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      firstName: "Dulan",
+      lastName: `Nishthunga ${uniqueSuffix}`,
+      dob: "2000-10-23",
+      gender: "male",
+      nic: `20001023${uniqueSuffix.slice(-4)}`,
+      phone: "0776347519",
+      address: null,
+      bloodGroup: "O+",
+      familyId: createBody.patient.family_id,
+      guardianName: null,
+      guardianNic: null,
+      guardianPhone: null,
+      guardianRelationship: null
+    }
+  });
+
+  assert.equal(patchResponse.statusCode, 200);
+
+  const getResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${createBody.patient.id}`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+  assert.equal(getResponse.statusCode, 200);
+  const getBody = getResponse.json() as {
+    patient: { name: string; date_of_birth: string | null; nic: string | null; bloodGroup?: string | null };
+  };
+  assert.equal(getBody.patient.name, `Dulan Nishthunga ${uniqueSuffix}`);
+  assert.equal(getBody.patient.date_of_birth, "2000-10-23");
+  assert.equal(getBody.patient.nic, `20001023${uniqueSuffix.slice(-4)}`);
+
+  const profileResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${createBody.patient.id}/profile`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+  assert.equal(profileResponse.statusCode, 200);
+  const profileBody = profileResponse.json() as {
+    patient: {
+      firstName: string;
+      lastName: string;
+      fullName: string;
+      dob: string;
+      age: number;
+      nic: string | null;
+      bloodGroup: string | null;
+    };
+    family: {
+      members: Array<{ patientId: number; firstName: string; lastName: string; nic: string | null }>;
+    };
+  };
+  assert.equal(profileBody.patient.firstName, "Dulan");
+  assert.equal(profileBody.patient.lastName, `Nishthunga ${uniqueSuffix}`);
+  assert.equal(profileBody.patient.fullName, `Dulan Nishthunga ${uniqueSuffix}`);
+  assert.equal(profileBody.patient.dob, "2000-10-23");
+  assert.equal(profileBody.patient.age, calculateAgeFromDob(new Date("2000-10-23")));
+  assert.equal(profileBody.patient.nic, `20001023${uniqueSuffix.slice(-4)}`);
+  assert.equal(profileBody.patient.bloodGroup, "O+");
+  assert.equal(profileBody.family.family?.familyName, `Dulan Nishthunga ${uniqueSuffix} Family`);
+  assert.equal(
+    profileBody.family.members.some(
+      (member) =>
+        member.patientId === createBody.patient.id &&
+        member.firstName === "Dulan" &&
+        member.lastName === `Nishthunga ${uniqueSuffix}` &&
+        member.nic === `20001023${uniqueSuffix.slice(-4)}`
+    ),
+    true
+  );
 
   await app.close();
 });
