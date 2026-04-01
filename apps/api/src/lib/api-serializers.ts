@@ -22,14 +22,27 @@ export type CreatedUserRow = AuthUserRow & {
 export type PatientSummaryRow = {
   id: number;
   patientCode?: string | null;
+  nic?: string | null;
   fullName: string | null;
   firstName?: string | null;
   lastName?: string | null;
   dob: string | null;
+  age?: number | null;
+  gender?: string | null;
   phone: string | null;
   address: string | null;
   familyId?: number | null;
+  familyName?: string | null;
   guardianPatientId?: number | null;
+  visitCount?: number | null;
+  lastVisitAt?: Date | null;
+  nextAppointment?: {
+    id: number;
+    scheduledAt: Date;
+    status: string;
+  } | null;
+  allergyHighlights?: string[] | null;
+  majorActiveCondition?: string | null;
   createdAt: Date;
 };
 
@@ -80,12 +93,27 @@ export const serializeCreatedUser = (row: CreatedUserRow) => ({
 export const serializePatientSummary = (patient: PatientSummaryRow) => ({
   id: patient.id,
   patient_code: patient.patientCode ?? null,
+  nic: patient.nic ?? null,
   name: patient.fullName ?? buildDisplayName(patient.firstName ?? "", patient.lastName ?? ""),
   date_of_birth: patient.dob,
+  age: patient.age ?? null,
+  gender: patient.gender ?? null,
   phone: patient.phone,
   address: patient.address,
   family_id: patient.familyId ?? null,
+  family_name: patient.familyName ?? null,
   guardian_patient_id: patient.guardianPatientId ?? null,
+  visit_count: patient.visitCount ?? 0,
+  last_visit_at: patient.lastVisitAt ?? null,
+  next_appointment: patient.nextAppointment
+    ? {
+        id: patient.nextAppointment.id,
+        scheduled_at: patient.nextAppointment.scheduledAt,
+        status: patient.nextAppointment.status
+      }
+    : null,
+  allergy_highlights: patient.allergyHighlights ?? [],
+  major_active_condition: patient.majorActiveCondition ?? null,
   created_at: patient.createdAt
 });
 
