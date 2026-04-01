@@ -1,4 +1,5 @@
 import { resolveWorkflowProfiles, type DoctorWorkflowMode, type Permission, type UserRole } from "@medsys/types";
+import { calculateAgeFromDob } from "./date.js";
 import { buildDisplayName } from "./names.js";
 
 export type AuthUserRow = {
@@ -90,32 +91,39 @@ export const serializeCreatedUser = (row: CreatedUserRow) => ({
   created_at: row.createdAt
 });
 
-export const serializePatientSummary = (patient: PatientSummaryRow) => ({
-  id: patient.id,
-  patient_code: patient.patientCode ?? null,
-  nic: patient.nic ?? null,
-  name: patient.fullName ?? buildDisplayName(patient.firstName ?? "", patient.lastName ?? ""),
-  date_of_birth: patient.dob,
-  age: patient.age ?? null,
-  gender: patient.gender ?? null,
-  phone: patient.phone,
-  address: patient.address,
-  family_id: patient.familyId ?? null,
-  family_name: patient.familyName ?? null,
-  guardian_patient_id: patient.guardianPatientId ?? null,
-  visit_count: patient.visitCount ?? 0,
-  last_visit_at: patient.lastVisitAt ?? null,
-  next_appointment: patient.nextAppointment
-    ? {
-        id: patient.nextAppointment.id,
-        scheduled_at: patient.nextAppointment.scheduledAt,
-        status: patient.nextAppointment.status
-      }
-    : null,
-  allergy_highlights: patient.allergyHighlights ?? [],
-  major_active_condition: patient.majorActiveCondition ?? null,
-  created_at: patient.createdAt
-});
+export const serializePatientSummary = (patient: PatientSummaryRow) => {
+  const derivedAge =
+    patient.dob !== null
+      ? calculateAgeFromDob(new Date(patient.dob))
+      : patient.age ?? null;
+
+  return {
+    id: patient.id,
+    patient_code: patient.patientCode ?? null,
+    nic: patient.nic ?? null,
+    name: patient.fullName ?? buildDisplayName(patient.firstName ?? "", patient.lastName ?? ""),
+    date_of_birth: patient.dob,
+    age: derivedAge,
+    gender: patient.gender ?? null,
+    phone: patient.phone,
+    address: patient.address,
+    family_id: patient.familyId ?? null,
+    family_name: patient.familyName ?? null,
+    guardian_patient_id: patient.guardianPatientId ?? null,
+    visit_count: patient.visitCount ?? 0,
+    last_visit_at: patient.lastVisitAt ?? null,
+    next_appointment: patient.nextAppointment
+      ? {
+          id: patient.nextAppointment.id,
+          scheduled_at: patient.nextAppointment.scheduledAt,
+          status: patient.nextAppointment.status
+        }
+      : null,
+    allergy_highlights: patient.allergyHighlights ?? [],
+    major_active_condition: patient.majorActiveCondition ?? null,
+    created_at: patient.createdAt
+  };
+};
 
 export const serializePatientHistoryEntry = (row: PatientHistoryRow) => ({
   id: row.id,
