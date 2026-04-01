@@ -798,6 +798,54 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     }
   };
 
+  const maybeAutoRenameSystemFamily = async (
+    organizationId: string,
+    familyId: number | null | undefined,
+    patientId: number,
+    previousFirstName: string,
+    previousLastName: string,
+    nextFirstName: string,
+    nextLastName: string,
+    tx?: any
+  ): Promise<void> => {
+    if (!familyId) {
+      return;
+    }
+
+    const db = tx ?? app.db;
+    const readDb = tx ?? app.readDb;
+    const previousSystemFamilyName = `${previousFirstName} ${previousLastName} Family`.trim();
+    const nextSystemFamilyName = `${nextFirstName} ${nextLastName} Family`.trim();
+
+    if (previousSystemFamilyName === nextSystemFamilyName) {
+      return;
+    }
+
+    const [familyRow] = await readDb
+      .select({ id: families.id, familyName: families.familyName })
+      .from(families)
+      .where(and(eq(families.id, familyId), eq(families.organizationId, organizationId), isNull(families.deletedAt)))
+      .limit(1);
+
+    if (!familyRow || familyRow.familyName !== previousSystemFamilyName) {
+      return;
+    }
+
+    const members = await readDb
+      .select({ patientId: familyMembers.patientId })
+      .from(familyMembers)
+      .where(and(eq(familyMembers.organizationId, organizationId), eq(familyMembers.familyId, familyId)));
+
+    if (members.length !== 1 || members[0]?.patientId !== patientId) {
+      return;
+    }
+
+    await db
+      .update(families)
+      .set({ familyName: nextSystemFamilyName, updatedAt: new Date() })
+      .where(and(eq(families.id, familyId), eq(families.organizationId, organizationId), isNull(families.deletedAt)));
+  };
+
   const syncPatientSearch = async (row: {
     id: number;
     organizationId: string;
@@ -1424,6 +1472,14 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       }
 
       updateData.familyId = resolvedValues.familyId ?? null;
+      updateData.firstName = resolvedValues.firstName;
+      updateData.lastName = resolvedValues.lastName;
+      updateData.dob = resolvedValues.dob;
+      updateData.age = calculateAgeFromDob(new Date(resolvedValues.dob));
+      updateData.gender = resolvedValues.gender;
+      updateData.phone = resolvedValues.phone ?? null;
+      updateData.address = resolvedValues.address ?? null;
+      updateData.bloodGroup = resolvedValues.bloodGroup ?? null;
       updateData.guardianPatientId = resolvedValues.guardianPatientId ?? null;
       updateData.guardianName = resolvedValues.guardianName ?? null;
       updateData.guardianNic = resolvedValues.guardianNic ?? null;
@@ -1482,6 +1538,16 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           resolvedValues.familyId,
           id,
           resolvedValues.age < 18 ? "child" : resolvedValues.guardianRelationship ?? null,
+          tx
+        );
+        await maybeAutoRenameSystemFamily(
+          actor.organizationId,
+          resolvedValues.familyId,
+          id,
+          existingPatient.firstName,
+          existingPatient.lastName,
+          resolvedValues.firstName,
+          resolvedValues.lastName,
           tx
         );
         await syncPatientSearch(updated[0]);
