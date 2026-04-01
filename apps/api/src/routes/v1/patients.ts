@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, count, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import { z } from "zod";
 import {
+  appointments,
   encounters,
   families,
   familyMembers,
@@ -755,10 +756,13 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         .select({
           id: patients.id,
           patientCode: patients.patientCode,
+          nic: patients.nic,
           fullName: patients.fullName,
           firstName: patients.firstName,
           lastName: patients.lastName,
           dob: patients.dob,
+          age: patients.age,
+          gender: patients.gender,
           phone: patients.phone,
           address: patients.address,
           familyId: patients.familyId,
@@ -770,8 +774,135 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         .orderBy(desc(patients.createdAt))
         .limit(200);
 
+      const patientIds = rows.map((row) => row.id);
+      const familyIds = [...new Set(rows.map((row) => row.familyId).filter((value): value is number => value !== null))];
+
+      const [familyRows, encounterSummaryRows, allergyRows, appointmentRows, activeConditionRows] = await Promise.all([
+        familyIds.length === 0
+          ? Promise.resolve([])
+          : app.readDb
+              .select({ id: families.id, familyName: families.familyName })
+              .from(families)
+              .where(and(eq(families.organizationId, actor.organizationId), inArray(families.id, familyIds), isNull(families.deletedAt))),
+        patientIds.length === 0
+          ? Promise.resolve([])
+          : app.readDb
+              .select({
+                patientId: encounters.patientId,
+                visitCount: count(encounters.id),
+                lastVisitAt: max(encounters.checkedAt)
+              })
+              .from(encounters)
+              .where(and(eq(encounters.organizationId, actor.organizationId), inArray(encounters.patientId, patientIds), isNull(encounters.deletedAt)))
+              .groupBy(encounters.patientId),
+        patientIds.length === 0
+          ? Promise.resolve([])
+          : app.readDb
+              .select({
+                patientId: patientAllergies.patientId,
+                allergyName: patientAllergies.allergyName
+              })
+              .from(patientAllergies)
+              .where(
+                and(
+                  eq(patientAllergies.organizationId, actor.organizationId),
+                  inArray(patientAllergies.patientId, patientIds),
+                  eq(patientAllergies.isActive, true),
+                  isNull(patientAllergies.deletedAt)
+                )
+              )
+              .orderBy(patientAllergies.id),
+        patientIds.length === 0
+          ? Promise.resolve([])
+          : app.readDb
+              .select({
+                id: appointments.id,
+                patientId: appointments.patientId,
+                scheduledAt: appointments.scheduledAt,
+                status: appointments.status
+              })
+              .from(appointments)
+              .where(
+                and(
+                  eq(appointments.organizationId, actor.organizationId),
+                  inArray(appointments.patientId, patientIds),
+                  isNull(appointments.deletedAt)
+                )
+              )
+              .orderBy(appointments.scheduledAt),
+        patientIds.length === 0
+          ? Promise.resolve([])
+          : app.readDb
+              .select({
+                patientId: patientConditions.patientId,
+                conditionName: patientConditions.conditionName,
+                createdAt: patientConditions.createdAt
+              })
+              .from(patientConditions)
+              .where(
+                and(
+                  eq(patientConditions.organizationId, actor.organizationId),
+                  inArray(patientConditions.patientId, patientIds),
+                  eq(patientConditions.status, "active"),
+                  isNull(patientConditions.deletedAt)
+                )
+              )
+              .orderBy(desc(patientConditions.createdAt))
+      ]);
+
+      const familyById = new Map(familyRows.map((row) => [row.id, row.familyName]));
+      const encounterSummaryByPatientId = new Map(
+        encounterSummaryRows.map((row) => [
+          row.patientId,
+          {
+            visitCount: Number(row.visitCount ?? 0),
+            lastVisitAt: row.lastVisitAt ?? null
+          }
+        ])
+      );
+      const allergyHighlightsByPatientId = new Map<number, string[]>();
+      for (const row of allergyRows) {
+        const current = allergyHighlightsByPatientId.get(row.patientId) ?? [];
+        if (current.length < 3) {
+          current.push(row.allergyName);
+          allergyHighlightsByPatientId.set(row.patientId, current);
+        }
+      }
+      const now = new Date();
+      const nextAppointmentByPatientId = new Map<number, { id: number; scheduledAt: Date; status: string }>();
+      for (const row of appointmentRows) {
+        if (row.status === "completed" || row.status === "cancelled" || row.scheduledAt < now) {
+          continue;
+        }
+        if (!nextAppointmentByPatientId.has(row.patientId)) {
+          nextAppointmentByPatientId.set(row.patientId, {
+            id: row.id,
+            scheduledAt: row.scheduledAt,
+            status: row.status
+          });
+        }
+      }
+      const majorActiveConditionByPatientId = new Map<number, string>();
+      for (const row of activeConditionRows) {
+        if (!majorActiveConditionByPatientId.has(row.patientId)) {
+          majorActiveConditionByPatientId.set(row.patientId, row.conditionName);
+        }
+      }
+
       await writeAuditLog(request, { entityType: "patient", action: "list" });
-      return { patients: rows.map(serializePatientSummary) };
+      return {
+        patients: rows.map((row) =>
+          serializePatientSummary({
+            ...row,
+            familyName: row.familyId ? (familyById.get(row.familyId) ?? null) : null,
+            visitCount: encounterSummaryByPatientId.get(row.id)?.visitCount ?? 0,
+            lastVisitAt: encounterSummaryByPatientId.get(row.id)?.lastVisitAt ?? null,
+            nextAppointment: nextAppointmentByPatientId.get(row.id) ?? null,
+            allergyHighlights: allergyHighlightsByPatientId.get(row.id) ?? [],
+            majorActiveCondition: majorActiveConditionByPatientId.get(row.id) ?? null
+          })
+        )
+      };
     }
   );
 
@@ -971,10 +1102,13 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
         .select({
           id: patients.id,
           patientCode: patients.patientCode,
+          nic: patients.nic,
           fullName: patients.fullName,
           firstName: patients.firstName,
           lastName: patients.lastName,
           dob: patients.dob,
+          age: patients.age,
+          gender: patients.gender,
           phone: patients.phone,
           address: patients.address,
           familyId: patients.familyId,
