@@ -40,8 +40,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.9</div>
-      <div><strong>Date</strong>March 31, 2026</div>
+      <div><strong>Version</strong>3.0</div>
+      <div><strong>Date</strong>April 1, 2026</div>
       <div><strong>Audience</strong>All medical field professionals, technical managers, frontend, QA, BA, and client delivery teams</div>
       <div><strong>Scope</strong>Implemented REST contracts, workflow behavior, permission model, integration expectations, and current handover-ready implementation state</div>
     </div>
@@ -186,7 +186,7 @@
         <tr><th style="width:18%">Domain</th><th style="width:26%">Primary Routes</th><th style="width:24%">Key Permissions</th><th>Notes</th></tr>
       </thead>
       <tbody>
-        <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td><span class="mono">GET /v1/patients</span> is a summary-list contract. Full identity and guardian details belong to <span class="mono">/v1/patients/:id/profile</span>. Doctors can perform patient registration under the default doctor workflow.</td></tr>
+        <tr><td>Patients</td><td><span class="mono">/v1/patients</span></td><td><span class="mono">patient.read</span>, <span class="mono">patient.write</span>, related history, allergy, condition, vital, and timeline permissions</td><td><span class="mono">GET /v1/patients</span> is a summary-list contract. <span class="mono">GET /v1/patients/:id/profile</span> is the full overview bundle, and <span class="mono">GET /v1/patients/:id/consultations</span> is the consultation-history contract for encounter-first UI cards.</td></tr>
         <tr><td>Families</td><td><span class="mono">/v1/families</span></td><td><span class="mono">family.read</span>, <span class="mono">family.write</span></td><td>Doctor accounts can receive <span class="mono">family.write</span> through assistant-support permissions.</td></tr>
         <tr><td>Appointments</td><td><span class="mono">/v1/appointments</span></td><td><span class="mono">appointment.read</span>, <span class="mono">appointment.create</span>, <span class="mono">appointment.update</span></td><td>Appointment creation is no longer tied only to the assistant role. It follows permission checks and remains the resource-level route for scheduled visits.</td></tr>
         <tr><td>Visits</td><td><span class="mono">/v1/visits/start</span></td><td><span class="mono">appointment.create</span></td><td>Walk-in orchestration route that reuses an active patient visit or creates a new in-consultation visit for doctor-first workflows.</td></tr>
@@ -205,7 +205,7 @@
       <li>Patient <span class="mono">first_name</span> and <span class="mono">last_name</span> are required. Therefore the stored generated <span class="mono">full_name</span> is also never null.</li>
       <li>Patient <span class="mono">dob</span> is required and <span class="mono">age</span> is also required. The backend derives and validates age against DOB when provided.</li>
       <li>Patient <span class="mono">nic</span> is optional. The backend now assigns every patient a mandatory <span class="mono">patient_code</span> used as the always-available internal identifier.</li>
-      <li>Patient API responses use snake_case fields such as <span class="mono">patient_code</span>, <span class="mono">date_of_birth</span>, <span class="mono">family_id</span>, <span class="mono">guardian_patient_id</span>, and <span class="mono">created_at</span>. Clients should not rely on temporary camelCase response fields.</li>
+      <li>Patient API responses use snake_case fields such as <span class="mono">patient_code</span>, <span class="mono">date_of_birth</span>, <span class="mono">family_id</span>, <span class="mono">guardian_patient_id</span>, <span class="mono">allergy_highlights</span>, and <span class="mono">created_at</span>. Clients should not rely on temporary camelCase response fields.</li>
       <li>Minor patients without a patient NIC must include guardian information. Clients can either link an existing guardian with <span class="mono">guardianPatientId</span> in the write payload or provide guardian name plus guardian NIC or phone.</li>
       <li>Guardian-aware patient write payload fields supported by create and update flows are <span class="mono">familyId</span>, <span class="mono">familyCode</span>, <span class="mono">guardianPatientId</span>, <span class="mono">guardianName</span>, <span class="mono">guardianNic</span>, <span class="mono">guardianPhone</span>, and <span class="mono">guardianRelationship</span>.</li>
       <li>Patient create supports <span class="mono">bloodGroup</span> and inline <span class="mono">allergies</span> in both request styles. Allergy rows use <span class="mono">allergyName</span>, <span class="mono">severity</span>, and <span class="mono">isActive</span>, where severity must be <span class="mono">low</span>, <span class="mono">moderate</span>, or <span class="mono">high</span>.</li>
@@ -230,7 +230,9 @@
       <li>Use <span class="mono">active_role</span> for workspace selection, <span class="mono">roles</span> for switcher options, and <span class="mono">role</span> only as a legacy compatibility alias.</li>
       <li>Hide or disable create, update, dispense, and inventory mutation actions when the required permission is absent.</li>
       <li>Expect a multi-role user to keep the full assigned <span class="mono">roles</span> set while <span class="mono">role</span> mirrors the currently selected <span class="mono">active_role</span>.</li>
-      <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor fast-selection by patient/guardian identity (returns <code>patient_code</code>, <code>nic</code>, <code>gender</code>), and <span class="mono">GET /v1/patients/:id/profile</span> after selection for full demographic and guardian details.</li>
+      <li>Use <span class="mono">GET /v1/patients</span> for summary lists, <span class="mono">GET /v1/search/patients</span> for doctor fast-selection by patient/guardian identity (returns <code>patient_code</code>, <code>nic</code>, <code>gender</code>), <span class="mono">GET /v1/patients/:id/profile</span> for the full patient overview bundle, and <span class="mono">GET /v1/patients/:id/consultations</span> for encounter-grouped consultation history cards.</li>
+      <li><span class="mono">GET /v1/patients</span> now returns a richer card summary including <span class="mono">family_name</span>, <span class="mono">visit_count</span>, <span class="mono">last_visit_at</span>, <span class="mono">next_appointment</span>, <span class="mono">allergy_highlights</span>, and <span class="mono">major_active_condition</span> so patient list screens do not need per-row fan-out requests.</li>
+      <li><span class="mono">GET /v1/patients/:id/profile</span> now includes a bundled <span class="mono">family</span> section with family header data and members, alongside <span class="mono">allergies</span>, <span class="mono">conditions</span>, <span class="mono">vitals</span>, and <span class="mono">timeline</span>.</li>
       <li>Do not assume patient NIC is always present in list responses or even on the patient record. For minors, use guardian-aware search and treat <span class="mono">patient_code</span> as the always-available identifier.</li>
       <li>For the doctor screen, prefer <span class="mono">POST /v1/consultations/save</span> as the one-button workflow endpoint. Use <span class="mono">workflowType = walk_in</span> for direct doctor flow and <span class="mono">workflowType = appointment</span> when saving against an existing appointment. Send <span class="mono">patientId</span> for an existing patient or <span class="mono">patientDraft</span> for inline quick-create in walk-in mode.</li>
       <li>Use <span class="mono">patientDraft.name</span> plus <span class="mono">patientDraft.dateOfBirth</span> as the minimum quick-create fields. Treat date of birth as canonical and use age only as an optional helper.</li>
@@ -272,9 +274,9 @@
       <li>Repository implementation state as of March 31, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
       <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, consultation workflow orchestration, fixed typed vitals workflows, doctor workflow identity, persisted multi-role support through Flyway V12, and current database constraints.</li>
-      <li>Verified automated backend suite status of 83 passing API tests and 6 passing worker tests.</li>
+      <li>Verified automated backend suite status of 86 passing API tests and 6 passing worker tests.</li>
     </ul>
-    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of March 31, 2026.</div>
+    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of April 1, 2026.</div>
   </section>
 </body>
 </html>
