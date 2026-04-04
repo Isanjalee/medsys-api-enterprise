@@ -175,6 +175,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const actor = request.actor!;
       const payload = parseOrThrowValidation(createEncounterBundleSchema, request.body);
+      const checkedAt = new Date(payload.checkedAt);
 
     const outcome = await app.db.transaction(async (tx) => {
       const appointmentRows = await tx
@@ -203,7 +204,8 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
           appointmentScheduledAt: appointmentRows[0].scheduledAt,
           patientId: payload.patientId,
           doctorId: payload.doctorId,
-          checkedAt: new Date(payload.checkedAt),
+          checkedAt,
+          closedAt: checkedAt,
           notes: payload.notes ?? null,
           nextVisitDate: payload.nextVisitDate ?? null,
           status: "completed"
@@ -281,7 +283,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
       await tx
         .update(appointments)
-        .set({ status: "completed", updatedAt: new Date() })
+        .set({ status: "completed", completedAt: checkedAt, updatedAt: new Date() })
         .where(and(eq(appointments.id, payload.appointmentId), eq(appointments.organizationId, actor.organizationId)));
 
       return { encounterId: encounter.id, prescriptionId, vitalId };

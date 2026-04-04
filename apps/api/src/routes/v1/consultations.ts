@@ -357,6 +357,7 @@ const saveConsultationSuccessResponseSchema = {
   required: [
     "patient",
     "patient_created",
+    "family",
     "visit",
     "appointment_id",
     "encounter_id",
@@ -375,6 +376,21 @@ const saveConsultationSuccessResponseSchema = {
       additionalProperties: true
     },
     patient_created: { type: "boolean" },
+    family: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "family_code", "family_name"],
+          properties: {
+            id: { type: "integer" },
+            family_code: { type: "string" },
+            family_name: { type: "string" }
+          }
+        }
+      ]
+    },
     visit: {
       type: "object",
       additionalProperties: false,
@@ -416,6 +432,11 @@ const saveConsultationSuccessResponseSchema = {
       full_name: "Nith Hadaz"
     },
     patient_created: false,
+    family: {
+      id: 14,
+      family_code: "FAM-1004",
+      family_name: "Nith Hadaz Family"
+    },
     visit: {
       id: 90,
       patient_id: 38,
@@ -538,6 +559,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
       const prescriptionItemsPayload = payload.prescription?.items ?? [];
       const clinicalPrescriptionItems = prescriptionItemsPayload.filter((item) => item.source === "clinical");
       const outsidePrescriptionItems = prescriptionItemsPayload.filter((item) => item.source === "outside");
+      const checkedAt = new Date(payload.checkedAt);
 
       const result = await app.db.transaction(async (tx) => {
         const ensureFamilyMembership = async (
@@ -607,6 +629,30 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
             dateOfBirth: row.dob,
             createdAt: row.createdAt.toISOString()
           });
+        };
+
+        const readFamilySummary = async (familyId: number | null | undefined) => {
+          if (!familyId) {
+            return null;
+          }
+
+          const familyRows = await tx
+            .select({
+              id: families.id,
+              familyCode: families.familyCode,
+              familyName: families.familyName
+            })
+            .from(families)
+            .where(
+              and(
+                eq(families.id, familyId),
+                eq(families.organizationId, actor.organizationId),
+                isNull(families.deletedAt)
+              )
+            )
+            .limit(1);
+
+          return familyRows[0] ?? null;
         };
 
         const createDispenseRecord = async (
@@ -981,6 +1027,8 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                       status: "in_consultation",
                       doctorId: appointmentRows[0].doctorId ?? resolvedDoctorId,
                       assistantId: appointmentRows[0].assistantId ?? resolvedAssistantId,
+                      waitingAt: appointmentRows[0].waitingAt ?? new Date(),
+                      inConsultationAt: appointmentRows[0].inConsultationAt ?? checkedAt,
                       updatedAt: new Date()
                     })
                     .where(
@@ -1034,6 +1082,8 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                         status: "in_consultation",
                         doctorId: activeRows[0].doctorId ?? resolvedDoctorId,
                         assistantId: activeRows[0].assistantId ?? resolvedAssistantId,
+                        waitingAt: activeRows[0].waitingAt ?? new Date(),
+                        inConsultationAt: activeRows[0].inConsultationAt ?? checkedAt,
                         updatedAt: new Date()
                       })
                       .where(
@@ -1053,6 +1103,10 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                       assistantId: resolvedAssistantId,
                       scheduledAt: new Date(payload.scheduledAt ?? payload.checkedAt),
                       status: "in_consultation",
+                      registeredAt: new Date(),
+                      waitingAt: null,
+                      inConsultationAt: checkedAt,
+                      completedAt: null,
                       reason: payload.reason ?? null,
                       priority: payload.priority
                     })
@@ -1068,7 +1122,8 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
             appointmentScheduledAt: visit.scheduledAt,
             patientId: patient.id,
             doctorId,
-            checkedAt: new Date(payload.checkedAt),
+            checkedAt,
+            closedAt: checkedAt,
             notes: payload.notes ?? null,
             nextVisitDate: payload.nextVisitDate ?? null,
             status: "completed"
@@ -1223,7 +1278,11 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         const closedVisit = (
           await tx
             .update(appointments)
-            .set({ status: persistedVisitStatus, updatedAt: new Date() })
+            .set({
+              status: persistedVisitStatus,
+              completedAt: persistedVisitStatus === "completed" ? checkedAt : null,
+              updatedAt: new Date()
+            })
             .where(and(eq(appointments.id, visit.id), eq(appointments.organizationId, actor.organizationId)))
             .returning()
         )[0];
@@ -1231,6 +1290,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         return {
           patient,
           patientCreated: created,
+          family: await readFamilySummary(patient.familyId),
           visit: closedVisit,
           encounterId: encounter.id,
           vital,
@@ -1284,8 +1344,18 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
       ]);
 
       return reply.code(201).send({
-        patient: serializePatientSummary(result.patient),
+        patient: serializePatientSummary({
+          ...result.patient,
+          familyName: result.family?.familyName ?? null
+        }),
         patient_created: result.patientCreated,
+        family: result.family
+          ? {
+              id: result.family.id,
+              family_code: result.family.familyCode,
+              family_name: result.family.familyName
+            }
+          : null,
         visit: {
           id: result.visit.id,
           patient_id: result.visit.patientId,
