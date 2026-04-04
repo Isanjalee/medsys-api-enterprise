@@ -62,6 +62,7 @@ const visitsRoutes: FastifyPluginAsync = async (app) => {
         payload.assistantId !== undefined ? payload.assistantId : actor.role === "assistant" ? actor.userId : null;
 
       const outcome = await app.db.transaction(async (tx) => {
+        const now = new Date();
         const patientRows = await tx
           .select({ id: patients.id })
           .from(patients)
@@ -95,6 +96,9 @@ const visitsRoutes: FastifyPluginAsync = async (app) => {
 
           if (existing.status === "waiting") {
             patch.status = "in_consultation";
+            if (!existing.inConsultationAt) {
+              patch.inConsultationAt = now;
+            }
           }
           if (existing.doctorId === null && resolvedDoctorId !== null) {
             patch.doctorId = resolvedDoctorId;
@@ -124,6 +128,10 @@ const visitsRoutes: FastifyPluginAsync = async (app) => {
             assistantId: resolvedAssistantId,
             scheduledAt: new Date(payload.scheduledAt ?? new Date().toISOString()),
             status: "in_consultation",
+            registeredAt: now,
+            waitingAt: null,
+            inConsultationAt: now,
+            completedAt: null,
             reason: payload.reason ?? null,
             priority: payload.priority
           })
