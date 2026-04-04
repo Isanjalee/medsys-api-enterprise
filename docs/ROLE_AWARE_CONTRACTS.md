@@ -75,6 +75,149 @@ Frontend guidance:
 - use `role_context` to decide role-specific dashboard framing, labels, and navigation
 - do not infer workflow from permissions alone
 
+## Analytics Dashboard
+
+`GET /v1/analytics/dashboard` is the richer dashboard contract for doctor, assistant, and owner workspaces.
+
+Query parameters:
+
+- `range=1d|7d|30d|custom`
+- `role=doctor|assistant|owner`
+- `doctorId`
+- `assistantId`
+- `dateFrom`
+- `dateTo`
+
+Rules:
+
+- doctors can call the endpoint without `role` or `doctorId`; backend defaults to their own doctor context
+- assistants can call the endpoint without `role` or `assistantId`; backend defaults to their own assistant context
+- owners can request owner, doctor, or assistant dashboards and may pass `doctorId` or `assistantId`
+- `range=custom` requires both `dateFrom` and `dateTo`
+
+Response shape:
+
+```json
+{
+  "roleContext": {
+    "resolvedRole": "doctor",
+    "actorRole": "doctor",
+    "activeRole": "doctor",
+    "roles": ["doctor"],
+    "doctorId": 12,
+    "assistantId": null,
+    "workflowProfile": {
+      "mode": "self_service"
+    }
+  },
+  "generatedAt": "2026-04-03T12:00:00.000Z",
+  "range": {
+    "preset": "7d",
+    "dateFrom": "2026-03-27T12:00:00.000Z",
+    "dateTo": "2026-04-03T12:00:00.000Z"
+  },
+  "summary": {},
+  "charts": {},
+  "insights": [],
+  "tables": {},
+  "alerts": []
+}
+```
+
+Frontend guidance:
+
+- treat `summary`, `charts`, `tables`, `insights`, and `alerts` as role-specific blocks rather than one universal dashboard layout
+- render cards and charts defensively; field names inside those blocks differ by role
+- use `roleContext.resolvedRole` as the source of truth for which dashboard variant is being rendered
+- use `generatedAt` and `range` for page headers, caching labels, and export headers
+
+### Doctor Dashboard Blocks
+
+Current `summary` sections:
+
+- `queue`
+- `visits`
+- `patientMix`
+- `clinical`
+- `prescribing`
+
+Current `charts` keys:
+
+- `patientVolumeByHour`
+- `walkInVsAppointment`
+- `queueFunnel`
+- `waitTimeBuckets`
+- `newVsReturning`
+- `ageGroups`
+- `genderSplit`
+- `linkageSplit`
+- `topDiagnoses`
+- `topTests`
+- `topMedications`
+- `encounterCompleteness`
+- `prescriptionSourceSplit`
+- `topDispensedMedicines`
+- `lowStockRelevantMedicines`
+- `prescriptionsByDay`
+
+### Assistant Dashboard Blocks
+
+Current `summary` sections:
+
+- `intake`
+- `queue`
+- `dispense`
+
+Current `charts` keys:
+
+- `registrationsByHour`
+- `appointmentsByDoctor`
+- `queueStatusSplit`
+- `dispenseStatusSplit`
+- `dailyIntakeTrend`
+
+### Owner Dashboard Blocks
+
+Current `summary` sections:
+
+- `organizationGrowth`
+- `operationalPerformance`
+- `quality`
+- `inventory`
+
+Current `charts` keys:
+
+- `growthTrend`
+- `doctorWorkloadComparison`
+- `assistantThroughputComparison`
+- `appointmentStatusDistribution`
+- `busyHours`
+- `lowStockAndTopConsumed`
+- `completionQualityAcrossRoles`
+
+## Workflow Timing Fields
+
+Exact workflow timing fields are now part of the backend data model for more accurate analytics:
+
+- `appointments.registered_at`
+- `appointments.waiting_at`
+- `appointments.in_consultation_at`
+- `appointments.completed_at`
+- `encounters.closed_at`
+
+Semantic guidance:
+
+- `registered_at`: when the appointment or walk-in visit record was first created
+- `waiting_at`: when the visit entered waiting status
+- `in_consultation_at`: when the visit entered doctor consultation
+- `completed_at`: when the appointment/visit was marked completed
+- `closed_at`: when the encounter was clinically closed
+
+Frontend guidance:
+
+- prefer these fields over `created_at` and `updated_at` when showing queue or duration analytics
+- treat older records as best-effort historical backfill rather than perfect event history
+
 ## Future AI Contract
 
 This repo does not yet expose an AI API. When it does, the backend contract should be role-aware from day one:

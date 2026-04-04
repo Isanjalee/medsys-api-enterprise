@@ -230,7 +230,7 @@ This is one of the key workflow-hardening changes in the current implementation.
 | Dispense queue | `/v1/prescriptions/queue/pending-dispense` |
 | Inventory | `/v1/inventory`, `/v1/inventory/search` |
 | Clinical lookup | `/v1/clinical/diagnoses`, `/v1/clinical/tests`, `/v1/clinical/diagnoses/:code/recommended-tests` |
-| Analytics | `/v1/analytics/overview` |
+| Analytics | `/v1/analytics/overview`, `/v1/analytics/dashboard` |
 | Audit | `/v1/audit/logs` |
 
 ### Frontend Contract Direction
@@ -242,6 +242,53 @@ Frontend should treat these as the primary patterns:
 - Selected diagnosis = can request suggested tests below
 - Consultation save = one workflow payload, not many independent save steps
 - Dispense completion = requires real `inventoryItemId` selection for clinical items
+
+### Analytics Dashboard Handover
+
+Preferred analytics endpoint for new dashboards:
+
+- `GET /v1/analytics/dashboard`
+
+Recommended query usage:
+
+- doctor workspace: call without `role`; backend resolves doctor context automatically
+- assistant workspace: call without `role`; backend resolves assistant context automatically
+- owner workspace: call without `role` for organization-wide dashboard
+- owner drill-down: use `role=doctor&doctorId=...` or `role=assistant&assistantId=...`
+- custom date range: use `range=custom&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD`
+
+Stable top-level response shape:
+
+```json
+{
+  "roleContext": {},
+  "generatedAt": "2026-04-03T12:00:00.000Z",
+  "range": {},
+  "summary": {},
+  "charts": {},
+  "insights": [],
+  "tables": {},
+  "alerts": []
+}
+```
+
+Frontend expectations:
+
+- `summary`, `charts`, and `tables` are role-specific block containers
+- `insights` should be rendered as short action-oriented callouts
+- `alerts` should be rendered with warning/error emphasis
+- `roleContext.resolvedRole` decides which dashboard layout to mount
+- `generatedAt` and `range` should be shown in dashboard header/export metadata
+
+Timing fields now available for queue and consultation analytics:
+
+- `appointments.registered_at`
+- `appointments.waiting_at`
+- `appointments.in_consultation_at`
+- `appointments.completed_at`
+- `encounters.closed_at`
+
+Use these timing fields for frontend analytics and drill-down displays instead of inferring durations from generic `created_at` or `updated_at`.
 
 ---
 
