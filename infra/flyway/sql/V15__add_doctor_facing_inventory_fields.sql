@@ -1,0 +1,23 @@
+ALTER TABLE inventory_items
+  ADD COLUMN IF NOT EXISTS generic_name VARCHAR(180),
+  ADD COLUMN IF NOT EXISTS subcategory VARCHAR(80),
+  ADD COLUMN IF NOT EXISTS description TEXT,
+  ADD COLUMN IF NOT EXISTS dosage_form VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS strength VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS route VARCHAR(40),
+  ADD COLUMN IF NOT EXISTS prescription_type VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS min_stock_level NUMERIC(12, 2),
+  ADD COLUMN IF NOT EXISTS max_stock_level NUMERIC(12, 2),
+  ADD COLUMN IF NOT EXISTS expiry_date DATE,
+  ADD COLUMN IF NOT EXISTS batch_no VARCHAR(80),
+  ADD COLUMN IF NOT EXISTS storage_location VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS direct_dispense_allowed BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS is_antibiotic BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS is_controlled BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS is_pediatric_safe BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS requires_prescription BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS clinic_use_only BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS notes TEXT;
+
+CREATE INDEX IF NOT EXISTS inventory_items_org_generic_name_idx ON inventory_items (organization_id, generic_name);
+CREATE INDEX IF NOT EXISTS inventory_items_org_expiry_date_idx ON inventory_items (organization_id, expiry_date);
