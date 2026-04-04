@@ -74,6 +74,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "encounter.write",
     "family.read",
     "inventory.read",
+    "inventory.write",
     "prescription.read",
     "prescription.dispense"
   ],

@@ -235,6 +235,10 @@ export const appointments = pgTable(
     assistantId: bigint("assistant_id", { mode: "number" }).references(() => users.id),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
     status: appointmentStatusEnum("status").notNull(),
+    registeredAt: timestamp("registered_at", { withTimezone: true }).notNull().defaultNow(),
+    waitingAt: timestamp("waiting_at", { withTimezone: true }),
+    inConsultationAt: timestamp("in_consultation_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
     reason: text("reason"),
     priority: priorityLevelEnum("priority").notNull().default("normal"),
     ...auditTimestamps,
@@ -263,6 +267,7 @@ export const encounters = pgTable(
       .notNull()
       .references(() => users.id),
     checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
     notes: text("notes"),
     nextVisitDate: date("next_visit_date"),
     status: varchar("status", { length: 20 }).notNull().default("completed"),
@@ -381,15 +386,43 @@ export const inventoryItems = pgTable(
     organizationId: uuid("organization_id").notNull(),
     sku: varchar("sku", { length: 80 }).unique(),
     name: varchar("name", { length: 180 }).notNull(),
+    genericName: varchar("generic_name", { length: 180 }),
     category: inventoryCategoryEnum("category").notNull(),
+    subcategory: varchar("subcategory", { length: 80 }),
+    description: text("description"),
+    dosageForm: varchar("dosage_form", { length: 40 }),
+    strength: varchar("strength", { length: 40 }),
     unit: varchar("unit", { length: 20 }).notNull(),
+    route: varchar("route", { length: 40 }),
+    prescriptionType: varchar("prescription_type", { length: 20 }),
+    packageUnit: varchar("package_unit", { length: 20 }),
+    packageSize: numeric("package_size", { precision: 12, scale: 2 }),
+    brandName: varchar("brand_name", { length: 120 }),
+    supplierName: varchar("supplier_name", { length: 120 }),
+    leadTimeDays: bigint("lead_time_days", { mode: "number" }),
     stock: numeric("stock", { precision: 12, scale: 2 }).notNull().default("0"),
     reorderLevel: numeric("reorder_level", { precision: 12, scale: 2 }).notNull().default("0"),
+    minStockLevel: numeric("min_stock_level", { precision: 12, scale: 2 }),
+    maxStockLevel: numeric("max_stock_level", { precision: 12, scale: 2 }),
+    expiryDate: date("expiry_date"),
+    batchNo: varchar("batch_no", { length: 80 }),
+    storageLocation: varchar("storage_location", { length: 120 }),
+    directDispenseAllowed: boolean("direct_dispense_allowed").notNull().default(false),
+    isAntibiotic: boolean("is_antibiotic").notNull().default(false),
+    isControlled: boolean("is_controlled").notNull().default(false),
+    isPediatricSafe: boolean("is_pediatric_safe").notNull().default(false),
+    requiresPrescription: boolean("requires_prescription").notNull().default(true),
+    clinicUseOnly: boolean("clinic_use_only").notNull().default(false),
+    notes: text("notes"),
     isActive: boolean("is_active").notNull().default(true),
     ...auditTimestamps,
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
-  (table) => [index("inventory_items_org_name_idx").on(table.organizationId, table.name)]
+  (table) => [
+    index("inventory_items_org_name_idx").on(table.organizationId, table.name),
+    index("inventory_items_org_generic_name_idx").on(table.organizationId, table.genericName),
+    index("inventory_items_org_expiry_date_idx").on(table.organizationId, table.expiryDate)
+  ]
 );
 
 export const inventoryMovements = pgTable(
@@ -401,7 +434,9 @@ export const inventoryMovements = pgTable(
       .notNull()
       .references(() => inventoryItems.id),
     movementType: inventoryMovementTypeEnum("movement_type").notNull(),
+    reason: varchar("reason", { length: 30 }),
     quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull(),
+    note: text("note"),
     referenceType: varchar("reference_type", { length: 30 }),
     referenceId: bigint("reference_id", { mode: "number" }),
     createdById: bigint("created_by_id", { mode: "number" })

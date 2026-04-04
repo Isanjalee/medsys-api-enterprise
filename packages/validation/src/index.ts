@@ -250,6 +250,46 @@ export const clinicalCodeParamSchema = z
   })
   .strict();
 
+export const analyticsDashboardRoleSchema = z.enum(["doctor", "assistant", "owner"]);
+export const analyticsDashboardRangeSchema = z.enum(["1d", "7d", "30d", "custom"]);
+
+export const analyticsDashboardQuerySchema = z
+  .object({
+    range: analyticsDashboardRangeSchema.optional().default("7d"),
+    role: analyticsDashboardRoleSchema.optional(),
+    doctorId: z.coerce.number().int().positive().optional().nullable(),
+    assistantId: z.coerce.number().int().positive().optional().nullable(),
+    dateFrom: optionalDateString,
+    dateTo: optionalDateString
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.range === "custom") {
+      if (!value.dateFrom) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dateFrom"],
+          message: "dateFrom is required when range=custom"
+        });
+      }
+      if (!value.dateTo) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dateTo"],
+          message: "dateTo is required when range=custom"
+        });
+      }
+    }
+
+    if (value.dateFrom && value.dateTo && value.dateFrom > value.dateTo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dateFrom"],
+        message: "dateFrom must be on or before dateTo"
+      });
+    }
+  });
+
 export const createUserSchema = z.object({
   firstName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid first name"),
   lastName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid last name"),
@@ -401,11 +441,22 @@ export const listAppointmentsQuerySchema = z
   })
   .strict();
 
+export const patientVisibilityScopeSchema = z.enum(["organization", "my_patients"]);
+
+export const listPatientsQuerySchema = z
+  .object({
+    scope: patientVisibilityScopeSchema.optional(),
+    doctorId: z.coerce.number().int().positive().optional().nullable()
+  })
+  .strict();
+
 export const searchPatientsQuerySchema = z
   .object({
     q: z.string().trim().min(2).max(120),
     page: z.coerce.number().int().positive().default(1),
-    limit: z.coerce.number().int().positive().max(50).default(20)
+    limit: z.coerce.number().int().positive().max(50).default(20),
+    scope: patientVisibilityScopeSchema.optional(),
+    doctorId: z.coerce.number().int().positive().optional().nullable()
   })
   .strict();
 
@@ -413,6 +464,14 @@ export const searchInventoryQuerySchema = z
   .object({
     q: z.string().trim().min(2).max(120),
     limit: z.coerce.number().int().positive().max(20).default(10),
+    category: z.enum(["medicine", "consumable", "equipment", "other"]).optional(),
+    activeOnly: z.coerce.boolean().default(true)
+  })
+  .strict();
+
+export const inventoryAlertsQuerySchema = z
+  .object({
+    days: z.coerce.number().int().min(7).max(180).default(30),
     category: z.enum(["medicine", "consumable", "equipment", "other"]).optional(),
     activeOnly: z.coerce.boolean().default(true)
   })
@@ -690,10 +749,34 @@ export const dispensePrescriptionSchema = z
 export const createInventoryItemSchema = z.object({
   sku: z.string().max(80).optional().nullable(),
   name: z.string().min(1).max(180),
+  genericName: z.string().min(1).max(180).optional().nullable(),
   category: z.enum(["medicine", "consumable", "equipment", "other"]),
+  subcategory: z.string().min(1).max(80).optional().nullable(),
+  description: z.string().max(4000).optional().nullable(),
+  dosageForm: z.string().min(1).max(40).optional().nullable(),
+  strength: z.string().min(1).max(40).optional().nullable(),
   unit: z.string().min(1).max(20),
+  route: z.string().min(1).max(40).optional().nullable(),
+  prescriptionType: z.enum(["clinical", "outside", "both"]).optional().nullable(),
+  packageUnit: z.string().min(1).max(20).optional().nullable(),
+  packageSize: z.number().positive().optional().nullable(),
+  brandName: z.string().min(1).max(120).optional().nullable(),
+  supplierName: z.string().min(1).max(120).optional().nullable(),
+  leadTimeDays: z.number().int().min(0).max(365).optional().nullable(),
   stock: z.number().nonnegative().default(0),
   reorderLevel: z.number().nonnegative().default(0),
+  minStockLevel: z.number().nonnegative().optional().nullable(),
+  maxStockLevel: z.number().nonnegative().optional().nullable(),
+  expiryDate: optionalDateString,
+  batchNo: z.string().min(1).max(80).optional().nullable(),
+  storageLocation: z.string().min(1).max(120).optional().nullable(),
+  directDispenseAllowed: z.boolean().optional().default(false),
+  isAntibiotic: z.boolean().optional().default(false),
+  isControlled: z.boolean().optional().default(false),
+  isPediatricSafe: z.boolean().optional().default(false),
+  requiresPrescription: z.boolean().optional().default(true),
+  clinicUseOnly: z.boolean().optional().default(false),
+  notes: z.string().max(4000).optional().nullable(),
   isActive: z.boolean().default(true)
 });
 
@@ -701,9 +784,33 @@ export const updateInventoryItemSchema = z
   .object({
     sku: z.string().max(80).optional().nullable(),
     name: z.string().min(1).max(180).optional(),
+    genericName: z.string().min(1).max(180).optional().nullable(),
     category: z.enum(["medicine", "consumable", "equipment", "other"]).optional(),
+    subcategory: z.string().min(1).max(80).optional().nullable(),
+    description: z.string().max(4000).optional().nullable(),
+    dosageForm: z.string().min(1).max(40).optional().nullable(),
+    strength: z.string().min(1).max(40).optional().nullable(),
     unit: z.string().min(1).max(20).optional(),
+    route: z.string().min(1).max(40).optional().nullable(),
+    prescriptionType: z.enum(["clinical", "outside", "both"]).optional().nullable(),
+    packageUnit: z.string().min(1).max(20).optional().nullable(),
+    packageSize: z.number().positive().optional().nullable(),
+    brandName: z.string().min(1).max(120).optional().nullable(),
+    supplierName: z.string().min(1).max(120).optional().nullable(),
+    leadTimeDays: z.number().int().min(0).max(365).optional().nullable(),
     reorderLevel: z.number().nonnegative().optional(),
+    minStockLevel: z.number().nonnegative().optional().nullable(),
+    maxStockLevel: z.number().nonnegative().optional().nullable(),
+    expiryDate: optionalDateString,
+    batchNo: z.string().min(1).max(80).optional().nullable(),
+    storageLocation: z.string().min(1).max(120).optional().nullable(),
+    directDispenseAllowed: z.boolean().optional(),
+    isAntibiotic: z.boolean().optional(),
+    isControlled: z.boolean().optional(),
+    isPediatricSafe: z.boolean().optional(),
+    requiresPrescription: z.boolean().optional(),
+    clinicUseOnly: z.boolean().optional(),
+    notes: z.string().max(4000).optional().nullable(),
     isActive: z.boolean().optional()
   })
   .strict()
@@ -711,9 +818,33 @@ export const updateInventoryItemSchema = z
     (value) =>
       value.sku !== undefined ||
       value.name !== undefined ||
+      value.genericName !== undefined ||
       value.category !== undefined ||
+      value.subcategory !== undefined ||
+      value.description !== undefined ||
+      value.dosageForm !== undefined ||
+      value.strength !== undefined ||
       value.unit !== undefined ||
+      value.route !== undefined ||
+      value.prescriptionType !== undefined ||
+      value.packageUnit !== undefined ||
+      value.packageSize !== undefined ||
+      value.brandName !== undefined ||
+      value.supplierName !== undefined ||
+      value.leadTimeDays !== undefined ||
       value.reorderLevel !== undefined ||
+      value.minStockLevel !== undefined ||
+      value.maxStockLevel !== undefined ||
+      value.expiryDate !== undefined ||
+      value.batchNo !== undefined ||
+      value.storageLocation !== undefined ||
+      value.directDispenseAllowed !== undefined ||
+      value.isAntibiotic !== undefined ||
+      value.isControlled !== undefined ||
+      value.isPediatricSafe !== undefined ||
+      value.requiresPrescription !== undefined ||
+      value.clinicUseOnly !== undefined ||
+      value.notes !== undefined ||
       value.isActive !== undefined,
     "At least one field must be provided"
   );
@@ -722,6 +853,8 @@ export const createInventoryMovementSchema = z
   .object({
     movementType: z.enum(["in", "out", "adjustment"]),
     quantity: z.number().positive(),
+    reason: z.enum(["purchase", "dispense", "damage", "expired", "return", "adjustment", "manual"]).optional().nullable(),
+    note: z.string().max(2000).optional().nullable(),
     referenceType: z.string().max(60).optional().nullable(),
     referenceId: z.number().int().positive().optional().nullable()
   })
