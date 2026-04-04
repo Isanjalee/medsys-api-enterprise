@@ -159,6 +159,8 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       const actor = request.actor!;
       const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
       const payload = parseOrThrowValidation(createAppointmentSchema.strict(), request.body);
+    const now = new Date();
+    const initialStatus = payload.status ?? "waiting";
     const patientExists = await app.readDb
       .select({ id: patients.id })
       .from(patients)
@@ -174,7 +176,11 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
         doctorId: payload.doctorId ?? null,
         assistantId: payload.assistantId ?? null,
         scheduledAt: new Date(payload.scheduledAt),
-        status: payload.status ?? "waiting",
+        status: initialStatus,
+        registeredAt: now,
+        waitingAt: initialStatus === "waiting" ? now : null,
+        inConsultationAt: initialStatus === "in_consultation" ? now : null,
+        completedAt: initialStatus === "completed" ? now : null,
         reason: payload.reason ?? null,
         priority: payload.priority ?? "normal"
       })
@@ -213,10 +219,32 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     const { id } = parseOrThrowValidation(idParamSchema, request.params);
     const body = parseOrThrowValidation(updateAppointmentSchema, request.body);
     const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
+    const existingRows = await app.readDb
+      .select({
+        id: appointments.id,
+        status: appointments.status,
+        waitingAt: appointments.waitingAt,
+        inConsultationAt: appointments.inConsultationAt,
+        completedAt: appointments.completedAt
+      })
+      .from(appointments)
+      .where(and(eq(appointments.id, id), eq(appointments.organizationId, actor.organizationId), isNull(appointments.deletedAt)))
+      .limit(1);
+    assertOrThrow(existingRows.length === 1, 404, "Appointment not found");
+    const existing = existingRows[0];
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.status !== undefined) {
       patch.status = body.status;
+      if (body.status === "waiting" && !existing.waitingAt) {
+        patch.waitingAt = new Date();
+      }
+      if (body.status === "in_consultation" && !existing.inConsultationAt) {
+        patch.inConsultationAt = new Date();
+      }
+      if (body.status === "completed" && !existing.completedAt) {
+        patch.completedAt = new Date();
+      }
     }
     if (body.doctorId !== undefined) {
       patch.doctorId = body.doctorId;
@@ -240,7 +268,6 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(appointments.id, id), eq(appointments.organizationId, actor.organizationId)))
       .returning();
 
-    assertOrThrow(updated.length === 1, 404, "Appointment not found");
     await writeAuditLog(request, {
       entityType: "appointment",
       action: "update",
