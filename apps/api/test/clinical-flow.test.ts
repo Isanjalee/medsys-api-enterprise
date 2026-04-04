@@ -160,6 +160,135 @@ test("analytics overview returns numeric counters for authorized users", async (
   await app.close();
 });
 
+test("analytics dashboard returns owner role-aware sections", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/analytics/dashboard?range=7d",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    roleContext: { resolvedRole: string };
+    generatedAt: string;
+    range: { preset: string; dateFrom: string; dateTo: string };
+    summary: Record<string, unknown>;
+    charts: Record<string, unknown>;
+    insights: unknown[];
+    tables: Record<string, unknown>;
+    alerts: unknown[];
+  };
+  assert.equal(body.roleContext.resolvedRole, "owner");
+  assert.equal(typeof body.generatedAt, "string");
+  assert.equal(body.range.preset, "7d");
+  assert.equal(typeof body.summary, "object");
+  assert.equal(typeof body.charts, "object");
+  assert.equal(Array.isArray(body.insights), true);
+  assert.equal(typeof body.tables, "object");
+  assert.equal(Array.isArray(body.alerts), true);
+  await app.close();
+});
+
+test("analytics dashboard scopes doctor metrics to the requested doctor", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createDoctorResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Analytics",
+      lastName: `Doctor${uniqueSuffix}`,
+      email: `analytics-doctor-${uniqueSuffix}@medsys.local`,
+      password: "strong-pass-123",
+      role: "doctor"
+    }
+  });
+
+  assert.equal(createDoctorResponse.statusCode, 201);
+  const secondDoctorId = (createDoctorResponse.json() as { user: { id: number } }).user.id;
+
+  const saveConsultation = async (assignedDoctorId: number, name: string, checkedAt: string) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/consultations/save",
+      headers: {
+        authorization: `Bearer ${ownerLogin.accessToken}`
+      },
+      payload: {
+        workflowType: "walk_in",
+        doctorId: assignedDoctorId,
+        checkedAt,
+        patientDraft: {
+          name,
+          dateOfBirth: DEFAULT_PATIENT_DOB
+        },
+        diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }]
+      }
+    });
+
+    assert.equal(response.statusCode, 201);
+  };
+
+  await saveConsultation(doctorId, `Analytics Primary ${uniqueSuffix}`, "2026-03-24T08:00:00Z");
+  await saveConsultation(secondDoctorId, `Analytics Secondary ${uniqueSuffix}`, "2026-03-24T09:00:00Z");
+
+  const doctorDashboardResponse = await app.inject({
+    method: "GET",
+    url: "/v1/analytics/dashboard?range=30d",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorDashboardResponse.statusCode, 200);
+  const doctorDashboard = doctorDashboardResponse.json() as {
+    roleContext: { resolvedRole: string; doctorId: number | null };
+    summary: { clinical: { totalEncounters: number } };
+  };
+  assert.equal(doctorDashboard.roleContext.resolvedRole, "doctor");
+  assert.equal(doctorDashboard.roleContext.doctorId, doctorId);
+  assert.equal(doctorDashboard.summary.clinical.totalEncounters >= 1, true);
+
+  const scopedOwnerDashboardResponse = await app.inject({
+    method: "GET",
+    url: `/v1/analytics/dashboard?range=30d&role=doctor&doctorId=${secondDoctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(scopedOwnerDashboardResponse.statusCode, 200);
+  const scopedOwnerDashboard = scopedOwnerDashboardResponse.json() as {
+    roleContext: { resolvedRole: string; doctorId: number | null };
+    summary: { clinical: { totalEncounters: number } };
+  };
+  assert.equal(scopedOwnerDashboard.roleContext.resolvedRole, "doctor");
+  assert.equal(scopedOwnerDashboard.roleContext.doctorId, secondDoctorId);
+  assert.equal(scopedOwnerDashboard.summary.clinical.totalEncounters >= 1, true);
+
+  await app.close();
+});
+
 test("analytics cache endpoint exposes cache hit and invalidation counters", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -733,7 +862,7 @@ test("patient delete tolerates an empty JSON body when content-type is set", asy
   await app.close();
 });
 
-test("doctor natively has patient and appointment creation permissions", async () => {
+test("doctor natively has patient, appointment, and inventory write permissions", async () => {
   if (!process.env.DATABASE_URL) {
     return;
   }
@@ -775,6 +904,7 @@ test("doctor natively has patient and appointment creation permissions", async (
   });
   assert.equal(meBody.permissions.includes("patient.write"), true);
   assert.equal(meBody.permissions.includes("appointment.create"), true);
+  assert.equal(meBody.permissions.includes("inventory.write"), true);
   assert.equal(meBody.permissions.includes("prescription.dispense"), true);
   assert.deepEqual(meBody.extra_permissions, []);
 
@@ -832,6 +962,23 @@ test("doctor natively has patient and appointment creation permissions", async (
   });
 
   assert.equal(appointmentResponse.statusCode, 201);
+
+  const inventoryResponse = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      name: `Doctor Stock ${uniqueSuffix}`,
+      category: "medicine",
+      unit: "tablet",
+      stock: 25,
+      reorderLevel: 5
+    }
+  });
+
+  assert.equal(inventoryResponse.statusCode, 201);
   await app.close();
 });
 
@@ -2139,10 +2286,34 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     payload: {
       sku: `SKU-${Date.now()}`,
       name: `Inventory Lifecycle ${Date.now()}`,
+      genericName: "Paracetamol",
       category: "medicine",
+      subcategory: "tablet",
+      description: "Baseline fever medication for clinic stock",
+      dosageForm: "tablet",
+      strength: "500mg",
       unit: "tablet",
+      route: "oral",
+      prescriptionType: "both",
+      packageUnit: "box",
+      packageSize: 100,
+      brandName: "Lifecycle Brand",
+      supplierName: "Lifecycle Supplier",
+      leadTimeDays: 7,
       stock: 10,
       reorderLevel: 3,
+      minStockLevel: 2,
+      maxStockLevel: 500,
+      expiryDate: "2026-12-31",
+      batchNo: "LIFE-001",
+      storageLocation: "Shelf A",
+      directDispenseAllowed: true,
+      isAntibiotic: false,
+      isControlled: false,
+      isPediatricSafe: true,
+      requiresPrescription: true,
+      clinicUseOnly: false,
+      notes: "Frequently prescribed by doctors",
       isActive: true
     }
   });
@@ -2151,13 +2322,59 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   const created = createResponse.json() as {
     id: number;
     name: string;
+    genericName: string | null;
     category: string;
+    subcategory: string | null;
+    description: string | null;
+    dosageForm: string | null;
+    strength: string | null;
+    route: string | null;
+    prescriptionType: string | null;
+    packageUnit: string | null;
+    packageSize: string | null;
+    brandName: string | null;
+    supplierName: string | null;
+    leadTimeDays: number | null;
     stock: string;
     reorderLevel: string;
+    minStockLevel: string | null;
+    maxStockLevel: string | null;
+    expiryDate: string | null;
+    batchNo: string | null;
+    storageLocation: string | null;
+    directDispenseAllowed: boolean;
+    isPediatricSafe: boolean;
+    requiresPrescription: boolean;
+    clinicUseOnly: boolean;
+    notes: string | null;
+    stockStatus: string;
   };
+  assert.equal(created.genericName, "Paracetamol");
   assert.equal(created.category, "medicine");
+  assert.equal(created.subcategory, "tablet");
+  assert.equal(created.description, "Baseline fever medication for clinic stock");
+  assert.equal(created.dosageForm, "tablet");
+  assert.equal(created.strength, "500mg");
+  assert.equal(created.route, "oral");
+  assert.equal(created.prescriptionType, "both");
+  assert.equal(created.packageUnit, "box");
+  assert.equal(created.packageSize, "100");
+  assert.equal(created.brandName, "Lifecycle Brand");
+  assert.equal(created.supplierName, "Lifecycle Supplier");
+  assert.equal(created.leadTimeDays, 7);
   assert.equal(created.stock, "10");
   assert.equal(created.reorderLevel, "3");
+  assert.equal(created.minStockLevel, "2");
+  assert.equal(created.maxStockLevel, "500");
+  assert.equal(created.expiryDate, "2026-12-31");
+  assert.equal(created.batchNo, "LIFE-001");
+  assert.equal(created.storageLocation, "Shelf A");
+  assert.equal(created.directDispenseAllowed, true);
+  assert.equal(created.isPediatricSafe, true);
+  assert.equal(created.requiresPrescription, true);
+  assert.equal(created.clinicUseOnly, false);
+  assert.equal(created.notes, "Frequently prescribed by doctors");
+  assert.equal(created.stockStatus, "in_stock");
 
   const patchResponse = await app.inject({
     method: "PATCH",
@@ -2166,7 +2383,16 @@ test("inventory lifecycle routes return stable item and movement data", async ()
       authorization: `Bearer ${loginBody.accessToken}`
     },
     payload: {
+      genericName: "Acetaminophen",
+      route: "oral",
+      prescriptionType: "clinical",
+      supplierName: "Updated Supplier",
       reorderLevel: 5,
+      minStockLevel: 4,
+      storageLocation: "Shelf B",
+      directDispenseAllowed: false,
+      clinicUseOnly: true,
+      notes: "Reserved for in-clinic use",
       isActive: false
     }
   });
@@ -2174,11 +2400,31 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   assert.equal(patchResponse.statusCode, 200);
   const patched = patchResponse.json() as {
     id: number;
+    genericName: string | null;
+    route: string | null;
+    prescriptionType: string | null;
+    supplierName: string | null;
     reorderLevel: string;
+    minStockLevel: string | null;
+    storageLocation: string | null;
+    directDispenseAllowed: boolean;
+    clinicUseOnly: boolean;
+    notes: string | null;
+    stockStatus: string;
     isActive: boolean;
   };
   assert.equal(patched.id, created.id);
+  assert.equal(patched.genericName, "Acetaminophen");
+  assert.equal(patched.route, "oral");
+  assert.equal(patched.prescriptionType, "clinical");
+  assert.equal(patched.supplierName, "Updated Supplier");
   assert.equal(patched.reorderLevel, "5");
+  assert.equal(patched.minStockLevel, "4");
+  assert.equal(patched.storageLocation, "Shelf B");
+  assert.equal(patched.directDispenseAllowed, false);
+  assert.equal(patched.clinicUseOnly, true);
+  assert.equal(patched.notes, "Reserved for in-clinic use");
+  assert.equal(patched.stockStatus, "in_stock");
   assert.equal(patched.isActive, false);
 
   const movementResponse = await app.inject({
@@ -2190,6 +2436,8 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     payload: {
       movementType: "in",
       quantity: 4,
+      reason: "purchase",
+      note: "Received new stock",
       referenceType: "adjustment"
     }
   });
@@ -2198,10 +2446,14 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   const movement = movementResponse.json() as {
     inventoryItemId: number;
     movementType: string;
+    reason: string | null;
+    note: string | null;
     quantity: string;
   };
   assert.equal(movement.inventoryItemId, created.id);
   assert.equal(movement.movementType, "in");
+  assert.equal(movement.reason, "purchase");
+  assert.equal(movement.note, "Received new stock");
   assert.equal(movement.quantity, "4");
 
   const listResponse = await app.inject({
@@ -2213,8 +2465,18 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   });
 
   assert.equal(listResponse.statusCode, 200);
-  const items = listResponse.json() as Array<{ id: number; name: string }>;
-  assert.equal(items.some((item) => item.id === created.id), true);
+  const items = listResponse.json() as Array<{
+    id: number;
+    name: string;
+    genericName: string | null;
+    dosageForm: string | null;
+    stockStatus: string;
+  }>;
+  const listed = items.find((item) => item.id === created.id);
+  assert.ok(listed);
+  assert.equal(listed.genericName, "Acetaminophen");
+  assert.equal(listed.dosageForm, "tablet");
+  assert.equal(listed.stockStatus, "in_stock");
 
   const movementsResponse = await app.inject({
     method: "GET",
@@ -2225,8 +2487,11 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   });
 
   assert.equal(movementsResponse.statusCode, 200);
-  const movements = movementsResponse.json() as Array<{ inventoryItemId: number; movementType: string }>;
-  assert.equal(movements.some((row) => row.inventoryItemId === created.id && row.movementType === "in"), true);
+  const movements = movementsResponse.json() as Array<{ inventoryItemId: number; movementType: string; reason: string | null }>;
+  assert.equal(
+    movements.some((row) => row.inventoryItemId === created.id && row.movementType === "in" && row.reason === "purchase"),
+    true
+  );
   await app.close();
 });
 
@@ -2281,6 +2546,92 @@ test("inventory movement accepts the frontend alias payload shape", async () => 
   await app.close();
 });
 
+test("inventory alerts provide low stock and restock recommendations", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      sku: `ALT-${uniqueSuffix}`,
+      name: `Alert Item ${uniqueSuffix}`,
+      genericName: "Amoxicillin",
+      category: "medicine",
+      unit: "tablet",
+      stock: 8,
+      reorderLevel: 10,
+      leadTimeDays: 7,
+      expiryDate: "2026-04-20",
+      directDispenseAllowed: true
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const created = createResponse.json() as { id: number };
+
+  const movementResponse = await app.inject({
+    method: "POST",
+    url: `/v1/inventory/${created.id}/movements`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      movementType: "out",
+      quantity: 6,
+      reason: "dispense",
+      note: "Recent usage spike"
+    }
+  });
+
+  assert.equal(movementResponse.statusCode, 201);
+
+  const alertsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/inventory/alerts?days=30",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(alertsResponse.statusCode, 200);
+  const alertsBody = alertsResponse.json() as {
+    summary: { lowStockCount: number; stockoutRiskCount: number; nearExpiryCount: number };
+    alerts: Array<{
+      id: number;
+      genericName: string | null;
+      lowStock: boolean;
+      stockoutRisk: boolean;
+      expiryRisk: boolean;
+      stockStatus: string;
+    }>;
+    recommendations: Array<{ id: number; recommendedReorderQty: number }>;
+  };
+  assert.equal(alertsBody.summary.lowStockCount >= 1, true);
+  assert.equal(alertsBody.summary.stockoutRiskCount >= 1, true);
+  assert.equal(alertsBody.summary.nearExpiryCount >= 1, true);
+  assert.equal(
+    alertsBody.alerts.some(
+      (item) => item.id === created.id && item.lowStock && item.stockoutRisk && item.expiryRisk && item.genericName === "Amoxicillin"
+    ),
+    true
+  );
+  assert.equal(
+    alertsBody.recommendations.some((item) => item.id === created.id && item.recommendedReorderQty > 0),
+    true
+  );
+
+  await app.close();
+});
+
 test("inventory search supports assistant dispense matching by drug name", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -2299,7 +2650,10 @@ test("inventory search supports assistant dispense matching by drug name", async
     payload: {
       sku: `PCM-500-${uniqueSuffix}`,
       name: `Paracetamol 500mg ${uniqueSuffix}`,
+      genericName: "Paracetamol",
       category: "medicine",
+      dosageForm: "tablet",
+      strength: "500mg",
       unit: "tablet",
       stock: 40,
       reorderLevel: 5
@@ -2316,7 +2670,10 @@ test("inventory search supports assistant dispense matching by drug name", async
     payload: {
       sku: `PCM-SYR-${uniqueSuffix}`,
       name: `Paracetamol Syrup ${uniqueSuffix}`,
+      genericName: "Paracetamol",
       category: "medicine",
+      dosageForm: "syrup",
+      strength: "250mg/5ml",
       unit: "bottle",
       stock: 15,
       reorderLevel: 3
@@ -2337,15 +2694,23 @@ test("inventory search supports assistant dispense matching by drug name", async
     id: number;
     sku: string | null;
     name: string;
+    genericName: string | null;
     category: string;
+    dosageForm: string | null;
+    strength: string | null;
     unit: string;
     stock: string;
+    stockStatus: string;
     isActive: boolean;
   }>;
   assert.equal(searchBody.length >= 2, true);
   assert.equal(searchBody.every((row) => row.category === "medicine"), true);
   assert.equal(searchBody.some((row) => row.name.includes("Paracetamol 500mg")), true);
   assert.equal(searchBody.some((row) => row.name.includes("Paracetamol Syrup")), true);
+  assert.equal(searchBody.every((row) => row.genericName === "Paracetamol"), true);
+  assert.equal(searchBody.some((row) => row.dosageForm === "tablet" && row.strength === "500mg"), true);
+  assert.equal(searchBody.some((row) => row.dosageForm === "syrup" && row.strength === "250mg/5ml"), true);
+  assert.equal(searchBody.every((row) => row.stockStatus === "in_stock"), true);
 
   await app.close();
 });
@@ -3888,6 +4253,7 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
   const consultationBody = consultationResponse.json() as {
     patient_created: boolean;
     patient: { id: number; family_id: number | null; guardian_patient_id: number | null };
+    family: { id: number; family_code: string; family_name: string } | null;
     visit: { doctor_id: number | null };
     encounter_id: number;
     prescription_id: number | null;
@@ -3897,6 +4263,9 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
   assert.equal(consultationBody.patient_created, true);
   assert.equal(consultationBody.patient.guardian_patient_id, guardianBody.patient.id);
   assert.equal(consultationBody.patient.family_id, guardianBody.patient.family_id);
+  assert.equal(consultationBody.family?.id, guardianBody.patient.family_id);
+  assert.equal(typeof consultationBody.family?.family_code, "string");
+  assert.equal(consultationBody.family?.family_name, "Guardian Link Family");
   assert.equal(consultationBody.visit.doctor_id, doctorId);
   assert.equal(typeof consultationBody.encounter_id, "number");
   assert.equal(typeof consultationBody.prescription_id, "number");
@@ -4021,6 +4390,128 @@ test("consultation workflow can quick-create a minor patient, map guardian by NI
     historyBody.history.some((entry) => entry.note === "Child reviewed for fever. Supportive care and hydration advised."),
     true
   );
+
+  await app.close();
+});
+
+test("doctor patient list and search default to previously treated patients", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createDoctorResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Scoped",
+      lastName: `Doctor${uniqueSuffix}`,
+      email: `scoped-doctor-${uniqueSuffix}@medsys.local`,
+      password: "strong-pass-123",
+      role: "doctor"
+    }
+  });
+
+  assert.equal(createDoctorResponse.statusCode, 201);
+  const secondDoctorId = (createDoctorResponse.json() as { user: { id: number } }).user.id;
+
+  const saveConsultation = async (assignedDoctorId: number, name: string, checkedAt: string) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/consultations/save",
+      headers: {
+        authorization: `Bearer ${ownerLogin.accessToken}`
+      },
+      payload: {
+        workflowType: "walk_in",
+        doctorId: assignedDoctorId,
+        checkedAt,
+        patientDraft: {
+          name,
+          dateOfBirth: DEFAULT_PATIENT_DOB
+        },
+        diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }]
+      }
+    });
+
+    assert.equal(response.statusCode, 201);
+    return response.json() as {
+      patient: { id: number };
+    };
+  };
+
+  const primaryPatientName = `Scoped Primary ${uniqueSuffix}`;
+  const secondaryPatientName = `Scoped Secondary ${uniqueSuffix}`;
+  const primaryConsultation = await saveConsultation(doctorId, primaryPatientName, "2026-03-24T08:00:00Z");
+  const secondaryConsultation = await saveConsultation(secondDoctorId, secondaryPatientName, "2026-03-24T09:00:00Z");
+
+  const doctorPatientsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorPatientsResponse.statusCode, 200);
+  const doctorPatientsBody = doctorPatientsResponse.json() as {
+    patients: Array<{ id: number; name: string }>;
+  };
+  assert.equal(doctorPatientsBody.patients.some((patient) => patient.id === primaryConsultation.patient.id), true);
+  assert.equal(doctorPatientsBody.patients.some((patient) => patient.id === secondaryConsultation.patient.id), false);
+
+  const ownerScopedPatientsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients?scope=my_patients&doctorId=${secondDoctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(ownerScopedPatientsResponse.statusCode, 200);
+  const ownerScopedPatientsBody = ownerScopedPatientsResponse.json() as {
+    patients: Array<{ id: number; name: string }>;
+  };
+  assert.equal(ownerScopedPatientsBody.patients.some((patient) => patient.id === primaryConsultation.patient.id), false);
+  assert.equal(ownerScopedPatientsBody.patients.some((patient) => patient.id === secondaryConsultation.patient.id), true);
+
+  const doctorSearchResponse = await app.inject({
+    method: "GET",
+    url: `/v1/search/patients?q=${encodeURIComponent(uniqueSuffix)}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorSearchResponse.statusCode, 200);
+  const doctorSearchBody = doctorSearchResponse.json() as {
+    patients: Array<{ id: number; name: string }>;
+  };
+  assert.equal(doctorSearchBody.patients.some((patient) => patient.id === primaryConsultation.patient.id), true);
+  assert.equal(doctorSearchBody.patients.some((patient) => patient.id === secondaryConsultation.patient.id), false);
+
+  const ownerScopedSearchResponse = await app.inject({
+    method: "GET",
+    url: `/v1/search/patients?q=${encodeURIComponent(uniqueSuffix)}&scope=my_patients&doctorId=${secondDoctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(ownerScopedSearchResponse.statusCode, 200);
+  const ownerScopedSearchBody = ownerScopedSearchResponse.json() as {
+    patients: Array<{ id: number; name: string }>;
+  };
+  assert.equal(ownerScopedSearchBody.patients.some((patient) => patient.id === primaryConsultation.patient.id), false);
+  assert.equal(ownerScopedSearchBody.patients.some((patient) => patient.id === secondaryConsultation.patient.id), true);
 
   await app.close();
 });
