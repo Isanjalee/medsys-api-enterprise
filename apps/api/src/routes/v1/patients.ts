@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, count, desc, eq, inArray, isNull, max } from "drizzle-orm";
+import { and, count, desc, eq, exists, inArray, isNull, max } from "drizzle-orm";
 import { z } from "zod";
 import {
   appointments,
@@ -27,6 +27,7 @@ import {
   createPatientTimelineEventSchema,
   createVitalSchema,
   idParamSchema,
+  listPatientsQuerySchema,
   updateVitalSchema,
   updatePatientFrontendSchema,
   updatePatientSchema
@@ -880,6 +881,30 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
     await app.cacheService.invalidate("patientProfile", patientProfileCacheKey(organizationId, patientId));
   };
 
+  const resolvePatientListDoctorId = (
+    actor: { role: string; userId: number | null },
+    query: { scope?: "organization" | "my_patients"; doctorId?: number | null }
+  ): number | null => {
+    const requestedScope = query.scope;
+    const resolvedDoctorId =
+      requestedScope === "my_patients"
+        ? query.doctorId ?? (actor.role === "doctor" ? actor.userId : null)
+        : requestedScope === undefined && actor.role === "doctor"
+          ? actor.userId
+          : null;
+
+    if (requestedScope === "my_patients" && resolvedDoctorId === null) {
+      throw validationError([
+        {
+          field: "doctorId",
+          message: "doctorId is required when requesting my_patients outside a doctor session."
+        }
+      ]);
+    }
+
+    return resolvedDoctorId;
+  };
+
   app.get(
     "/",
     {
@@ -887,11 +912,21 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: [tag],
         operationId: "PatientsController_findAll",
-        summary: "List patients"
+        summary: "List patients",
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            scope: { type: "string", enum: ["organization", "my_patients"] },
+            doctorId: { type: "integer", minimum: 1, nullable: true }
+          }
+        }
       }
     },
     async (request) => {
       const actor = request.actor!;
+      const query = parseOrThrowValidation(listPatientsQuerySchema, request.query ?? {});
+      const scopedDoctorId = resolvePatientListDoctorId(actor, query);
       const rows = await app.readDb
         .select({
           id: patients.id,
@@ -910,7 +945,29 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           createdAt: patients.createdAt
         })
         .from(patients)
-        .where(and(eq(patients.organizationId, actor.organizationId), isNull(patients.deletedAt)))
+        .where(
+          and(
+            eq(patients.organizationId, actor.organizationId),
+            isNull(patients.deletedAt),
+            ...(scopedDoctorId
+              ? [
+                  exists(
+                    app.readDb
+                      .select({ id: encounters.id })
+                      .from(encounters)
+                      .where(
+                        and(
+                          eq(encounters.organizationId, actor.organizationId),
+                          eq(encounters.patientId, patients.id),
+                          eq(encounters.doctorId, scopedDoctorId),
+                          isNull(encounters.deletedAt)
+                        )
+                      )
+                  )
+                ]
+              : [])
+          )
+        )
         .orderBy(desc(patients.createdAt))
         .limit(200);
 
