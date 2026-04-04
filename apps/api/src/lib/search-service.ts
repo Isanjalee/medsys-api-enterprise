@@ -1,5 +1,5 @@
-import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
-import { patients, type buildDbClient } from "@medsys/db";
+import { and, desc, eq, exists, ilike, isNull, or, sql } from "drizzle-orm";
+import { encounters, patients, type buildDbClient } from "@medsys/db";
 import type { FastifyBaseLogger } from "fastify";
 
 type DbClient = ReturnType<typeof buildDbClient>["db"];
@@ -52,7 +52,13 @@ export type DiagnosisSearchDoc = {
 
 export type SearchService = {
   mode: "opensearch" | "db-fallback";
-  searchPatients: (input: { organizationId: string; query: string; page: number; limit: number }) => Promise<PatientSearchResult>;
+  searchPatients: (input: {
+    organizationId: string;
+    query: string;
+    page: number;
+    limit: number;
+    doctorId?: number | null;
+  }) => Promise<PatientSearchResult>;
   upsertPatient: (doc: PatientSearchDoc) => Promise<void>;
   deletePatient: (organizationId: string, patientId: number) => Promise<void>;
   indexDiagnoses: (docs: DiagnosisSearchDoc[]) => Promise<void>;
@@ -92,11 +98,28 @@ const toPatientSearchHit = (row: {
 
 const createDbFallbackSearchService = (db: DbClient): SearchService => ({
   mode: "db-fallback",
-  searchPatients: async ({ organizationId, query, page, limit }) => {
+  searchPatients: async ({ organizationId, query, page, limit, doctorId }) => {
     const pattern = `%${escapeQuery(query.trim())}%`;
     const whereClause = and(
       eq(patients.organizationId, organizationId),
       isNull(patients.deletedAt),
+      ...(doctorId
+        ? [
+            exists(
+              db
+                .select({ id: encounters.id })
+                .from(encounters)
+                .where(
+                  and(
+                    eq(encounters.organizationId, organizationId),
+                    eq(encounters.patientId, patients.id),
+                    eq(encounters.doctorId, doctorId),
+                    isNull(encounters.deletedAt)
+                  )
+                )
+            )
+          ]
+        : []),
       or(
         ilike(patients.fullName, pattern),
         ilike(patients.patientCode, pattern),
@@ -223,7 +246,11 @@ const createOpenSearchService = (
 
   return {
     mode: "opensearch",
-    searchPatients: async ({ organizationId, query, page, limit }) => {
+    searchPatients: async ({ organizationId, query, page, limit, doctorId }) => {
+      if (doctorId) {
+        return dbFallback.searchPatients({ organizationId, query, page, limit, doctorId });
+      }
+
       try {
         const from = (page - 1) * limit;
         const response = await request(`/${options.patientIndex}/_search`, {
