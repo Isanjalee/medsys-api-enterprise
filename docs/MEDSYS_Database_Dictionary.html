@@ -38,9 +38,9 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built relational database dictionary</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>1.6</div>
-      <div><strong>Date</strong>March 31, 2026</div>
-      <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, V8, V9, V10, V11, and V12</div>
+      <div><strong>Version</strong>1.7</div>
+      <div><strong>Date</strong>April 5, 2026</div>
+      <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, and V16</div>
       <div><strong>Audience</strong>Developers, QA, BA, reviewers, and client stakeholders</div>
     </div>
     <div class="foot">Prepared from the current repository schema migrations. This document describes the implemented database design, not a proposed future-state model.</div>
@@ -49,7 +49,7 @@
   <section class="page">
     <h2>1. Scope and Reading Guide</h2>
     <p>This document provides a field-level dictionary for the MEDSYS PostgreSQL schema. It focuses on database-enforced validation and structure: data type, required versus nullable, default values, generated values, primary keys, unique constraints, foreign keys, indexes, and check constraints.</p>
-    <div class="callout"><strong>Important:</strong> application-level validations may be stricter than the database. This document records what the database itself enforces. Migration <span class="mono">V8</span> adds client/demo seed data, <span class="mono">V9</span> adds user-level extra permission storage, <span class="mono">V10</span> adds patient codes plus guardian identity fields, <span class="mono">V11</span> adds doctor workflow identity, and <span class="mono">V12</span> adds persistent multi-role support.</div>
+    <div class="callout"><strong>Important:</strong> application-level validations may be stricter than the database. This document records what the database itself enforces. Migration <span class="mono">V8</span> adds client/demo seed data, <span class="mono">V9</span> adds user-level extra permission storage, <span class="mono">V10</span> adds patient codes plus guardian identity fields, <span class="mono">V11</span> adds doctor workflow identity, <span class="mono">V12</span> adds persistent multi-role support, <span class="mono">V13</span> adds workflow timing fields, <span class="mono">V14</span> expands inventory metadata, <span class="mono">V15</span> adds doctor-facing inventory fields, and <span class="mono">V16</span> adds inventory packaging-conversion fields.</div>
 
     <h2>2. Global Design Rules</h2>
     <ul>
@@ -459,17 +459,45 @@
         <tr><td><span class="mono">organization_id</span></td><td>UUID</td><td>Yes</td><td>None</td><td>Tenant scope.</td></tr>
         <tr><td><span class="mono">sku</span></td><td>VARCHAR(80)</td><td>No</td><td>None</td><td>Globally unique when present.</td></tr>
         <tr><td><span class="mono">name</span></td><td>VARCHAR(180)</td><td>Yes</td><td>None</td><td>Required item name.</td></tr>
+        <tr><td><span class="mono">generic_name</span></td><td>VARCHAR(180)</td><td>No</td><td>None</td><td>Optional generic medicine name.</td></tr>
         <tr><td><span class="mono">category</span></td><td>inventory_category</td><td>Yes</td><td>None</td><td>Enum constrained.</td></tr>
+        <tr><td><span class="mono">subcategory</span></td><td>VARCHAR(80)</td><td>No</td><td>None</td><td>Optional item subtype such as tablet or kit.</td></tr>
+        <tr><td><span class="mono">description</span></td><td>TEXT</td><td>No</td><td>None</td><td>Optional free-text description.</td></tr>
+        <tr><td><span class="mono">dosage_form</span></td><td>VARCHAR(40)</td><td>No</td><td>None</td><td>Optional dosage-form label such as tablet, syrup, or vial.</td></tr>
+        <tr><td><span class="mono">strength</span></td><td>VARCHAR(40)</td><td>No</td><td>None</td><td>Optional strength label such as 500mg.</td></tr>
         <tr><td><span class="mono">unit</span></td><td>VARCHAR(20)</td><td>Yes</td><td>None</td><td>Required stock unit.</td></tr>
+        <tr><td><span class="mono">dispense_unit</span></td><td>VARCHAR(20)</td><td>No</td><td>None</td><td>Optional clinic-side dispense pack label added in <span class="mono">V16</span>.</td></tr>
+        <tr><td><span class="mono">dispense_unit_size</span></td><td>NUMERIC(12,2)</td><td>No</td><td>None</td><td>Optional base-unit quantity per dispense pack added in <span class="mono">V16</span>.</td></tr>
+        <tr><td><span class="mono">purchase_unit</span></td><td>VARCHAR(20)</td><td>No</td><td>None</td><td>Optional supplier-side purchase pack label added in <span class="mono">V16</span>.</td></tr>
+        <tr><td><span class="mono">purchase_unit_size</span></td><td>NUMERIC(12,2)</td><td>No</td><td>None</td><td>Optional base-unit quantity per purchase pack added in <span class="mono">V16</span>.</td></tr>
+        <tr><td><span class="mono">route</span></td><td>VARCHAR(40)</td><td>No</td><td>None</td><td>Optional administration route.</td></tr>
+        <tr><td><span class="mono">prescription_type</span></td><td>VARCHAR(20)</td><td>No</td><td>None</td><td>Optional item usage mode such as clinical, outside, or both.</td></tr>
+        <tr><td><span class="mono">package_unit</span></td><td>VARCHAR(20)</td><td>No</td><td>None</td><td>Legacy/general package label retained for compatibility.</td></tr>
+        <tr><td><span class="mono">package_size</span></td><td>NUMERIC(12,2)</td><td>No</td><td>None</td><td>Legacy/general package size retained for compatibility.</td></tr>
+        <tr><td><span class="mono">brand_name</span></td><td>VARCHAR(120)</td><td>No</td><td>None</td><td>Optional brand or trade name.</td></tr>
+        <tr><td><span class="mono">supplier_name</span></td><td>VARCHAR(120)</td><td>No</td><td>None</td><td>Optional supplier name.</td></tr>
+        <tr><td><span class="mono">lead_time_days</span></td><td>BIGINT</td><td>No</td><td>None</td><td>Optional supplier lead time in days.</td></tr>
         <tr><td><span class="mono">stock</span></td><td>NUMERIC(12,2)</td><td>Yes</td><td><span class="mono">0</span></td><td>Current stock balance.</td></tr>
         <tr><td><span class="mono">reorder_level</span></td><td>NUMERIC(12,2)</td><td>Yes</td><td><span class="mono">0</span></td><td>Reorder threshold.</td></tr>
+        <tr><td><span class="mono">min_stock_level</span></td><td>NUMERIC(12,2)</td><td>No</td><td>None</td><td>Optional explicit minimum stock threshold.</td></tr>
+        <tr><td><span class="mono">max_stock_level</span></td><td>NUMERIC(12,2)</td><td>No</td><td>None</td><td>Optional explicit maximum stock threshold.</td></tr>
+        <tr><td><span class="mono">expiry_date</span></td><td>DATE</td><td>No</td><td>None</td><td>Optional item or batch expiry date.</td></tr>
+        <tr><td><span class="mono">batch_no</span></td><td>VARCHAR(80)</td><td>No</td><td>None</td><td>Optional batch or lot reference.</td></tr>
+        <tr><td><span class="mono">storage_location</span></td><td>VARCHAR(120)</td><td>No</td><td>None</td><td>Optional storage location label.</td></tr>
+        <tr><td><span class="mono">direct_dispense_allowed</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">FALSE</span></td><td>Doctor direct-dispense eligibility flag.</td></tr>
+        <tr><td><span class="mono">is_antibiotic</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">FALSE</span></td><td>Antibiotic marker.</td></tr>
+        <tr><td><span class="mono">is_controlled</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">FALSE</span></td><td>Controlled-item marker.</td></tr>
+        <tr><td><span class="mono">is_pediatric_safe</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">FALSE</span></td><td>Pediatric-safety marker.</td></tr>
+        <tr><td><span class="mono">requires_prescription</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">TRUE</span></td><td>Prescription requirement flag.</td></tr>
+        <tr><td><span class="mono">clinic_use_only</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">FALSE</span></td><td>Clinic-use-only flag.</td></tr>
+        <tr><td><span class="mono">notes</span></td><td>TEXT</td><td>No</td><td>None</td><td>Optional operational notes.</td></tr>
         <tr><td><span class="mono">is_active</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">TRUE</span></td><td>Active flag.</td></tr>
         <tr><td><span class="mono">created_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Creation timestamp.</td></tr>
         <tr><td><span class="mono">updated_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Update timestamp.</td></tr>
         <tr><td><span class="mono">deleted_at</span></td><td>TIMESTAMPTZ</td><td>No</td><td>None</td><td>Soft delete marker.</td></tr>
       </tbody>
     </table>
-    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">sku</span>. <strong>Index:</strong> <span class="mono">inventory_items_org_name_idx</span>.</p>
+    <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">sku</span>. <strong>Indexes:</strong> <span class="mono">inventory_items_org_name_idx</span>, <span class="mono">inventory_items_org_generic_name_idx</span>, <span class="mono">inventory_items_org_expiry_date_idx</span>. <strong>Design note:</strong> <span class="mono">unit</span> is the base stock unit, while <span class="mono">dispense_unit</span>/<span class="mono">dispense_unit_size</span> and <span class="mono">purchase_unit</span>/<span class="mono">purchase_unit_size</span> describe conversion packs for clinic and supplier workflows.</p>
 
     <h3>10.2 inventory_movements</h3>
     <table class="small">
@@ -479,14 +507,16 @@
         <tr><td><span class="mono">organization_id</span></td><td>UUID</td><td>Yes</td><td>None</td><td>Tenant scope.</td></tr>
         <tr><td><span class="mono">inventory_item_id</span></td><td>BIGINT</td><td>Yes</td><td>None</td><td>Foreign key to <span class="mono">inventory_items.id</span>.</td></tr>
         <tr><td><span class="mono">movement_type</span></td><td>inventory_movement_type</td><td>Yes</td><td>None</td><td>Enum constrained.</td></tr>
+        <tr><td><span class="mono">reason</span></td><td>VARCHAR(30)</td><td>No</td><td>None</td><td>Optional reason such as purchase, dispense, damage, expired, return, adjustment, or manual.</td></tr>
         <tr><td><span class="mono">quantity</span></td><td>NUMERIC(12,2)</td><td>Yes</td><td>None</td><td>Movement quantity.</td></tr>
+        <tr><td><span class="mono">note</span></td><td>TEXT</td><td>No</td><td>None</td><td>Optional operator note.</td></tr>
         <tr><td><span class="mono">reference_type</span></td><td>VARCHAR(30)</td><td>No</td><td>None</td><td>Optional origin marker.</td></tr>
         <tr><td><span class="mono">reference_id</span></td><td>BIGINT</td><td>No</td><td>None</td><td>Optional referenced row id.</td></tr>
         <tr><td><span class="mono">created_by_id</span></td><td>BIGINT</td><td>Yes</td><td>None</td><td>Foreign key to <span class="mono">users.id</span>.</td></tr>
         <tr><td><span class="mono">created_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Immutable creation timestamp.</td></tr>
       </tbody>
     </table>
-    <p><strong>Index:</strong> <span class="mono">inventory_movements_item_idx</span>.</p>
+    <p><strong>Index:</strong> <span class="mono">inventory_movements_item_idx</span>. <strong>Operational note:</strong> stock balances should be changed through movement rows instead of editing <span class="mono">inventory_items.stock</span> directly for ordinary clinic operations.</p>
 
     <h2>11. Audit and Operational Tables</h2>
 
@@ -531,9 +561,13 @@
       <li><span class="mono">infra/flyway/sql/V9__add_user_extra_permissions.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V11__add_doctor_workflow_mode.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V12__add_user_roles_and_active_role.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V13__add_analytics_workflow_timestamps.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V14__expand_inventory_management_and_alerting_fields.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V15__add_doctor_facing_inventory_fields.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V16__add_inventory_packaging_conversion_fields.sql</span></li>
     </ul>
 
-    <div class="foot">This dictionary is intended for review, onboarding, QA, and client walkthroughs. When the schema changes, update this document alongside the relevant Flyway migration.</div>
+    <div class="foot">This dictionary is intended for review, onboarding, QA, and client walkthroughs. When the schema changes, update this document alongside the relevant Flyway migration. Current inventory coverage includes alerts metadata, doctor-facing inventory fields, and packaging-conversion fields through <span class="mono">V16</span>.</div>
   </section>
 </body>
 </html>
