@@ -2290,10 +2290,14 @@ test("inventory lifecycle routes return stable item and movement data", async ()
       category: "medicine",
       subcategory: "tablet",
       description: "Baseline fever medication for clinic stock",
-      dosageForm: "tablet",
-      strength: "500mg",
-      unit: "tablet",
-      route: "oral",
+        dosageForm: "tablet",
+        strength: "500mg",
+        unit: "tablet",
+        dispenseUnit: "card",
+        dispenseUnitSize: 10,
+        purchaseUnit: "box",
+        purchaseUnitSize: 100,
+        route: "oral",
       prescriptionType: "both",
       packageUnit: "box",
       packageSize: 100,
@@ -2326,9 +2330,13 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     category: string;
     subcategory: string | null;
     description: string | null;
-    dosageForm: string | null;
-    strength: string | null;
-    route: string | null;
+      dosageForm: string | null;
+      strength: string | null;
+      dispenseUnit: string | null;
+      dispenseUnitSize: string | null;
+      purchaseUnit: string | null;
+      purchaseUnitSize: string | null;
+      route: string | null;
     prescriptionType: string | null;
     packageUnit: string | null;
     packageSize: string | null;
@@ -2353,9 +2361,13 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   assert.equal(created.category, "medicine");
   assert.equal(created.subcategory, "tablet");
   assert.equal(created.description, "Baseline fever medication for clinic stock");
-  assert.equal(created.dosageForm, "tablet");
-  assert.equal(created.strength, "500mg");
-  assert.equal(created.route, "oral");
+    assert.equal(created.dosageForm, "tablet");
+    assert.equal(created.strength, "500mg");
+    assert.equal(created.dispenseUnit, "card");
+    assert.equal(created.dispenseUnitSize, "10");
+    assert.equal(created.purchaseUnit, "box");
+    assert.equal(created.purchaseUnitSize, "100");
+    assert.equal(created.route, "oral");
   assert.equal(created.prescriptionType, "both");
   assert.equal(created.packageUnit, "box");
   assert.equal(created.packageSize, "100");
@@ -2383,8 +2395,12 @@ test("inventory lifecycle routes return stable item and movement data", async ()
       authorization: `Bearer ${loginBody.accessToken}`
     },
     payload: {
-      genericName: "Acetaminophen",
-      route: "oral",
+        genericName: "Acetaminophen",
+        dispenseUnit: "strip",
+        dispenseUnitSize: 12,
+        purchaseUnit: "carton",
+        purchaseUnitSize: 240,
+        route: "oral",
       prescriptionType: "clinical",
       supplierName: "Updated Supplier",
       reorderLevel: 5,
@@ -2400,8 +2416,12 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   assert.equal(patchResponse.statusCode, 200);
   const patched = patchResponse.json() as {
     id: number;
-    genericName: string | null;
-    route: string | null;
+      genericName: string | null;
+      dispenseUnit: string | null;
+      dispenseUnitSize: string | null;
+      purchaseUnit: string | null;
+      purchaseUnitSize: string | null;
+      route: string | null;
     prescriptionType: string | null;
     supplierName: string | null;
     reorderLevel: string;
@@ -2413,9 +2433,13 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     stockStatus: string;
     isActive: boolean;
   };
-  assert.equal(patched.id, created.id);
-  assert.equal(patched.genericName, "Acetaminophen");
-  assert.equal(patched.route, "oral");
+    assert.equal(patched.id, created.id);
+    assert.equal(patched.genericName, "Acetaminophen");
+    assert.equal(patched.dispenseUnit, "strip");
+    assert.equal(patched.dispenseUnitSize, "12");
+    assert.equal(patched.purchaseUnit, "carton");
+    assert.equal(patched.purchaseUnitSize, "240");
+    assert.equal(patched.route, "oral");
   assert.equal(patched.prescriptionType, "clinical");
   assert.equal(patched.supplierName, "Updated Supplier");
   assert.equal(patched.reorderLevel, "5");
@@ -2469,13 +2493,17 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     id: number;
     name: string;
     genericName: string | null;
-    dosageForm: string | null;
-    stockStatus: string;
-  }>;
+      dosageForm: string | null;
+      dispenseUnit: string | null;
+      purchaseUnit: string | null;
+      stockStatus: string;
+    }>;
   const listed = items.find((item) => item.id === created.id);
   assert.ok(listed);
   assert.equal(listed.genericName, "Acetaminophen");
   assert.equal(listed.dosageForm, "tablet");
+  assert.equal(listed.dispenseUnit, "strip");
+  assert.equal(listed.purchaseUnit, "carton");
   assert.equal(listed.stockStatus, "in_stock");
 
   const movementsResponse = await app.inject({
@@ -2652,10 +2680,14 @@ test("inventory search supports assistant dispense matching by drug name", async
       name: `Paracetamol 500mg ${uniqueSuffix}`,
       genericName: "Paracetamol",
       category: "medicine",
-      dosageForm: "tablet",
-      strength: "500mg",
-      unit: "tablet",
-      stock: 40,
+        dosageForm: "tablet",
+        strength: "500mg",
+        unit: "tablet",
+        dispenseUnit: "card",
+        dispenseUnitSize: 10,
+        purchaseUnit: "box",
+        purchaseUnitSize: 100,
+        stock: 40,
       reorderLevel: 5
     }
   });
@@ -2672,10 +2704,14 @@ test("inventory search supports assistant dispense matching by drug name", async
       name: `Paracetamol Syrup ${uniqueSuffix}`,
       genericName: "Paracetamol",
       category: "medicine",
-      dosageForm: "syrup",
-      strength: "250mg/5ml",
-      unit: "bottle",
-      stock: 15,
+        dosageForm: "syrup",
+        strength: "250mg/5ml",
+        unit: "bottle",
+        dispenseUnit: "bottle",
+        dispenseUnitSize: 1,
+        purchaseUnit: "crate",
+        purchaseUnitSize: 24,
+        stock: 15,
       reorderLevel: 3
     }
   });
@@ -2694,12 +2730,14 @@ test("inventory search supports assistant dispense matching by drug name", async
     id: number;
     sku: string | null;
     name: string;
-    genericName: string | null;
-    category: string;
-    dosageForm: string | null;
-    strength: string | null;
-    unit: string;
-    stock: string;
+      genericName: string | null;
+      category: string;
+      dosageForm: string | null;
+      strength: string | null;
+      unit: string;
+      dispenseUnit: string | null;
+      purchaseUnit: string | null;
+      stock: string;
     stockStatus: string;
     isActive: boolean;
   }>;
@@ -2710,6 +2748,8 @@ test("inventory search supports assistant dispense matching by drug name", async
   assert.equal(searchBody.every((row) => row.genericName === "Paracetamol"), true);
   assert.equal(searchBody.some((row) => row.dosageForm === "tablet" && row.strength === "500mg"), true);
   assert.equal(searchBody.some((row) => row.dosageForm === "syrup" && row.strength === "250mg/5ml"), true);
+  assert.equal(searchBody.some((row) => row.dispenseUnit === "card" && row.purchaseUnit === "box"), true);
+  assert.equal(searchBody.some((row) => row.dispenseUnit === "bottle" && row.purchaseUnit === "crate"), true);
   assert.equal(searchBody.every((row) => row.stockStatus === "in_stock"), true);
 
   await app.close();
