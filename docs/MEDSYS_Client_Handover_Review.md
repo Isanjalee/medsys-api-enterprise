@@ -3,8 +3,8 @@
 
 Project Code: `MEDLINK-Version2`  
 Target Audience: All Medical Field Professionals  
-Document Version: `1.0`  
-System Reference Date: March 25, 2026  
+Document Version: `1.1`  
+System Reference Date: April 5, 2026  
 Status: Tech Manager Review Draft  
 
 Space for branding/logo: `Reserved`
@@ -22,6 +22,7 @@ The strongest implementation area today is the doctor and assistant operational 
 - prescription items are operationally split into `clinical` and `outside`
 - only clinical items enter the dispense queue
 - assistant and doctor dispense flows now align with inventory deduction and workflow completion
+- inventory now supports alerts, restock recommendations, and explicit base-unit plus packaging-conversion metadata
 - patient history is recorded structurally through encounters, timeline events, narrative history notes, and long-term conditions
 
 This document is intended for technical and delivery review. It focuses on what is implemented now, what is stable enough for stakeholder review, and what remains future scope.
@@ -34,8 +35,8 @@ This document is intended for technical and delivery review. It focuses on what 
 |---|---|
 | Document title | MEDSYS Client Specification and Implementation Review |
 | Project code | MEDLINK-Version2 |
-| Version | 1.0 |
-| Date | March 25, 2026 |
+| Version | 1.1 |
+| Date | April 5, 2026 |
 | Status | Tech Manager Review Draft |
 | Primary audience | Technical manager, delivery leads, implementation stakeholders |
 | Basis | Current repository implementation and verified API behavior |
@@ -45,6 +46,7 @@ This document is intended for technical and delivery review. It focuses on what 
 | Version | Date | Notes |
 |---|---|---|
 | 1.0 | March 25, 2026 | Consolidated handover review aligned to implemented backend behavior |
+| 1.1 | April 5, 2026 | Added role-aware dashboard, workflow timing, inventory alerts, and packaging-conversion inventory model |
 
 ---
 
@@ -135,7 +137,25 @@ Implemented:
 - stock deduction and inventory movement creation
 - inventory search for unresolved clinical dispense items
 
-### 4.5 Clinical Lookup
+### 4.5 Inventory and Stock Control
+
+Implemented:
+
+- inventory item creation and update
+- inventory stock movements through `POST /v1/inventory/:id/movements`
+- inventory alerts and reorder suggestions through `GET /v1/inventory/alerts`
+- backend-computed `stockStatus`
+- explicit packaging-conversion fields for dispense and purchase workflows
+
+Important implemented rules:
+
+- `unit` is the base stock unit and is the unit used for stored `stock`
+- `dispenseUnit` + `dispenseUnitSize` describe clinic-side dispense packs
+- `purchaseUnit` + `purchaseUnitSize` describe supplier-side purchase packs
+- `PATCH /v1/inventory/:id` updates item metadata and thresholds, not the live stock balance
+- stock quantity changes should be recorded through movement routes, not by editing the final stock value directly
+
+### 4.6 Clinical Lookup
 
 Implemented:
 
@@ -228,7 +248,7 @@ This is one of the key workflow-hardening changes in the current implementation.
 | Encounters | `/v1/encounters` |
 | Prescriptions | `/v1/prescriptions`, `/v1/prescriptions/:id/dispense` |
 | Dispense queue | `/v1/prescriptions/queue/pending-dispense` |
-| Inventory | `/v1/inventory`, `/v1/inventory/search` |
+| Inventory | `/v1/inventory`, `/v1/inventory/search`, `/v1/inventory/alerts`, `/v1/inventory/:id/movements` |
 | Clinical lookup | `/v1/clinical/diagnoses`, `/v1/clinical/tests`, `/v1/clinical/diagnoses/:code/recommended-tests` |
 | Analytics | `/v1/analytics/overview`, `/v1/analytics/dashboard` |
 | Audit | `/v1/audit/logs` |
@@ -242,6 +262,8 @@ Frontend should treat these as the primary patterns:
 - Selected diagnosis = can request suggested tests below
 - Consultation save = one workflow payload, not many independent save steps
 - Dispense completion = requires real `inventoryItemId` selection for clinical items
+- Inventory edit = descriptive fields, thresholds, and packaging rules
+- Stock quantity changes = inventory movements (`in`, `out`, `adjustment`)
 
 ### Analytics Dashboard Handover
 
@@ -290,6 +312,42 @@ Timing fields now available for queue and consultation analytics:
 
 Use these timing fields for frontend analytics and drill-down displays instead of inferring durations from generic `created_at` or `updated_at`.
 
+### Inventory Frontend Handover
+
+Recommended frontend labels:
+
+- `Current Stock`
+- `Minimum Stock Level`
+- `Recommended Reorder Qty`
+- `Dispense Pack`
+- `Purchase Pack`
+
+Recommended display rules:
+
+- show stock in base units, such as `200 tablets`
+- treat `reorderLevel` as the low-stock trigger, not the quantity to add
+- when users want to set the actual counted stock, frontend should calculate the difference and send a stock movement with reason `adjustment`
+- if packaging is not configured, show `Not set` instead of defaults like `unit x 1`
+
+Example inventory meaning:
+
+```json
+{
+  "unit": "tablet",
+  "dispenseUnit": "card",
+  "dispenseUnitSize": "10",
+  "purchaseUnit": "box",
+  "purchaseUnitSize": "100",
+  "stock": "1000"
+}
+```
+
+Meaning:
+
+- current stock = `1000 tablets`
+- equivalent to `100 cards`
+- equivalent to `10 boxes`
+
 ---
 
 ## 7. Error Handling Contract
@@ -335,6 +393,7 @@ This is important for frontend and operational workflows because it prevents dup
 - noisy medical-test result filtering
 - pending dispense queue enrichment
 - inventory search for assistant stock matching
+- inventory alerts, packaging conversion fields, and stock-movement-only quantity updates
 - doctor-sensitive dispense permission alignment
 - source-aware prescription workflow
 - walk-in conflict handling with clean `409`
@@ -346,7 +405,7 @@ Current verified state:
 
 - `npm run typecheck` passing
 - `npm run test --workspace @medsys/api` passing
-- 86 API tests passing at the time of this document
+- 91 API tests passing at the time of this document
 
 ---
 
