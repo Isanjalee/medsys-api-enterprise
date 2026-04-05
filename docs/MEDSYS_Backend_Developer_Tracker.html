@@ -41,8 +41,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>Implementation Tracker and Delivery Register</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>2.8</div>
-      <div><strong>Date</strong>March 31, 2026</div>
+      <div><strong>Version</strong>2.9</div>
+      <div><strong>Date</strong>April 5, 2026</div>
       <div><strong>Audience</strong>Backend, Platform, QA, and Integration Teams</div>
       <div><strong>Scope</strong>Roadmap phases, frontend alignment, and open operational actions</div>
     </div>
@@ -62,7 +62,7 @@
 
     <h2>3. Current Delivery Snapshot</h2>
     <div class="grid">
-      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, 7, 8, and 9, plus persisted multi-role identity migration for application auth and user management</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening, guardian-aware registration, backend-style and frontend-style patient create parity, vitals correction and soft-delete workflow, explicit doctor workflow identity, persisted multi-role support with <span class="mono">user_roles</span> and <span class="mono">active_role</span>, waiting-queue position support, consultation save orchestration for small-clinic flow, richer patient list summaries, bundled family detail in profile, and patient consultation-history aggregation</li></ul></div>
+      <div class="panel"><h3>Completed</h3><ul><li>Frontend alignment and backend contract support</li><li>Phases 1, 2, 3, 4, 5, 7, 8, and 9, plus persisted multi-role identity migration for application auth and user management</li><li>Critical backend integration and CI coverage</li><li>Patient required-field hardening, guardian-aware registration, backend-style and frontend-style patient create parity, vitals correction and soft-delete workflow, explicit doctor workflow identity, persisted multi-role support with <span class="mono">user_roles</span> and <span class="mono">active_role</span>, waiting-queue position support, consultation save orchestration for small-clinic flow, richer patient list summaries, bundled family detail in profile, patient consultation-history aggregation, role-aware dashboard analytics, and inventory alerts plus packaging-conversion stock management</li></ul></div>
       <div class="panel"><h3>Open or Held</h3><ul><li>Phase 6 AWS rollout is deferred</li><li>Future AI API remains out of current backend scope</li><li>Owner and assistant custom workflow modes remain intentionally deferred until product semantics require them</li></ul></div>
     </div>
     <div class="callout"><strong>Current backend status:</strong> application features are implemented and verified through the core delivery phases. Phase 6 infrastructure artifacts are complete in code, and live AWS rollout is intentionally deferred.</div>
@@ -93,6 +93,8 @@
       <li>Doctor workflow orchestration is now implemented with <span class="mono">POST /v1/consultations/save</span>, which can resolve or create the patient, map guardian linkage by NIC, optionally create a guardian patient from <span class="mono">guardianDraft</span>, reuse or create the visit, save the encounter with diagnoses, tests, vitals, prescription items, and allergies, create a consultation timeline event, optionally write a narrative history note, and optionally persist flagged diagnoses into long-term patient conditions in one transaction.</li>
       <li>The consultation workflow now supports explicit <span class="mono">workflowType</span> branching for <span class="mono">appointment</span> and <span class="mono">walk_in</span>, plus mode-aware response flags for <span class="mono">workflow_status</span>, <span class="mono">dispense_status</span>, and <span class="mono">doctor_direct_dispense</span>. Walk-in mode also supports structured <span class="mono">dispense.mode</span> handling for doctor-direct completion.</li>
       <li>Prescription handling is now source-aware: only <span class="mono">source = clinical</span> items drive pending dispense queue creation, assistant handoff, and completion state, while <span class="mono">source = outside</span> items remain prescription-only. Queue rows now include only clinical items, and assistant stock matching is supported through <span class="mono">GET /v1/inventory/search</span>.</li>
+      <li>Inventory management now includes <span class="mono">GET /v1/inventory/alerts</span>, backend-computed <span class="mono">stockStatus</span>, explicit packaging conversion fields (<span class="mono">dispenseUnit</span>, <span class="mono">dispenseUnitSize</span>, <span class="mono">purchaseUnit</span>, <span class="mono">purchaseUnitSize</span>), and stock-movement-only quantity updates so item metadata changes do not silently rewrite the live stock balance.</li>
+      <li>Role-aware analytics are now implemented through <span class="mono">GET /v1/analytics/dashboard</span> with doctor, assistant, and owner-specific summary, chart, alert, and insight blocks plus exact workflow timing fields on appointments and encounters.</li>
       <li>Walk-in conflict handling is now explicit: if a patient already has an active walk-in consultation with an encounter, backend returns a clear <span class="mono">409</span> conflict instead of surfacing a database error.</li>
       <li>Clinical terminology search is now split into normalized backend-owned endpoints: <span class="mono">GET /v1/clinical/diagnoses</span> for diagnosis lookup, <span class="mono">GET /v1/clinical/tests</span> for provider-backed lab or observation lookup, and <span class="mono">GET /v1/clinical/diagnoses/:code/recommended-tests</span> for curated test suggestions. Test lookup now defaults to the public NLM Clinical Tables LOINC search endpoint instead of a hardcoded catalog.</li>
       <li>Clinical terminology normalization is implemented with backend-owned diagnosis search, test search, and curated recommended-test endpoints so frontend no longer needs to integrate directly with external terminology providers.</li>
@@ -135,7 +137,7 @@
 
     <h2>8. Test and Verification Snapshot</h2>
     <table><thead><tr><th style="width:26%">Surface</th><th style="width:18%">Result</th><th>Evidence</th></tr></thead><tbody>
-      <tr><td>API automated tests</td><td class="good">86 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, explicit doctor workflow mode coverage, persisted multi-role identity coverage, active-role switching coverage, waiting-queue FIFO plus queue-position coverage, backend-style patient create family or allergy coverage, enriched patient list and profile coverage, consultation-history aggregation coverage, full vitals workflow coverage, walk-in visit create-or-reuse coverage, consultation workflow quick-create plus guardian mapping coverage, guardianDraft auto-create linkage coverage, normalized terminology endpoint coverage for both FHIR-style and Clinical Tables-style LOINC responses, source-aware prescription workflow coverage, assistant inventory search coverage, explicit walk-in conflict coverage, and mode-aware consultation save coverage for appointment and walk-in direct-dispense flows.</td></tr>
+      <tr><td>API automated tests</td><td class="good">91 passing</td><td>Includes contract, integration, validation, deny-path coverage, doctor self-service workflow coverage, explicit doctor workflow mode coverage, persisted multi-role identity coverage, active-role switching coverage, waiting-queue FIFO plus queue-position coverage, backend-style patient create family or allergy coverage, enriched patient list and profile coverage, consultation-history aggregation coverage, full vitals workflow coverage, walk-in visit create-or-reuse coverage, consultation workflow quick-create plus guardian mapping coverage, guardianDraft auto-create linkage coverage, normalized terminology endpoint coverage for both FHIR-style and Clinical Tables-style LOINC responses, source-aware prescription workflow coverage, assistant inventory search coverage, inventory alerts coverage, packaging-conversion inventory coverage, explicit walk-in conflict coverage, and mode-aware consultation save coverage for appointment and walk-in direct-dispense flows.</td></tr>
       <tr><td>Worker automated tests</td><td class="good">6 passing</td><td>Covers async audit retry and DLQ behaviors.</td></tr>
       <tr><td>Frontend alignment verification</td><td class="good">Verified</td><td>Authenticated live BFF flows exercised against the backend.</td></tr>
       <tr><td>Infrastructure live verification</td><td class="hold">On Hold</td><td>Deferred intentionally because AWS rollout is not currently planned.</td></tr>
@@ -151,12 +153,12 @@
 
     <h2>10. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of March 31, 2026.</li>
+      <li>Repository implementation state as of April 5, 2026.</li>
       <li>Completed phase verification work through Phases 1, 2, 3, 4, 5, and 7.</li>
       <li>Frontend alignment evidence confirming BE-020 closure for frontend scope.</li>
-      <li>Post-March 11 updates including patient required-field enforcement, seeded relational demo data, user-level effective permission overrides, guardian-aware family and allergy create parity across both patient payload styles, typed vitals workflow hardening, walk-in visit orchestration, consultation save orchestration, and refreshed client documentation.</li>
+      <li>Post-March 11 updates including patient required-field enforcement, seeded relational demo data, user-level effective permission overrides, guardian-aware family and allergy create parity across both patient payload styles, typed vitals workflow hardening, walk-in visit orchestration, consultation save orchestration, role-aware analytics, inventory alerts, packaging-conversion inventory fields, and refreshed client documentation.</li>
     </ul>
-    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status as of March 31, 2026.</div>
+    <div class="foot">This is the consolidated internal tracker for backend implementation and frontend alignment status as of April 5, 2026.</div>
   </section>
 </body>
 </html>

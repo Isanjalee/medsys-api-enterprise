@@ -32,8 +32,8 @@
     <table class="meta">
       <tr><td>Project Code</td><td>MEDLINK-Version2</td></tr>
       <tr><td>Audience</td><td>All Medical Field Professionals and Technical Management</td></tr>
-      <tr><td>Document Version</td><td>1.0</td></tr>
-      <tr><td>Date</td><td>March 25, 2026</td></tr>
+      <tr><td>Document Version</td><td>1.1</td></tr>
+      <tr><td>Date</td><td>April 5, 2026</td></tr>
       <tr><td>Status</td><td>Tech Manager Review Draft</td></tr>
       <tr><td>Branding</td><td>Reserved space for logo and branding</td></tr>
     </table>
@@ -41,15 +41,15 @@
 
     <h2>1. Executive Summary</h2>
     <p>MEDSYS is a role-based healthcare operations platform for clinic and medical-center workflows. The current implementation supports patient management, appointment and walk-in consultation flows, diagnosis and medical test search, prescription lifecycle handling, assistant-driven dispensing, inventory search and stock deduction, user management, multi-role identity, analytics, and audit logging.</p>
-    <p>The strongest implementation area today is the doctor and assistant operational flow. Doctors can save a complete consultation through a single workflow endpoint, appointment and walk-in modes are both supported, prescription items are operationally split into <span class="mono">clinical</span> and <span class="mono">outside</span>, only clinical items enter the dispense queue, and patient history is recorded structurally through encounters, timeline events, narrative history notes, and long-term conditions.</p>
+    <p>The strongest implementation area today is the doctor and assistant operational flow. Doctors can save a complete consultation through a single workflow endpoint, appointment and walk-in modes are both supported, prescription items are operationally split into <span class="mono">clinical</span> and <span class="mono">outside</span>, only clinical items enter the dispense queue, inventory now supports alerts and packaging-conversion metadata, and patient history is recorded structurally through encounters, timeline events, narrative history notes, and long-term conditions.</p>
 
     <h2>2. Document Control</h2>
     <table>
       <tr><th>Field</th><th>Value</th></tr>
       <tr><td>Document title</td><td>MEDSYS Client Specification and Implementation Review</td></tr>
       <tr><td>Project code</td><td>MEDLINK-Version2</td></tr>
-      <tr><td>Version</td><td>1.0</td></tr>
-      <tr><td>Date</td><td>March 25, 2026</td></tr>
+      <tr><td>Version</td><td>1.1</td></tr>
+      <tr><td>Date</td><td>April 5, 2026</td></tr>
       <tr><td>Status</td><td>Tech Manager Review Draft</td></tr>
       <tr><td>Basis</td><td>Current repository implementation and verified API behavior</td></tr>
     </table>
@@ -112,6 +112,14 @@
       <li>Inventory search exists for unresolved clinical dispense items.</li>
     </ul>
 
+    <h3>Inventory and Stock Control</h3>
+    <ul>
+      <li>Inventory item creation and update are implemented.</li>
+      <li>Inventory alerts and reorder suggestions are available through <span class="mono">GET /v1/inventory/alerts</span>.</li>
+      <li>Inventory quantity changes should use movement routes, while <span class="mono">PATCH /v1/inventory/:id</span> is for item details, thresholds, and packaging rules.</li>
+      <li><span class="mono">unit</span> is the base stock unit, while <span class="mono">dispenseUnit</span>/<span class="mono">dispenseUnitSize</span> and <span class="mono">purchaseUnit</span>/<span class="mono">purchaseUnitSize</span> describe packaging conversions.</li>
+    </ul>
+
     <h2>5. Workflow Model</h2>
     <h3>Appointment Mode</h3>
     <ul>
@@ -151,7 +159,7 @@
       <tr><td>Consultation workflow</td><td><span class="mono">/v1/consultations/save</span></td></tr>
       <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span>, <span class="mono">/v1/prescriptions/:id/dispense</span></td></tr>
       <tr><td>Dispense queue</td><td><span class="mono">/v1/prescriptions/queue/pending-dispense</span></td></tr>
-      <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span>, <span class="mono">/v1/inventory/search</span></td></tr>
+      <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span>, <span class="mono">/v1/inventory/search</span>, <span class="mono">/v1/inventory/alerts</span>, <span class="mono">/v1/inventory/:id/movements</span></td></tr>
       <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical/diagnoses</span>, <span class="mono">/v1/clinical/tests</span>, <span class="mono">/v1/clinical/diagnoses/:code/recommended-tests</span></td></tr>
     </table>
 
@@ -162,6 +170,8 @@
       <li>Selected diagnosis can request suggested tests below.</li>
       <li>Consultation save should be one workflow payload, not many independent save steps.</li>
       <li>Dispense completion requires real <span class="mono">inventoryItemId</span> selection for clinical items.</li>
+      <li>Inventory edit should be used for descriptive fields, thresholds, and packaging rules.</li>
+      <li>Inventory quantity changes should be sent as movements (<span class="mono">in</span>, <span class="mono">out</span>, <span class="mono">adjustment</span>), not as direct stock rewrites.</li>
     </ul>
 
     <h2>7. Error Handling Contract</h2>
@@ -194,6 +204,7 @@
       <li>Terminology lookup endpoints implemented and verified.</li>
       <li>Pending dispense queue enrichment implemented and verified.</li>
       <li>Inventory search for assistant stock matching implemented and verified.</li>
+      <li>Inventory alerts, packaging conversion fields, and stock-movement-only quantity updates implemented and verified.</li>
       <li>Source-aware prescription workflow implemented and verified.</li>
       <li>Walk-in conflict handling with clean <span class="mono">409</span> implemented and verified.</li>
       <li>Swagger request and error response documentation updated.</li>
@@ -203,7 +214,7 @@
     <ul>
       <li><span class="mono">npm run typecheck</span> passing</li>
       <li><span class="mono">npm run test --workspace @medsys/api</span> passing</li>
-      <li>83 API tests passing at the time of this document</li>
+      <li>91 API tests passing at the time of this document</li>
     </ul>
 
     <h2>9. Known Limitations and Future Scope</h2>
