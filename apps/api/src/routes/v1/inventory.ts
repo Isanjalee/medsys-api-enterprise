@@ -13,6 +13,13 @@ import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 
+const nullablePrescriptionTypeSchema = {
+  anyOf: [
+    { type: "string", enum: ["clinical", "outside", "both"] },
+    { type: "null" }
+  ]
+} as const;
+
 const createInventoryItemBodySchema = {
   type: "object",
   additionalProperties: false,
@@ -27,8 +34,12 @@ const createInventoryItemBodySchema = {
     dosageForm: { type: "string", nullable: true },
     strength: { type: "string", nullable: true },
     unit: { type: "string" },
+    dispenseUnit: { type: "string", nullable: true },
+    dispenseUnitSize: { type: "number", minimum: 0.01, nullable: true },
+    purchaseUnit: { type: "string", nullable: true },
+    purchaseUnitSize: { type: "number", minimum: 0.01, nullable: true },
     route: { type: "string", nullable: true },
-    prescriptionType: { type: "string", enum: ["clinical", "outside", "both"], nullable: true },
+    prescriptionType: nullablePrescriptionTypeSchema,
     packageUnit: { type: "string", nullable: true },
     packageSize: { type: "number", minimum: 0.01, nullable: true },
     brandName: { type: "string", nullable: true },
@@ -60,6 +71,10 @@ const createInventoryItemBodySchema = {
     dosageForm: "tablet",
     strength: "500mg",
     unit: "tablet",
+    dispenseUnit: "card",
+    dispenseUnitSize: 10,
+    purchaseUnit: "box",
+    purchaseUnitSize: 100,
     route: "oral",
     prescriptionType: "both",
     packageUnit: "box",
@@ -114,6 +129,10 @@ const inventorySearchResponseSchema = {
       dosageForm: { type: "string", nullable: true },
       strength: { type: "string", nullable: true },
       unit: { type: "string" },
+      dispenseUnit: { type: "string", nullable: true },
+      dispenseUnitSize: { type: "string", nullable: true },
+      purchaseUnit: { type: "string", nullable: true },
+      purchaseUnitSize: { type: "string", nullable: true },
       route: { type: "string", nullable: true },
       prescriptionType: { type: "string", nullable: true },
       packageUnit: { type: "string", nullable: true },
@@ -147,10 +166,14 @@ const inventorySearchResponseSchema = {
       genericName: "Paracetamol",
       category: "medicine",
       subcategory: "tablet",
-      dosageForm: "tablet",
-      strength: "500mg",
-      unit: "tablet",
-      route: "oral",
+        dosageForm: "tablet",
+        strength: "500mg",
+        unit: "tablet",
+        dispenseUnit: "card",
+        dispenseUnitSize: "10",
+        purchaseUnit: "box",
+        purchaseUnitSize: "100",
+        route: "oral",
       prescriptionType: "both",
       packageUnit: "box",
       packageSize: "100",
@@ -242,6 +265,10 @@ const inventoryItemSelect = {
   dosageForm: inventoryItems.dosageForm,
   strength: inventoryItems.strength,
   unit: inventoryItems.unit,
+  dispenseUnit: inventoryItems.dispenseUnit,
+  dispenseUnitSize: inventoryItems.dispenseUnitSize,
+  purchaseUnit: inventoryItems.purchaseUnit,
+  purchaseUnitSize: inventoryItems.purchaseUnitSize,
   route: inventoryItems.route,
   prescriptionType: inventoryItems.prescriptionType,
   packageUnit: inventoryItems.packageUnit,
@@ -305,8 +332,12 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           dosageForm: { type: "string", nullable: true },
           strength: { type: "string", nullable: true },
           unit: { type: "string" },
+          dispenseUnit: { type: "string", nullable: true },
+          dispenseUnitSize: { type: "number", minimum: 0.01, nullable: true },
+          purchaseUnit: { type: "string", nullable: true },
+          purchaseUnitSize: { type: "number", minimum: 0.01, nullable: true },
           route: { type: "string", nullable: true },
-          prescriptionType: { type: "string", enum: ["clinical", "outside", "both"], nullable: true },
+          prescriptionType: nullablePrescriptionTypeSchema,
           packageUnit: { type: "string", nullable: true },
           packageSize: { type: "number", minimum: 0.01, nullable: true },
           brandName: { type: "string", nullable: true },
@@ -328,15 +359,19 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           isActive: { type: "boolean" }
         }
       },
-      bodyExample: {
-        name: "Paracetamol 500mg",
-        genericName: "Paracetamol",
-        dosageForm: "tablet",
-        strength: "500mg",
-        reorderLevel: 25,
-        directDispenseAllowed: true,
-        isActive: true
-      }
+        bodyExample: {
+          name: "Paracetamol 500mg",
+          genericName: "Paracetamol",
+          dosageForm: "tablet",
+          strength: "500mg",
+          dispenseUnit: "card",
+          dispenseUnitSize: 10,
+          purchaseUnit: "box",
+          purchaseUnitSize: 100,
+          reorderLevel: 25,
+          directDispenseAllowed: true,
+          isActive: true
+        }
     },
     "POST /:id/movements": {
       operationId: "InventoryController_createMovement",
@@ -391,6 +426,8 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     const rangeDays = query.days ?? 30;
     const now = new Date();
     const start = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+    const nowIso = now.toISOString();
+    const startIso = start.toISOString();
 
     const conditions = [eq(inventoryItems.organizationId, actor.organizationId), isNull(inventoryItems.deletedAt)];
     if (query.category) {
@@ -416,8 +453,8 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
             .where(
               and(
                 eq(inventoryMovements.organizationId, actor.organizationId),
-                sql`${inventoryMovements.createdAt} >= ${start}`,
-                sql`${inventoryMovements.createdAt} <= ${now}`,
+                sql`${inventoryMovements.createdAt} >= ${startIso}`,
+                sql`${inventoryMovements.createdAt} <= ${nowIso}`,
                 or(
                   eq(inventoryMovements.movementType, "out"),
                   eq(inventoryMovements.movementType, "adjustment"),
@@ -459,6 +496,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
         dosageForm: item.dosageForm,
         strength: item.strength,
         unit: item.unit,
+        dispenseUnit: item.dispenseUnit,
+        dispenseUnitSize: item.dispenseUnitSize,
+        purchaseUnit: item.purchaseUnit,
+        purchaseUnitSize: item.purchaseUnitSize,
         route: item.route,
         prescriptionType: item.prescriptionType,
         packageUnit: item.packageUnit,
@@ -606,6 +647,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
         dosageForm: payload.dosageForm ?? null,
         strength: payload.strength ?? null,
         unit: payload.unit,
+        dispenseUnit: payload.dispenseUnit ?? null,
+        dispenseUnitSize: payload.dispenseUnitSize?.toString() ?? null,
+        purchaseUnit: payload.purchaseUnit ?? null,
+        purchaseUnitSize: payload.purchaseUnitSize?.toString() ?? null,
         route: payload.route ?? null,
         prescriptionType: payload.prescriptionType ?? null,
         packageUnit: payload.packageUnit ?? null,
@@ -655,6 +700,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     if (body.dosageForm !== undefined) patch.dosageForm = body.dosageForm;
     if (body.strength !== undefined) patch.strength = body.strength;
     if (body.unit !== undefined) patch.unit = body.unit;
+    if (body.dispenseUnit !== undefined) patch.dispenseUnit = body.dispenseUnit;
+    if (body.dispenseUnitSize !== undefined) patch.dispenseUnitSize = body.dispenseUnitSize?.toString() ?? null;
+    if (body.purchaseUnit !== undefined) patch.purchaseUnit = body.purchaseUnit;
+    if (body.purchaseUnitSize !== undefined) patch.purchaseUnitSize = body.purchaseUnitSize?.toString() ?? null;
     if (body.route !== undefined) patch.route = body.route;
     if (body.prescriptionType !== undefined) patch.prescriptionType = body.prescriptionType;
     if (body.packageUnit !== undefined) patch.packageUnit = body.packageUnit;
