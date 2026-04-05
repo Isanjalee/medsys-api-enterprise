@@ -756,6 +756,10 @@ export const createInventoryItemSchema = z.object({
   dosageForm: z.string().min(1).max(40).optional().nullable(),
   strength: z.string().min(1).max(40).optional().nullable(),
   unit: z.string().min(1).max(20),
+  dispenseUnit: z.string().min(1).max(20).optional().nullable(),
+  dispenseUnitSize: z.number().positive().optional().nullable(),
+  purchaseUnit: z.string().min(1).max(20).optional().nullable(),
+  purchaseUnitSize: z.number().positive().optional().nullable(),
   route: z.string().min(1).max(40).optional().nullable(),
   prescriptionType: z.enum(["clinical", "outside", "both"]).optional().nullable(),
   packageUnit: z.string().min(1).max(20).optional().nullable(),
@@ -791,6 +795,10 @@ export const updateInventoryItemSchema = z
     dosageForm: z.string().min(1).max(40).optional().nullable(),
     strength: z.string().min(1).max(40).optional().nullable(),
     unit: z.string().min(1).max(20).optional(),
+    dispenseUnit: z.string().min(1).max(20).optional().nullable(),
+    dispenseUnitSize: z.number().positive().optional().nullable(),
+    purchaseUnit: z.string().min(1).max(20).optional().nullable(),
+    purchaseUnitSize: z.number().positive().optional().nullable(),
     route: z.string().min(1).max(40).optional().nullable(),
     prescriptionType: z.enum(["clinical", "outside", "both"]).optional().nullable(),
     packageUnit: z.string().min(1).max(20).optional().nullable(),
@@ -825,6 +833,10 @@ export const updateInventoryItemSchema = z
       value.dosageForm !== undefined ||
       value.strength !== undefined ||
       value.unit !== undefined ||
+      value.dispenseUnit !== undefined ||
+      value.dispenseUnitSize !== undefined ||
+      value.purchaseUnit !== undefined ||
+      value.purchaseUnitSize !== undefined ||
       value.route !== undefined ||
       value.prescriptionType !== undefined ||
       value.packageUnit !== undefined ||
