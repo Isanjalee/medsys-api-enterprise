@@ -218,6 +218,51 @@ Frontend guidance:
 - prefer these fields over `created_at` and `updated_at` when showing queue or duration analytics
 - treat older records as best-effort historical backfill rather than perfect event history
 
+## Inventory Contract
+
+Inventory now follows a base-unit plus packaging-conversion model.
+
+Core rules:
+
+- `unit` is the base stock unit and is the only unit used for stored `stock`, `reorderLevel`, `minStockLevel`, and `maxStockLevel`
+- `dispenseUnit` and `dispenseUnitSize` describe the normal clinic-side dispense pack
+- `purchaseUnit` and `purchaseUnitSize` describe the normal supplier-side purchase pack
+- stock quantity changes should go through `POST /v1/inventory/:id/movements`, not `PATCH /v1/inventory/:id`
+
+Example:
+
+```json
+{
+  "unit": "tablet",
+  "dispenseUnit": "card",
+  "dispenseUnitSize": "10",
+  "purchaseUnit": "box",
+  "purchaseUnitSize": "100",
+  "stock": "1000"
+}
+```
+
+Meaning:
+
+- stock is `1000 tablets`
+- equivalent to `100 cards`
+- equivalent to `10 boxes`
+
+Frontend guidance:
+
+- doctors and assistants should update stock through stock movements such as stock-in, stock-out, or adjustment
+- edit-item forms should be used for descriptive fields, thresholds, and packaging rules
+- `reorderLevel` is the low-stock trigger, not the quantity to add
+- use `stockStatus` from backend for badges: `in_stock`, `low_stock`, `out_of_stock`, `near_expiry`, `expired`
+
+Inventory endpoints now important for frontend:
+
+- `GET /v1/inventory`
+- `GET /v1/inventory/search`
+- `GET /v1/inventory/alerts`
+- `PATCH /v1/inventory/:id`
+- `POST /v1/inventory/:id/movements`
+
 ## Future AI Contract
 
 This repo does not yet expose an AI API. When it does, the backend contract should be role-aware from day one:
