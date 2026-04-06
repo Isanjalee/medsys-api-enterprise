@@ -258,10 +258,24 @@ Frontend guidance:
 Inventory endpoints now important for frontend:
 
 - `GET /v1/inventory`
+- `GET /v1/inventory/:id`
 - `GET /v1/inventory/search`
 - `GET /v1/inventory/alerts`
+- `GET /v1/inventory/reports`
 - `PATCH /v1/inventory/:id`
 - `POST /v1/inventory/:id/movements`
+- `POST /v1/inventory/:id/adjust-stock`
+- `GET /v1/inventory/:id/batches`
+- `POST /v1/inventory/:id/batches`
+
+Additional inventory guidance:
+
+- `POST /v1/inventory/:id/movements` now accepts optional `movementUnit` and returns `movement`, `item`, and `conversion`
+- frontend can send `movementUnit` using the configured base, dispense, or purchase unit and let backend convert to base stock
+- `POST /v1/inventory/:id/adjust-stock` is the correct endpoint for “actual counted stock is X”
+- list and detail item payloads now include `stockSummary` with `currentStock`, `minimumStock`, `shortageToMinimum`, `isBelowMinimum`, `dispensePackEquivalent`, and `purchasePackEquivalent`
+- `GET /v1/inventory/reports` returns supplier summary, movement velocity buckets, and expiring batches for owner and assistant operations
+- `GET /v1/inventory/:id/batches` and `POST /v1/inventory/:id/batches` provide batch-level stock, expiry, supplier, and storage tracking
 
 ## Future AI Contract
 

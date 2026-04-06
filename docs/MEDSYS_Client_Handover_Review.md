@@ -3,8 +3,8 @@
 
 Project Code: `MEDLINK-Version2`  
 Target Audience: All Medical Field Professionals  
-Document Version: `1.1`  
-System Reference Date: April 5, 2026  
+Document Version: `1.2`  
+System Reference Date: April 6, 2026  
 Status: Tech Manager Review Draft  
 
 Space for branding/logo: `Reserved`
@@ -22,7 +22,7 @@ The strongest implementation area today is the doctor and assistant operational 
 - prescription items are operationally split into `clinical` and `outside`
 - only clinical items enter the dispense queue
 - assistant and doctor dispense flows now align with inventory deduction and workflow completion
-- inventory now supports alerts, restock recommendations, and explicit base-unit plus packaging-conversion metadata
+- inventory now supports alerts, restock recommendations, explicit base-unit plus packaging-conversion metadata, batch tracking, stock-adjustment endpoints, and reporting summaries
 - patient history is recorded structurally through encounters, timeline events, narrative history notes, and long-term conditions
 
 This document is intended for technical and delivery review. It focuses on what is implemented now, what is stable enough for stakeholder review, and what remains future scope.
@@ -35,8 +35,8 @@ This document is intended for technical and delivery review. It focuses on what 
 |---|---|
 | Document title | MEDSYS Client Specification and Implementation Review |
 | Project code | MEDLINK-Version2 |
-| Version | 1.1 |
-| Date | April 5, 2026 |
+| Version | 1.2 |
+| Date | April 6, 2026 |
 | Status | Tech Manager Review Draft |
 | Primary audience | Technical manager, delivery leads, implementation stakeholders |
 | Basis | Current repository implementation and verified API behavior |
@@ -47,6 +47,7 @@ This document is intended for technical and delivery review. It focuses on what 
 |---|---|---|
 | 1.0 | March 25, 2026 | Consolidated handover review aligned to implemented backend behavior |
 | 1.1 | April 5, 2026 | Added role-aware dashboard, workflow timing, inventory alerts, and packaging-conversion inventory model |
+| 1.2 | April 6, 2026 | Added inventory movement conversion responses, stock-adjust endpoint, batch tracking, and inventory reports |
 
 ---
 
@@ -143,9 +144,13 @@ Implemented:
 
 - inventory item creation and update
 - inventory stock movements through `POST /v1/inventory/:id/movements`
+- inventory stock adjustment through `POST /v1/inventory/:id/adjust-stock`
+- inventory batch tracking through `GET /v1/inventory/:id/batches` and `POST /v1/inventory/:id/batches`
 - inventory alerts and reorder suggestions through `GET /v1/inventory/alerts`
+- inventory operational reporting through `GET /v1/inventory/reports`
 - backend-computed `stockStatus`
 - explicit packaging-conversion fields for dispense and purchase workflows
+- backend-computed `stockSummary`, movement conversion payloads, and supplier or expiry reporting helpers
 
 Important implemented rules:
 
@@ -248,7 +253,7 @@ This is one of the key workflow-hardening changes in the current implementation.
 | Encounters | `/v1/encounters` |
 | Prescriptions | `/v1/prescriptions`, `/v1/prescriptions/:id/dispense` |
 | Dispense queue | `/v1/prescriptions/queue/pending-dispense` |
-| Inventory | `/v1/inventory`, `/v1/inventory/search`, `/v1/inventory/alerts`, `/v1/inventory/:id/movements` |
+| Inventory | `/v1/inventory`, `/v1/inventory/:id`, `/v1/inventory/search`, `/v1/inventory/alerts`, `/v1/inventory/reports`, `/v1/inventory/:id/movements`, `/v1/inventory/:id/adjust-stock`, `/v1/inventory/:id/batches` |
 | Clinical lookup | `/v1/clinical/diagnoses`, `/v1/clinical/tests`, `/v1/clinical/diagnoses/:code/recommended-tests` |
 | Analytics | `/v1/analytics/overview`, `/v1/analytics/dashboard` |
 | Audit | `/v1/audit/logs` |
@@ -264,6 +269,8 @@ Frontend should treat these as the primary patterns:
 - Dispense completion = requires real `inventoryItemId` selection for clinical items
 - Inventory edit = descriptive fields, thresholds, and packaging rules
 - Stock quantity changes = inventory movements (`in`, `out`, `adjustment`)
+- Stock count correction = `POST /v1/inventory/:id/adjust-stock`
+- Batch receipt and expiry tracking = `POST /v1/inventory/:id/batches`
 
 ### Analytics Dashboard Handover
 
@@ -321,12 +328,17 @@ Recommended frontend labels:
 - `Recommended Reorder Qty`
 - `Dispense Pack`
 - `Purchase Pack`
+- `Short by`
+- `Purchase Pack Equivalent`
+- `Dispense Pack Equivalent`
 
 Recommended display rules:
 
 - show stock in base units, such as `200 tablets`
 - treat `reorderLevel` as the low-stock trigger, not the quantity to add
-- when users want to set the actual counted stock, frontend should calculate the difference and send a stock movement with reason `adjustment`
+- when users want to set the actual counted stock, frontend should call `POST /v1/inventory/:id/adjust-stock`
+- movement requests may now send `movementUnit` such as `tablet`, `card`, or `box`; backend converts to base stock automatically
+- inventory detail and list responses now include `stockSummary`, so frontend should render backend values instead of recalculating shortage or pack equivalents
 - if packaging is not configured, show `Not set` instead of defaults like `unit x 1`
 
 Example inventory meaning:
@@ -347,6 +359,35 @@ Meaning:
 - current stock = `1000 tablets`
 - equivalent to `100 cards`
 - equivalent to `10 boxes`
+
+Movement response shape now includes conversion details:
+
+```json
+{
+  "movement": {},
+  "item": {
+    "stock": "490",
+    "stockSummary": {}
+  },
+  "conversion": {
+    "requestedQuantity": "2",
+    "requestedUnit": "carton",
+    "baseQuantity": "480",
+    "baseUnit": "tablet"
+  }
+}
+```
+
+Inventory detail now supports:
+
+- `GET /v1/inventory/:id`
+- `GET /v1/inventory/:id/batches`
+
+Inventory reports now support:
+
+- supplier summary
+- fast-moving, slow-moving, and dead-stock sections
+- expiring batch monitoring
 
 ---
 
@@ -393,7 +434,7 @@ This is important for frontend and operational workflows because it prevents dup
 - noisy medical-test result filtering
 - pending dispense queue enrichment
 - inventory search for assistant stock matching
-- inventory alerts, packaging conversion fields, and stock-movement-only quantity updates
+- inventory alerts, packaging conversion fields, stock-movement-only quantity updates, stock-adjust workflow, batch tracking, and inventory reporting
 - doctor-sensitive dispense permission alignment
 - source-aware prescription workflow
 - walk-in conflict handling with clean `409`
@@ -405,7 +446,7 @@ Current verified state:
 
 - `npm run typecheck` passing
 - `npm run test --workspace @medsys/api` passing
-- 91 API tests passing at the time of this document
+- 92 API tests passing at the time of this document
 
 ---
 
