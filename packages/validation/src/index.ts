@@ -477,6 +477,13 @@ export const inventoryAlertsQuerySchema = z
   })
   .strict();
 
+export const inventoryReportsQuerySchema = z
+  .object({
+    days: z.coerce.number().int().min(7).max(180).default(30),
+    activeOnly: z.coerce.boolean().default(true)
+  })
+  .strict();
+
 export const updateAppointmentSchema = z
   .object({
     status: appointmentStatusSchema.optional(),
@@ -866,6 +873,7 @@ export const createInventoryMovementSchema = z
     movementType: z.enum(["in", "out", "adjustment"]),
     quantity: z.number().positive(),
     movementUnit: z.string().min(1).max(20).optional().nullable(),
+    batchId: z.number().int().positive().optional().nullable(),
     reason: z.enum(["purchase", "dispense", "damage", "expired", "return", "adjustment", "manual"]).optional().nullable(),
     note: z.string().max(2000).optional().nullable(),
     referenceType: z.string().max(60).optional().nullable(),
@@ -876,6 +884,18 @@ export const createInventoryMovementSchema = z
 export const adjustInventoryStockSchema = z
   .object({
     actualStock: z.number().nonnegative(),
+    note: z.string().max(2000).optional().nullable()
+  })
+  .strict();
+
+export const createInventoryBatchSchema = z
+  .object({
+    batchNo: z.string().min(1).max(80),
+    expiryDate: optionalDateString,
+    quantity: z.number().positive(),
+    supplierName: z.string().min(1).max(120).optional().nullable(),
+    storageLocation: z.string().min(1).max(120).optional().nullable(),
+    receivedAt: z.string().datetime().optional().nullable(),
     note: z.string().max(2000).optional().nullable()
   })
   .strict();
