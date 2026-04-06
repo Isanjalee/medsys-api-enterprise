@@ -429,6 +429,30 @@ export const inventoryItems = pgTable(
   ]
 );
 
+export const inventoryBatches = pgTable(
+  "inventory_batches",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    inventoryItemId: bigint("inventory_item_id", { mode: "number" })
+      .notNull()
+      .references(() => inventoryItems.id),
+    batchNo: varchar("batch_no", { length: 80 }).notNull(),
+    expiryDate: date("expiry_date"),
+    quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull().default("0"),
+    supplierName: varchar("supplier_name", { length: 120 }),
+    storageLocation: varchar("storage_location", { length: 120 }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps,
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+  },
+  (table) => [
+    index("inventory_batches_item_idx").on(table.inventoryItemId),
+    index("inventory_batches_org_expiry_idx").on(table.organizationId, table.expiryDate)
+  ]
+);
+
 export const inventoryMovements = pgTable(
   "inventory_movements",
   {
@@ -437,6 +461,7 @@ export const inventoryMovements = pgTable(
     inventoryItemId: bigint("inventory_item_id", { mode: "number" })
       .notNull()
       .references(() => inventoryItems.id),
+    batchId: bigint("batch_id", { mode: "number" }).references(() => inventoryBatches.id),
     movementType: inventoryMovementTypeEnum("movement_type").notNull(),
     reason: varchar("reason", { length: 30 }),
     quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull(),
