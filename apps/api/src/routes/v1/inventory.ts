@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { inventoryItems, inventoryMovements } from "@medsys/db";
 import {
+  adjustInventoryStockSchema,
   createInventoryItemSchema,
   createInventoryMovementSchema,
   idParamSchema,
@@ -212,6 +213,43 @@ const messageErrorResponseSchema = {
 const defaultMovementReason = (movementType: "in" | "out" | "adjustment"): string =>
   movementType === "in" ? "purchase" : movementType === "out" ? "dispense" : "adjustment";
 
+const stringifyNumeric = (value: number): string => value.toString();
+
+const toNumeric = (value: string | number | null | undefined): number => Number(value ?? 0);
+
+const roundQuantity = (value: number): number => Math.round(value * 100) / 100;
+
+const resolveMovementBaseQuantity = (
+  item: {
+    unit: string;
+    dispenseUnit: string | null;
+    dispenseUnitSize: string | number | null;
+    purchaseUnit: string | null;
+    purchaseUnitSize: string | number | null;
+  },
+  quantity: number,
+  movementUnit?: string | null
+): number => {
+  const normalizedUnit = movementUnit?.trim().toLowerCase() ?? item.unit.toLowerCase();
+  const baseUnit = item.unit.toLowerCase();
+  const dispenseUnit = item.dispenseUnit?.toLowerCase() ?? null;
+  const purchaseUnit = item.purchaseUnit?.toLowerCase() ?? null;
+
+  if (normalizedUnit === baseUnit) {
+    return quantity;
+  }
+
+  if (dispenseUnit && normalizedUnit === dispenseUnit) {
+    return quantity * Number(item.dispenseUnitSize ?? 0);
+  }
+
+  if (purchaseUnit && normalizedUnit === purchaseUnit) {
+    return quantity * Number(item.purchaseUnitSize ?? 0);
+  }
+
+  return Number.NaN;
+};
+
 const expiryWarningDays = 30;
 
 const inventoryStockStatus = (item: {
@@ -250,7 +288,55 @@ const serializeInventoryItem = <T extends Record<string, unknown>>(item: T) => (
     stock: item.stock as string | number,
     reorderLevel: item.reorderLevel as string | number,
     expiryDate: (item.expiryDate as string | Date | null | undefined) ?? null
-  })
+  }),
+  stockSummary: buildInventoryStockSummary(item)
+});
+
+const buildInventoryStockSummary = <T extends Record<string, unknown>>(item: T) => {
+  const stock = toNumeric(item.stock as string | number | null | undefined);
+  const reorderLevel = toNumeric(item.reorderLevel as string | number | null | undefined);
+  const dispenseUnitSize = item.dispenseUnitSize ? toNumeric(item.dispenseUnitSize as string | number) : null;
+  const purchaseUnitSize = item.purchaseUnitSize ? toNumeric(item.purchaseUnitSize as string | number) : null;
+  const shortageToMinimum = Math.max(reorderLevel - stock, 0);
+
+  return {
+    currentStock: stringifyNumeric(stock),
+    baseUnit: (item.unit as string | undefined) ?? null,
+    minimumStock: stringifyNumeric(reorderLevel),
+    shortageToMinimum: stringifyNumeric(shortageToMinimum),
+    isBelowMinimum: stock <= reorderLevel,
+    dispensePackEquivalent:
+      dispenseUnitSize && dispenseUnitSize > 0 ? stringifyNumeric(roundQuantity(stock / dispenseUnitSize)) : null,
+    purchasePackEquivalent:
+      purchaseUnitSize && purchaseUnitSize > 0 ? stringifyNumeric(roundQuantity(stock / purchaseUnitSize)) : null
+  };
+};
+
+const daysUntilExpiry = (expiryDate?: string | Date | null): number | null => {
+  if (!expiryDate) {
+    return null;
+  }
+
+  const parsed = new Date(expiryDate);
+  const expiryStart = new Date(`${parsed.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  return Math.floor((expiryStart.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+};
+
+const buildMovementResponse = (
+  movement: Record<string, unknown>,
+  item: Record<string, unknown>,
+  requestedQuantity: number,
+  requestedUnit: string,
+  baseQuantity: number
+) => ({
+  movement,
+  item: serializeInventoryItem(item),
+  conversion: {
+    requestedQuantity: stringifyNumeric(requestedQuantity),
+    requestedUnit,
+    baseQuantity: stringifyNumeric(baseQuantity),
+    baseUnit: item.unit
+  }
 });
 
 const inventoryItemSelect = {
@@ -309,6 +395,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     "GET /alerts": {
       operationId: "InventoryController_alerts",
       summary: "Get inventory stock alerts and restock suggestions"
+    },
+    "GET /:id": {
+      operationId: "InventoryController_findOne",
+      summary: "Get inventory item detail"
     },
     "POST /": {
       operationId: "InventoryController_create",
@@ -385,6 +475,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           movementType: { type: "string", enum: ["in", "out", "adjustment"] },
           type: { type: "string", enum: ["in", "out", "adjustment"] },
           quantity: { type: "number", minimum: 0.01 },
+          movementUnit: { type: "string", nullable: true },
           note: { type: "string", nullable: true },
           referenceType: { type: "string", nullable: true },
           referenceId: { type: "integer", minimum: 1, nullable: true }
@@ -406,10 +497,28 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           value: {
             movementType: "in",
             quantity: 50,
+            movementUnit: "box",
             referenceType: "adjustment",
             referenceId: 1
           }
         }
+      }
+    },
+    "POST /:id/adjust-stock": {
+      operationId: "InventoryController_adjustStock",
+      summary: "Adjust inventory to an actual counted stock level",
+      bodySchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["actualStock"],
+        properties: {
+          actualStock: { type: "number", minimum: 0 },
+          note: { type: "string", nullable: true }
+        }
+      },
+      bodyExample: {
+        actualStock: 200,
+        note: "Cycle count correction"
       }
     },
     "GET /:id/movements": {
@@ -486,6 +595,10 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       const stockoutRisk = projectedDaysRemaining !== null && projectedDaysRemaining <= leadTimeDays + safetyDays;
       const stockStatus = inventoryStockStatus(item);
       const expiryRisk = stockStatus === "near_expiry" || stockStatus === "expired";
+      const shortageToMinimum = Math.max(reorderLevel - stock, 0);
+      const purchaseUnitSize = item.purchaseUnitSize ? Number(item.purchaseUnitSize) : null;
+      const dispenseUnitSize = item.dispenseUnitSize ? Number(item.dispenseUnitSize) : null;
+      const expiryDays = daysUntilExpiry(item.expiryDate);
       return {
         id: item.id,
         sku: item.sku,
@@ -520,9 +633,16 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
         averageDailyUsage: Math.round(averageDailyUsage * 100) / 100,
         projectedDaysRemaining,
         recommendedReorderQty,
+        shortageToMinimum,
+        daysUntilExpiry: expiryDays,
+        suggestedPurchasePacks:
+          purchaseUnitSize && purchaseUnitSize > 0 ? Math.ceil(recommendedReorderQty / purchaseUnitSize) : null,
+        suggestedDispensePacks:
+          dispenseUnitSize && dispenseUnitSize > 0 ? Math.ceil(recommendedReorderQty / dispenseUnitSize) : null,
         lowStock,
         stockoutRisk,
-        expiryRisk
+        expiryRisk,
+        stockSummary: buildInventoryStockSummary(item)
       };
     });
 
@@ -609,6 +729,36 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       .then((rows) => rows.map(serializeInventoryItem));
     }
   );
+
+  app.get("/:id", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
+    const actor = request.actor!;
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+
+    const item = await app.readDb
+      .select(inventoryItemSelect)
+      .from(inventoryItems)
+      .where(and(eq(inventoryItems.id, id), eq(inventoryItems.organizationId, actor.organizationId), isNull(inventoryItems.deletedAt)))
+      .limit(1);
+
+    assertOrThrow(item.length === 1, 404, "Inventory item not found");
+
+    const recentMovements = await app.readDb
+      .select()
+      .from(inventoryMovements)
+      .where(and(eq(inventoryMovements.inventoryItemId, id), eq(inventoryMovements.organizationId, actor.organizationId)))
+      .orderBy(desc(inventoryMovements.createdAt))
+      .limit(10);
+
+    return {
+      item: serializeInventoryItem(item[0]),
+      movementSummary: {
+        recentMovementCount: recentMovements.length,
+        lastMovementAt: recentMovements[0]?.createdAt ?? null,
+        lastMovementType: recentMovements[0]?.movementType ?? null
+      },
+      recentMovements
+    };
+  });
 
   app.get("/", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;
@@ -753,6 +903,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       const body = parseOrThrowValidation(createInventoryMovementSchema, {
         movementType: rawBody?.movementType ?? rawBody?.type,
         quantity: rawBody?.quantity,
+        movementUnit: rawBody?.movementUnit,
         reason: rawBody?.reason,
         note: rawBody?.note,
         referenceType: rawBody?.referenceType,
@@ -761,23 +912,37 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
 
       const movement = await app.db.transaction(async (tx) => {
         const item = await tx
-          .select({ id: inventoryItems.id, stock: inventoryItems.stock })
+          .select({
+            id: inventoryItems.id,
+            stock: inventoryItems.stock,
+            unit: inventoryItems.unit,
+            dispenseUnit: inventoryItems.dispenseUnit,
+            dispenseUnitSize: inventoryItems.dispenseUnitSize,
+            purchaseUnit: inventoryItems.purchaseUnit,
+            purchaseUnitSize: inventoryItems.purchaseUnitSize
+          })
           .from(inventoryItems)
           .where(and(eq(inventoryItems.id, id), eq(inventoryItems.organizationId, actor.organizationId)))
           .limit(1);
         assertOrThrow(item.length === 1, 404, "Inventory item not found");
+        const baseQuantity = resolveMovementBaseQuantity(item[0], body.quantity, body.movementUnit);
+        assertOrThrow(
+          Number.isFinite(baseQuantity) && baseQuantity > 0,
+          400,
+          `Inventory movement unit "${body.movementUnit ?? item[0].unit}" is not configured for this item`
+        );
 
         if (body.movementType === "in") {
           await tx
             .update(inventoryItems)
-            .set({ stock: sql`${inventoryItems.stock} + ${body.quantity}`, updatedAt: new Date() })
+            .set({ stock: sql`${inventoryItems.stock} + ${baseQuantity}`, updatedAt: new Date() })
             .where(eq(inventoryItems.id, id));
         } else {
           const current = Number(item[0].stock);
-          assertOrThrow(current >= body.quantity, 409, "Insufficient stock");
+          assertOrThrow(current >= baseQuantity, 409, "Insufficient stock");
           await tx
             .update(inventoryItems)
-            .set({ stock: sql`${inventoryItems.stock} - ${body.quantity}`, updatedAt: new Date() })
+            .set({ stock: sql`${inventoryItems.stock} - ${baseQuantity}`, updatedAt: new Date() })
             .where(eq(inventoryItems.id, id));
         }
 
@@ -788,24 +953,110 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
             inventoryItemId: id,
             movementType: body.movementType,
             reason: body.reason ?? defaultMovementReason(body.movementType),
-            quantity: body.quantity.toString(),
+            quantity: stringifyNumeric(baseQuantity),
             note: body.note ?? null,
             referenceType: body.referenceType ?? null,
             referenceId: body.referenceId ?? null,
             createdById: actor.userId
           })
           .returning();
-        return rows[0];
+
+        const refreshedItem = await tx
+          .select(inventoryItemSelect)
+          .from(inventoryItems)
+          .where(eq(inventoryItems.id, id))
+          .limit(1);
+
+        return buildMovementResponse(
+          rows[0] as Record<string, unknown>,
+          refreshedItem[0] as Record<string, unknown>,
+          body.quantity,
+          body.movementUnit ?? item[0].unit,
+          baseQuantity
+        );
       });
 
       await writeAuditLog(request, {
         entityType: "inventory_movement",
         action: "create",
-        entityId: movement.id
+        entityId: Number((movement.movement as Record<string, unknown>).id)
       });
       return reply.code(201).send(movement);
     }
   );
+
+  app.post("/:id/adjust-stock", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request) => {
+    const actor = request.actor!;
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(adjustInventoryStockSchema, request.body);
+
+    const result = await app.db.transaction(async (tx) => {
+      const item = await tx
+        .select(inventoryItemSelect)
+        .from(inventoryItems)
+        .where(and(eq(inventoryItems.id, id), eq(inventoryItems.organizationId, actor.organizationId)))
+        .limit(1);
+      assertOrThrow(item.length === 1, 404, "Inventory item not found");
+
+      const currentStock = Number(item[0].stock);
+      const delta = Math.round((body.actualStock - currentStock) * 100) / 100;
+
+      if (delta === 0) {
+        return {
+          item: serializeInventoryItem(item[0]),
+          previousStock: stringifyNumeric(currentStock),
+          actualStock: stringifyNumeric(body.actualStock),
+          appliedDelta: "0",
+          direction: "none",
+          movement: null
+        };
+      }
+
+      const movementType = delta > 0 ? "in" : "out";
+      await tx
+        .update(inventoryItems)
+        .set({ stock: stringifyNumeric(body.actualStock), updatedAt: new Date() })
+        .where(eq(inventoryItems.id, id));
+
+      const rows = await tx
+        .insert(inventoryMovements)
+        .values({
+          organizationId: actor.organizationId,
+          inventoryItemId: id,
+          movementType,
+          reason: "adjustment",
+          quantity: stringifyNumeric(Math.abs(delta)),
+          note: body.note ?? `Adjusted stock from ${currentStock} to ${body.actualStock}`,
+          referenceType: "adjustment",
+          referenceId: null,
+          createdById: actor.userId
+        })
+        .returning();
+
+      const refreshed = await tx
+        .select(inventoryItemSelect)
+        .from(inventoryItems)
+        .where(eq(inventoryItems.id, id))
+        .limit(1);
+
+      return {
+        item: serializeInventoryItem(refreshed[0]),
+        previousStock: stringifyNumeric(currentStock),
+        actualStock: stringifyNumeric(body.actualStock),
+        appliedDelta: stringifyNumeric(Math.abs(delta)),
+        direction: delta > 0 ? "increase" : "decrease",
+        movement: rows[0]
+      };
+    });
+
+    await writeAuditLog(request, {
+      entityType: "inventory_item",
+      action: "adjust_stock",
+      entityId: id
+    });
+
+    return result;
+  });
 
   app.get("/:id/movements", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;
