@@ -38,9 +38,9 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built relational database dictionary</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>1.7</div>
-      <div><strong>Date</strong>April 5, 2026</div>
-      <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, and V16</div>
+      <div><strong>Version</strong>1.8</div>
+      <div><strong>Date</strong>April 6, 2026</div>
+      <div><strong>Source of Truth</strong>Flyway migrations V1, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, and V17</div>
       <div><strong>Audience</strong>Developers, QA, BA, reviewers, and client stakeholders</div>
     </div>
     <div class="foot">Prepared from the current repository schema migrations. This document describes the implemented database design, not a proposed future-state model.</div>
@@ -49,7 +49,7 @@
   <section class="page">
     <h2>1. Scope and Reading Guide</h2>
     <p>This document provides a field-level dictionary for the MEDSYS PostgreSQL schema. It focuses on database-enforced validation and structure: data type, required versus nullable, default values, generated values, primary keys, unique constraints, foreign keys, indexes, and check constraints.</p>
-    <div class="callout"><strong>Important:</strong> application-level validations may be stricter than the database. This document records what the database itself enforces. Migration <span class="mono">V8</span> adds client/demo seed data, <span class="mono">V9</span> adds user-level extra permission storage, <span class="mono">V10</span> adds patient codes plus guardian identity fields, <span class="mono">V11</span> adds doctor workflow identity, <span class="mono">V12</span> adds persistent multi-role support, <span class="mono">V13</span> adds workflow timing fields, <span class="mono">V14</span> expands inventory metadata, <span class="mono">V15</span> adds doctor-facing inventory fields, and <span class="mono">V16</span> adds inventory packaging-conversion fields.</div>
+    <div class="callout"><strong>Important:</strong> application-level validations may be stricter than the database. This document records what the database itself enforces. Migration <span class="mono">V8</span> adds client/demo seed data, <span class="mono">V9</span> adds user-level extra permission storage, <span class="mono">V10</span> adds patient codes plus guardian identity fields, <span class="mono">V11</span> adds doctor workflow identity, <span class="mono">V12</span> adds persistent multi-role support, <span class="mono">V13</span> adds workflow timing fields, <span class="mono">V14</span> expands inventory metadata, <span class="mono">V15</span> adds doctor-facing inventory fields, <span class="mono">V16</span> adds inventory packaging-conversion fields, and <span class="mono">V17</span> adds batch-level inventory tracking and batch-linked movements.</div>
 
     <h2>2. Global Design Rules</h2>
     <ul>
@@ -90,7 +90,8 @@
         <tr><td><strong>appointments</strong></td><td><span class="mono">encounters</span></td><td>One encounter per appointment, enforced by unique <span class="mono">encounters.appointment_id</span> and a composite FK to partitioned appointments.</td></tr>
         <tr><td><strong>encounters</strong></td><td><span class="mono">encounter_diagnoses</span>, <span class="mono">test_orders</span>, <span class="mono">prescriptions</span>, <span class="mono">patient_vitals</span>, <span class="mono">patient_timeline_events</span></td><td>Encounter is the anchor for diagnoses, test orders, prescriptions, and some clinical observations.</td></tr>
         <tr><td><strong>prescriptions</strong></td><td><span class="mono">prescription_items</span>, <span class="mono">dispense_records</span></td><td>One prescription to many items and many dispense events.</td></tr>
-        <tr><td><strong>inventory_items</strong></td><td><span class="mono">inventory_movements</span></td><td>One inventory item to many immutable movement rows.</td></tr>
+        <tr><td><strong>inventory_items</strong></td><td><span class="mono">inventory_batches</span>, <span class="mono">inventory_movements</span></td><td>One inventory item to many batch rows and many immutable movement rows.</td></tr>
+        <tr><td><strong>inventory_batches</strong></td><td><span class="mono">inventory_movements</span></td><td>One inventory batch can be referenced by many movement rows.</td></tr>
         <tr><td><strong>users</strong></td><td><span class="mono">appointments</span>, <span class="mono">encounters</span>, <span class="mono">prescriptions</span>, <span class="mono">dispense_records</span>, <span class="mono">inventory_movements</span>, <span class="mono">patient_history_entries</span>, <span class="mono">audit_logs</span></td><td>Users appear as operational actors throughout the system.</td></tr>
       </tbody>
     </table>
@@ -499,13 +500,35 @@
     </table>
     <p><strong>Constraints:</strong> primary key on <span class="mono">id</span>; unique on <span class="mono">sku</span>. <strong>Indexes:</strong> <span class="mono">inventory_items_org_name_idx</span>, <span class="mono">inventory_items_org_generic_name_idx</span>, <span class="mono">inventory_items_org_expiry_date_idx</span>. <strong>Design note:</strong> <span class="mono">unit</span> is the base stock unit, while <span class="mono">dispense_unit</span>/<span class="mono">dispense_unit_size</span> and <span class="mono">purchase_unit</span>/<span class="mono">purchase_unit_size</span> describe conversion packs for clinic and supplier workflows.</p>
 
-    <h3>10.2 inventory_movements</h3>
+    <h3>10.2 inventory_batches</h3>
     <table class="small">
       <thead><tr><th style="width:17%">Column</th><th style="width:16%">Type</th><th style="width:10%">Required</th><th style="width:18%">Default / Generated</th><th>Constraints and Notes</th></tr></thead>
       <tbody>
         <tr><td><span class="mono">id</span></td><td>BIGSERIAL</td><td>Yes</td><td>Sequence generated</td><td>Primary key.</td></tr>
         <tr><td><span class="mono">organization_id</span></td><td>UUID</td><td>Yes</td><td>None</td><td>Tenant scope.</td></tr>
         <tr><td><span class="mono">inventory_item_id</span></td><td>BIGINT</td><td>Yes</td><td>None</td><td>Foreign key to <span class="mono">inventory_items.id</span>.</td></tr>
+        <tr><td><span class="mono">batch_no</span></td><td>VARCHAR(80)</td><td>Yes</td><td>None</td><td>Required batch or lot identifier.</td></tr>
+        <tr><td><span class="mono">expiry_date</span></td><td>DATE</td><td>No</td><td>None</td><td>Optional expiry date for the specific batch.</td></tr>
+        <tr><td><span class="mono">quantity</span></td><td>NUMERIC(12,2)</td><td>Yes</td><td><span class="mono">0</span></td><td>Current remaining stock in base units for this batch.</td></tr>
+        <tr><td><span class="mono">supplier_name</span></td><td>VARCHAR(120)</td><td>No</td><td>None</td><td>Optional supplier linked to the batch receipt.</td></tr>
+        <tr><td><span class="mono">storage_location</span></td><td>VARCHAR(120)</td><td>No</td><td>None</td><td>Optional storage location for this batch.</td></tr>
+        <tr><td><span class="mono">received_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Receipt timestamp for the batch.</td></tr>
+        <tr><td><span class="mono">is_active</span></td><td>BOOLEAN</td><td>Yes</td><td><span class="mono">TRUE</span></td><td>Active flag for operational use.</td></tr>
+        <tr><td><span class="mono">created_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Creation timestamp.</td></tr>
+        <tr><td><span class="mono">updated_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Update timestamp.</td></tr>
+        <tr><td><span class="mono">deleted_at</span></td><td>TIMESTAMPTZ</td><td>No</td><td>None</td><td>Soft delete marker.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Indexes:</strong> <span class="mono">inventory_batches_item_idx</span>, <span class="mono">inventory_batches_org_expiry_idx</span>. <strong>Design note:</strong> batch rows allow one inventory item to hold multiple expiry windows or lot references while preserving item-level total stock for fast operational reads.</p>
+
+    <h3>10.3 inventory_movements</h3>
+    <table class="small">
+      <thead><tr><th style="width:17%">Column</th><th style="width:16%">Type</th><th style="width:10%">Required</th><th style="width:18%">Default / Generated</th><th>Constraints and Notes</th></tr></thead>
+      <tbody>
+        <tr><td><span class="mono">id</span></td><td>BIGSERIAL</td><td>Yes</td><td>Sequence generated</td><td>Primary key.</td></tr>
+        <tr><td><span class="mono">organization_id</span></td><td>UUID</td><td>Yes</td><td>None</td><td>Tenant scope.</td></tr>
+        <tr><td><span class="mono">inventory_item_id</span></td><td>BIGINT</td><td>Yes</td><td>None</td><td>Foreign key to <span class="mono">inventory_items.id</span>.</td></tr>
+        <tr><td><span class="mono">batch_id</span></td><td>BIGINT</td><td>No</td><td>None</td><td>Optional foreign key to <span class="mono">inventory_batches.id</span> for lot-level movement tracking.</td></tr>
         <tr><td><span class="mono">movement_type</span></td><td>inventory_movement_type</td><td>Yes</td><td>None</td><td>Enum constrained.</td></tr>
         <tr><td><span class="mono">reason</span></td><td>VARCHAR(30)</td><td>No</td><td>None</td><td>Optional reason such as purchase, dispense, damage, expired, return, adjustment, or manual.</td></tr>
         <tr><td><span class="mono">quantity</span></td><td>NUMERIC(12,2)</td><td>Yes</td><td>None</td><td>Movement quantity.</td></tr>
@@ -516,7 +539,7 @@
         <tr><td><span class="mono">created_at</span></td><td>TIMESTAMPTZ</td><td>Yes</td><td><span class="mono">NOW()</span></td><td>Immutable creation timestamp.</td></tr>
       </tbody>
     </table>
-    <p><strong>Index:</strong> <span class="mono">inventory_movements_item_idx</span>. <strong>Operational note:</strong> stock balances should be changed through movement rows instead of editing <span class="mono">inventory_items.stock</span> directly for ordinary clinic operations.</p>
+    <p><strong>Index:</strong> <span class="mono">inventory_movements_item_idx</span>. <strong>Operational note:</strong> stock balances should be changed through movement rows instead of editing <span class="mono">inventory_items.stock</span> directly for ordinary clinic operations. From <span class="mono">V17</span> onward, movement rows can optionally reference a batch for lot-specific deductions and receipts.</p>
 
     <h2>11. Audit and Operational Tables</h2>
 
@@ -565,9 +588,10 @@
       <li><span class="mono">infra/flyway/sql/V14__expand_inventory_management_and_alerting_fields.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V15__add_doctor_facing_inventory_fields.sql</span></li>
       <li><span class="mono">infra/flyway/sql/V16__add_inventory_packaging_conversion_fields.sql</span></li>
+      <li><span class="mono">infra/flyway/sql/V17__add_inventory_batches_and_reporting_support.sql</span></li>
     </ul>
 
-    <div class="foot">This dictionary is intended for review, onboarding, QA, and client walkthroughs. When the schema changes, update this document alongside the relevant Flyway migration. Current inventory coverage includes alerts metadata, doctor-facing inventory fields, and packaging-conversion fields through <span class="mono">V16</span>.</div>
+    <div class="foot">This dictionary is intended for review, onboarding, QA, and client walkthroughs. When the schema changes, update this document alongside the relevant Flyway migration. Current inventory coverage includes alerts metadata, doctor-facing inventory fields, packaging-conversion fields, and batch-level inventory support through <span class="mono">V17</span>.</div>
   </section>
 </body>
 </html>

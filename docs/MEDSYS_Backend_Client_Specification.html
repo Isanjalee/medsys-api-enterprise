@@ -40,8 +40,8 @@
     <div class="meta">
       <div><strong>Document Type</strong>As-built client integration specification</div>
       <div><strong>System</strong>MEDSYS API Enterprise Backend</div>
-      <div><strong>Version</strong>3.1</div>
-      <div><strong>Date</strong>April 5, 2026</div>
+      <div><strong>Version</strong>3.2</div>
+      <div><strong>Date</strong>April 6, 2026</div>
       <div><strong>Audience</strong>All medical field professionals, technical managers, frontend, QA, BA, and client delivery teams</div>
       <div><strong>Scope</strong>Implemented REST contracts, workflow behavior, permission model, integration expectations, and current handover-ready implementation state</div>
     </div>
@@ -192,7 +192,7 @@
         <tr><td>Visits</td><td><span class="mono">/v1/visits/start</span></td><td><span class="mono">appointment.create</span></td><td>Walk-in orchestration route that reuses an active patient visit or creates a new in-consultation visit for doctor-first workflows.</td></tr>
         <tr><td>Encounters</td><td><span class="mono">/v1/encounters</span></td><td><span class="mono">encounter.read</span>, <span class="mono">encounter.write</span></td><td>Doctor base permissions already cover clinical encounter authoring.</td></tr>
         <tr><td>Prescriptions</td><td><span class="mono">/v1/prescriptions</span></td><td><span class="mono">prescription.read</span>, <span class="mono">prescription.dispense</span></td><td>Doctors can access the pending dispense queue and complete dispense workflow under the default doctor permission set.</td></tr>
-        <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td><span class="mono">inventory.read</span>, <span class="mono">inventory.write</span></td><td>Mutation routes are permission-checked; doctors can create inventory items, item detail updates stay separate from stock movements, and alert plus movement routes are available for operational stock control.</td></tr>
+        <tr><td>Inventory</td><td><span class="mono">/v1/inventory</span></td><td><span class="mono">inventory.read</span>, <span class="mono">inventory.write</span></td><td>Mutation routes are permission-checked; doctors can create inventory items, item detail updates stay separate from stock movements, stock-adjust and batch routes are available, and alerts plus reports support operational stock control.</td></tr>
         <tr><td>Clinical lookup</td><td><span class="mono">/v1/clinical</span></td><td><span class="mono">clinical.icd10.read</span></td><td>Reference read flows for normalized diagnosis search, test search, curated recommended tests, and backward-compatible ICD-10 search.</td></tr>
         <tr><td>Analytics</td><td><span class="mono">/v1/analytics</span></td><td><span class="mono">analytics.read</span></td><td>Operational dashboards and cache metrics. Overview keeps additive <span class="mono">role_context</span>, while <span class="mono">GET /v1/analytics/dashboard</span> is the richer role-aware dashboard contract.</td></tr>
         <tr><td>Audit</td><td><span class="mono">/v1/audit</span></td><td><span class="mono">audit.read</span></td><td>Reserved for users with audit visibility, typically owners.</td></tr>
@@ -224,8 +224,10 @@
       <li>Permission names are validated. Clients should not send arbitrary strings in <span class="mono">extraPermissions</span>.</li>
       <li>Inventory uses a base-unit stock model. <span class="mono">unit</span> is the base stock unit, while <span class="mono">dispenseUnit</span>/<span class="mono">dispenseUnitSize</span> and <span class="mono">purchaseUnit</span>/<span class="mono">purchaseUnitSize</span> describe packaging conversions for clinic dispense and supplier purchase workflows.</li>
       <li><span class="mono">PATCH /v1/inventory/:id</span> updates inventory item details, packaging rules, thresholds, and flags. It does not change the live stock balance.</li>
-      <li>Inventory quantity changes should use <span class="mono">POST /v1/inventory/:id/movements</span>. Frontend should send stock-in, stock-out, or adjustment differences instead of rewriting the final stock value directly.</li>
-      <li><span class="mono">GET /v1/inventory/alerts</span> returns low-stock, stockout-risk, and expiry-aware alert rows plus reorder recommendations based on recent outgoing movement history.</li>
+      <li>Inventory quantity changes should use <span class="mono">POST /v1/inventory/:id/movements</span>. Frontend can now send <span class="mono">movementUnit</span> using the configured base, dispense, or purchase unit and let backend convert to base stock automatically.</li>
+      <li><span class="mono">POST /v1/inventory/:id/adjust-stock</span> is the correct endpoint for “actual counted stock is X” corrections.</li>
+      <li><span class="mono">GET /v1/inventory/:id</span> returns item detail, stock summary, and recent movement context, while <span class="mono">GET /v1/inventory/:id/batches</span> and <span class="mono">POST /v1/inventory/:id/batches</span> support lot-level expiry and supplier tracking.</li>
+      <li><span class="mono">GET /v1/inventory/alerts</span> returns low-stock, stockout-risk, and expiry-aware alert rows plus reorder recommendations based on recent outgoing movement history, and <span class="mono">GET /v1/inventory/reports</span> returns supplier summary, movement velocity, and expiring batch data.</li>
     </ul>
 
     <h2>8. Recommended Frontend Behavior</h2>
@@ -247,7 +249,7 @@
       <li>Prescription items now behave differently by <span class="mono">source</span>: <span class="mono">clinical</span> items drive internal dispense workflow, while <span class="mono">outside</span> items stay on the prescription and history only. Use <span class="mono">workflow_type</span>, <span class="mono">appointment_id</span>, <span class="mono">workflow_status</span>, <span class="mono">dispense_status</span>, <span class="mono">clinical_item_count</span>, and <span class="mono">outside_item_count</span> from consultation save responses to decide whether assistant handoff is required.</li>
       <li><span class="mono">GET /v1/appointments?status=waiting</span> now returns queue rows in backend-controlled FIFO order and includes an explicit <span class="mono">queuePosition</span> field. Frontend should use that value for queue numbering instead of deriving numbers from array index.</li>
       <li>Use <span class="mono">GET /v1/prescriptions/queue/pending-dispense</span> for assistant handoff rows and <span class="mono">GET /v1/inventory/search?q=...&amp;category=medicine</span> when a queued clinical item still needs stock matching before final dispense.</li>
-      <li>For inventory screens, show <span class="mono">Current Stock</span> using base units, keep <span class="mono">Minimum Stock Level</span> separate from <span class="mono">Recommended Reorder Qty</span>, and render packaging labels such as <span class="mono">card x 10</span> or <span class="mono">box x 100</span> only when the related conversion fields are configured.</li>
+      <li>For inventory screens, show <span class="mono">Current Stock</span> using base units, keep <span class="mono">Minimum Stock Level</span> separate from <span class="mono">Recommended Reorder Qty</span>, render packaging labels only when configured, and prefer backend <span class="mono">stockSummary</span> values over frontend recalculation.</li>
       <li>For small walk-in clinics using older resource-level orchestration, <span class="mono">POST /v1/visits/start</span> remains valid. For larger centers with receptionist-led scheduling, keep using <span class="mono">POST /v1/appointments</span> and the waiting queue.</li>
       <li>Use Swagger examples as the canonical request-body reference when onboarding client teams.</li>
     </ol>
@@ -276,12 +278,12 @@
 
     <h2>9. Source Basis</h2>
     <ul>
-      <li>Repository implementation state as of April 5, 2026.</li>
+      <li>Repository implementation state as of April 6, 2026.</li>
       <li>Auth and user management contract including effective permission responses and user-level permission overrides.</li>
       <li>Patient summary/profile separation, patient code identifiers, guardian-aware registration, walk-in visit orchestration, consultation workflow orchestration, fixed typed vitals workflows, doctor workflow identity, persisted multi-role support through Flyway V12, and current database constraints.</li>
-      <li>Verified automated backend suite status of 91 passing API tests and 6 passing worker tests.</li>
+      <li>Verified automated backend suite status of 92 passing API tests and 6 passing worker tests.</li>
     </ul>
-    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of April 5, 2026.</div>
+    <div class="foot">This document is the maintained client-facing reference for the implemented MEDSYS backend contract as of April 6, 2026.</div>
   </section>
 </body>
 </html>
