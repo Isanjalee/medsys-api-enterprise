@@ -1,12 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
-import { inventoryItems, inventoryMovements } from "@medsys/db";
+import { inventoryBatches, inventoryItems, inventoryMovements } from "@medsys/db";
 import {
   adjustInventoryStockSchema,
+  createInventoryBatchSchema,
   createInventoryItemSchema,
   createInventoryMovementSchema,
   idParamSchema,
   inventoryAlertsQuerySchema,
+  inventoryReportsQuerySchema,
   searchInventoryQuerySchema,
   updateInventoryItemSchema
 } from "@medsys/validation";
@@ -339,6 +341,17 @@ const buildMovementResponse = (
   }
 });
 
+const serializeInventoryBatch = <T extends Record<string, unknown>>(batch: T) => ({
+  ...batch,
+  quantity: stringifyNumeric(toNumeric(batch.quantity as string | number | null | undefined)),
+  daysUntilExpiry: daysUntilExpiry((batch.expiryDate as string | Date | null | undefined) ?? null),
+  stockStatus: inventoryStockStatus({
+    stock: batch.quantity as string | number,
+    reorderLevel: 0,
+    expiryDate: (batch.expiryDate as string | Date | null | undefined) ?? null
+  })
+});
+
 const inventoryItemSelect = {
   id: inventoryItems.id,
   organizationId: inventoryItems.organizationId,
@@ -382,6 +395,22 @@ const inventoryItemSelect = {
   deletedAt: inventoryItems.deletedAt
 } as const;
 
+const inventoryBatchSelect = {
+  id: inventoryBatches.id,
+  organizationId: inventoryBatches.organizationId,
+  inventoryItemId: inventoryBatches.inventoryItemId,
+  batchNo: inventoryBatches.batchNo,
+  expiryDate: inventoryBatches.expiryDate,
+  quantity: inventoryBatches.quantity,
+  supplierName: inventoryBatches.supplierName,
+  storageLocation: inventoryBatches.storageLocation,
+  receivedAt: inventoryBatches.receivedAt,
+  isActive: inventoryBatches.isActive,
+  createdAt: inventoryBatches.createdAt,
+  updatedAt: inventoryBatches.updatedAt,
+  deletedAt: inventoryBatches.deletedAt
+} as const;
+
 const inventoryRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Inventory", "InventoryController", {
     "GET /": {
@@ -396,9 +425,17 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       operationId: "InventoryController_alerts",
       summary: "Get inventory stock alerts and restock suggestions"
     },
+    "GET /reports": {
+      operationId: "InventoryController_reports",
+      summary: "Get inventory operational reports and supplier summaries"
+    },
     "GET /:id": {
       operationId: "InventoryController_findOne",
       summary: "Get inventory item detail"
+    },
+    "GET /:id/batches": {
+      operationId: "InventoryController_listBatches",
+      summary: "List inventory batches for an item"
     },
     "POST /": {
       operationId: "InventoryController_create",
@@ -476,6 +513,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           type: { type: "string", enum: ["in", "out", "adjustment"] },
           quantity: { type: "number", minimum: 0.01 },
           movementUnit: { type: "string", nullable: true },
+          batchId: { type: "integer", nullable: true },
           note: { type: "string", nullable: true },
           referenceType: { type: "string", nullable: true },
           referenceId: { type: "integer", minimum: 1, nullable: true }
@@ -487,6 +525,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           value: {
             type: "in",
             quantity: 50,
+            batchId: 1,
             note: "Stock adjustment",
             referenceType: "adjustment",
             referenceId: 1
@@ -498,6 +537,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
             movementType: "in",
             quantity: 50,
             movementUnit: "box",
+            batchId: 1,
             referenceType: "adjustment",
             referenceId: 1
           }
@@ -519,6 +559,32 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       bodyExample: {
         actualStock: 200,
         note: "Cycle count correction"
+      }
+    },
+    "POST /:id/batches": {
+      operationId: "InventoryController_createBatch",
+      summary: "Create an inventory batch and add its opening stock",
+      bodySchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["batchNo", "quantity"],
+        properties: {
+          batchNo: { type: "string" },
+          expiryDate: { type: "string", format: "date", nullable: true },
+          quantity: { type: "number", minimum: 0.01 },
+          supplierName: { type: "string", nullable: true },
+          storageLocation: { type: "string", nullable: true },
+          receivedAt: { type: "string", format: "date-time", nullable: true },
+          note: { type: "string", nullable: true }
+        }
+      },
+      bodyExample: {
+        batchNo: "PCM-APR-01",
+        expiryDate: "2026-12-31",
+        quantity: 100,
+        supplierName: "MediSupply Lanka",
+        storageLocation: "Shelf A",
+        note: "Opening batch received"
       }
     },
     "GET /:id/movements": {
@@ -673,6 +739,126 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  app.get("/reports", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
+    const actor = request.actor!;
+    const query = parseOrThrowValidation(inventoryReportsQuerySchema, request.query ?? {});
+    const rangeDays = query.days ?? 30;
+    const now = new Date();
+    const start = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+    const previousStart = new Date(start.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+    const previousStartIso = previousStart.toISOString();
+
+    const itemConditions = [eq(inventoryItems.organizationId, actor.organizationId), isNull(inventoryItems.deletedAt)];
+    if (query.activeOnly) {
+      itemConditions.push(eq(inventoryItems.isActive, true));
+    }
+
+    const items = await app.readDb
+      .select(inventoryItemSelect)
+      .from(inventoryItems)
+      .where(and(...itemConditions))
+      .orderBy(inventoryItems.name);
+
+    const itemIds = items.map((item) => item.id);
+    const movements =
+      itemIds.length === 0
+        ? []
+        : await app.readDb
+            .select()
+            .from(inventoryMovements)
+            .where(
+              and(
+                eq(inventoryMovements.organizationId, actor.organizationId),
+                sql`${inventoryMovements.createdAt} >= ${previousStartIso}`
+              )
+            );
+
+    const movementsByItemId = new Map<number, Array<(typeof movements)[number]>>();
+    for (const movement of movements) {
+      const current = movementsByItemId.get(movement.inventoryItemId) ?? [];
+      current.push(movement);
+      movementsByItemId.set(movement.inventoryItemId, current);
+    }
+
+    const itemMetrics = items.map((item) => {
+      const stock = toNumeric(item.stock);
+      const reorderLevel = toNumeric(item.reorderLevel);
+      const itemMovements = movementsByItemId.get(item.id) ?? [];
+      const outgoing = itemMovements.filter(
+        (movement) => movement.movementType === "out" && new Date(movement.createdAt).getTime() >= start.getTime()
+      );
+      const totalOutgoing = outgoing.reduce((sum, movement) => sum + toNumeric(movement.quantity), 0);
+      const averageDailyUsage = rangeDays > 0 ? totalOutgoing / rangeDays : 0;
+      const previousWindowOutgoing = itemMovements
+        .filter((movement) => {
+          const createdAt = new Date(movement.createdAt);
+          return createdAt.getTime() < start.getTime() && createdAt.getTime() >= previousStart.getTime();
+        })
+        .reduce((sum, movement) => sum + toNumeric(movement.quantity), 0);
+      const previousAverageDailyUsage = rangeDays > 0 ? previousWindowOutgoing / rangeDays : 0;
+
+      return {
+        id: item.id,
+        name: item.name,
+        supplierName: item.supplierName ?? "Unassigned",
+        stock,
+        reorderLevel,
+        totalOutgoing,
+        averageDailyUsage: roundQuantity(averageDailyUsage),
+        previousAverageDailyUsage: roundQuantity(previousAverageDailyUsage),
+        lowStock: stock <= reorderLevel,
+        deadStock: stock > 0 && itemMovements.length === 0,
+        fastMoving: averageDailyUsage >= 1 && averageDailyUsage > previousAverageDailyUsage,
+        slowMoving: stock > 0 && averageDailyUsage > 0 && averageDailyUsage < 0.2,
+        stockSummary: buildInventoryStockSummary(item)
+      };
+    });
+
+    const supplierMap = new Map<
+      string,
+      { supplierName: string; itemCount: number; totalStock: number; lowStockCount: number; recommendedReorderQty: number }
+    >();
+    for (const item of itemMetrics) {
+      const supplier = supplierMap.get(item.supplierName) ?? {
+        supplierName: item.supplierName,
+        itemCount: 0,
+        totalStock: 0,
+        lowStockCount: 0,
+        recommendedReorderQty: 0
+      };
+      supplier.itemCount += 1;
+      supplier.totalStock += item.stock;
+      supplier.lowStockCount += item.lowStock ? 1 : 0;
+      supplier.recommendedReorderQty += Math.max(item.reorderLevel - item.stock, 0);
+      supplierMap.set(item.supplierName, supplier);
+    }
+
+    const expiringBatches = await app.readDb
+      .select(inventoryBatchSelect)
+      .from(inventoryBatches)
+      .where(
+        and(
+          eq(inventoryBatches.organizationId, actor.organizationId),
+          isNull(inventoryBatches.deletedAt),
+          sql`${inventoryBatches.expiryDate} IS NOT NULL`,
+          sql`${inventoryBatches.expiryDate} <= ${(new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)}`
+        )
+      )
+      .orderBy(inventoryBatches.expiryDate);
+
+    return {
+      generatedAt: now.toISOString(),
+      rangeDays,
+      supplierSummary: Array.from(supplierMap.values()).sort((left, right) => right.lowStockCount - left.lowStockCount),
+      movementVelocity: {
+        fastMoving: itemMetrics.filter((item) => item.fastMoving).sort((left, right) => right.averageDailyUsage - left.averageDailyUsage),
+        slowMoving: itemMetrics.filter((item) => item.slowMoving).sort((left, right) => left.averageDailyUsage - right.averageDailyUsage),
+        deadStock: itemMetrics.filter((item) => item.deadStock).sort((left, right) => right.stock - left.stock)
+      },
+      expiringBatches: expiringBatches.map(serializeInventoryBatch)
+    };
+  });
+
   app.get(
     "/search",
     {
@@ -729,6 +915,95 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
       .then((rows) => rows.map(serializeInventoryItem));
     }
   );
+
+  app.get("/:id/batches", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
+    const actor = request.actor!;
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+
+    return app.readDb
+      .select(inventoryBatchSelect)
+      .from(inventoryBatches)
+      .where(
+        and(
+          eq(inventoryBatches.inventoryItemId, id),
+          eq(inventoryBatches.organizationId, actor.organizationId),
+          isNull(inventoryBatches.deletedAt)
+        )
+      )
+      .orderBy(inventoryBatches.expiryDate, desc(inventoryBatches.createdAt))
+      .then((rows) => rows.map(serializeInventoryBatch));
+  });
+
+  app.post("/:id/batches", { preHandler: app.authorizePermissions(["inventory.write"]) }, async (request, reply) => {
+    const actor = request.actor!;
+    const { id } = parseOrThrowValidation(idParamSchema, request.params);
+    const body = parseOrThrowValidation(createInventoryBatchSchema, request.body);
+
+    const result = await app.db.transaction(async (tx) => {
+      const item = await tx
+        .select(inventoryItemSelect)
+        .from(inventoryItems)
+        .where(and(eq(inventoryItems.id, id), eq(inventoryItems.organizationId, actor.organizationId)))
+        .limit(1);
+      assertOrThrow(item.length === 1, 404, "Inventory item not found");
+
+      const batchRows = await tx
+        .insert(inventoryBatches)
+        .values({
+          organizationId: actor.organizationId,
+          inventoryItemId: id,
+          batchNo: body.batchNo,
+          expiryDate: body.expiryDate ?? null,
+          quantity: stringifyNumeric(body.quantity),
+          supplierName: body.supplierName ?? item[0].supplierName ?? null,
+          storageLocation: body.storageLocation ?? item[0].storageLocation ?? null,
+          receivedAt: body.receivedAt ? new Date(body.receivedAt) : new Date(),
+          isActive: true
+        })
+        .returning();
+
+      await tx
+        .update(inventoryItems)
+        .set({ stock: sql`${inventoryItems.stock} + ${body.quantity}`, updatedAt: new Date() })
+        .where(eq(inventoryItems.id, id));
+
+      const movementRows = await tx
+        .insert(inventoryMovements)
+        .values({
+          organizationId: actor.organizationId,
+          inventoryItemId: id,
+          batchId: batchRows[0].id,
+          movementType: "in",
+          reason: "purchase",
+          quantity: stringifyNumeric(body.quantity),
+          note: body.note ?? `Batch ${body.batchNo} received`,
+          referenceType: "batch",
+          referenceId: batchRows[0].id,
+          createdById: actor.userId
+        })
+        .returning();
+
+      const refreshedItem = await tx
+        .select(inventoryItemSelect)
+        .from(inventoryItems)
+        .where(eq(inventoryItems.id, id))
+        .limit(1);
+
+      return {
+        batch: serializeInventoryBatch(batchRows[0]),
+        movement: movementRows[0],
+        item: serializeInventoryItem(refreshedItem[0])
+      };
+    });
+
+    await writeAuditLog(request, {
+      entityType: "inventory_batch",
+      action: "create",
+      entityId: result.batch.id as number
+    });
+
+    return reply.code(201).send(result);
+  });
 
   app.get("/:id", { preHandler: app.authorizePermissions(["inventory.read"]) }, async (request) => {
     const actor = request.actor!;
@@ -904,6 +1179,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
         movementType: rawBody?.movementType ?? rawBody?.type,
         quantity: rawBody?.quantity,
         movementUnit: rawBody?.movementUnit,
+        batchId: rawBody?.batchId,
         reason: rawBody?.reason,
         note: rawBody?.note,
         referenceType: rawBody?.referenceType,
@@ -932,6 +1208,36 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           `Inventory movement unit "${body.movementUnit ?? item[0].unit}" is not configured for this item`
         );
 
+        if (body.batchId) {
+          const batch = await tx
+            .select(inventoryBatchSelect)
+            .from(inventoryBatches)
+            .where(
+              and(
+                eq(inventoryBatches.id, body.batchId),
+                eq(inventoryBatches.inventoryItemId, id),
+                eq(inventoryBatches.organizationId, actor.organizationId),
+                isNull(inventoryBatches.deletedAt)
+              )
+            )
+            .limit(1);
+          assertOrThrow(batch.length === 1, 404, "Inventory batch not found");
+
+          const currentBatchQuantity = toNumeric(batch[0].quantity);
+          if (body.movementType === "in") {
+            await tx
+              .update(inventoryBatches)
+              .set({ quantity: sql`${inventoryBatches.quantity} + ${baseQuantity}`, updatedAt: new Date() })
+              .where(eq(inventoryBatches.id, body.batchId));
+          } else {
+            assertOrThrow(currentBatchQuantity >= baseQuantity, 409, "Insufficient batch stock");
+            await tx
+              .update(inventoryBatches)
+              .set({ quantity: sql`${inventoryBatches.quantity} - ${baseQuantity}`, updatedAt: new Date() })
+              .where(eq(inventoryBatches.id, body.batchId));
+          }
+        }
+
         if (body.movementType === "in") {
           await tx
             .update(inventoryItems)
@@ -951,6 +1257,7 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
           .values({
             organizationId: actor.organizationId,
             inventoryItemId: id,
+            batchId: body.batchId ?? null,
             movementType: body.movementType,
             reason: body.reason ?? defaultMovementReason(body.movementType),
             quantity: stringifyNumeric(baseQuantity),
