@@ -2671,6 +2671,152 @@ test("inventory movement accepts the frontend alias payload shape", async () => 
   await app.close();
 });
 
+test("inventory batch routes and reports expose batch-level and supplier-level data", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/inventory",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      sku: `BATCH-${uniqueSuffix}`,
+      name: `Batch Item ${uniqueSuffix}`,
+      category: "medicine",
+      unit: "tablet",
+      purchaseUnit: "box",
+      purchaseUnitSize: 100,
+      supplierName: "Batch Supplier",
+      stock: 0,
+      reorderLevel: 20
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const created = createResponse.json() as { id: number };
+
+  const batchCreateResponse = await app.inject({
+    method: "POST",
+    url: `/v1/inventory/${created.id}/batches`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      batchNo: `LOT-${uniqueSuffix}`,
+      expiryDate: "2026-07-31",
+      quantity: 120,
+      supplierName: "Batch Supplier",
+      storageLocation: "Rack C",
+      note: "Initial batch receipt"
+    }
+  });
+
+  assert.equal(batchCreateResponse.statusCode, 201);
+  const batchCreated = batchCreateResponse.json() as {
+    batch: { id: number; batchNo: string; quantity: string; stockStatus: string };
+    movement: { batchId: number | null; movementType: string; quantity: string };
+    item: { id: number; stock: string };
+  };
+  assert.equal(batchCreated.batch.batchNo, `LOT-${uniqueSuffix}`);
+  assert.equal(batchCreated.batch.quantity, "120");
+  assert.equal(batchCreated.batch.stockStatus, "in_stock");
+  assert.equal(batchCreated.movement.batchId, batchCreated.batch.id);
+  assert.equal(batchCreated.movement.movementType, "in");
+  assert.equal(batchCreated.movement.quantity, "120");
+  assert.equal(batchCreated.item.id, created.id);
+  assert.equal(batchCreated.item.stock, "120");
+
+  const batchMovementResponse = await app.inject({
+    method: "POST",
+    url: `/v1/inventory/${created.id}/movements`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      movementType: "out",
+      batchId: batchCreated.batch.id,
+      quantity: 10,
+      movementUnit: "tablet",
+      reason: "dispense",
+      note: "Batch usage"
+    }
+  });
+
+  assert.equal(batchMovementResponse.statusCode, 201);
+  const batchMovement = batchMovementResponse.json() as {
+    movement: { batchId: number | null; quantity: string };
+    item: { stock: string };
+  };
+  assert.equal(batchMovement.movement.batchId, batchCreated.batch.id);
+  assert.equal(batchMovement.movement.quantity, "10");
+  assert.equal(batchMovement.item.stock, "110");
+
+  const batchesResponse = await app.inject({
+    method: "GET",
+    url: `/v1/inventory/${created.id}/batches`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(batchesResponse.statusCode, 200);
+  const batches = batchesResponse.json() as Array<{
+    id: number;
+    batchNo: string;
+    quantity: string;
+    supplierName: string | null;
+    storageLocation: string | null;
+    daysUntilExpiry: number | null;
+  }>;
+  assert.equal(batches.some((batch) => batch.id === batchCreated.batch.id && batch.quantity === "110"), true);
+  assert.equal(
+    batches.some(
+      (batch) =>
+        batch.id === batchCreated.batch.id &&
+        batch.batchNo === `LOT-${uniqueSuffix}` &&
+        batch.supplierName === "Batch Supplier" &&
+        batch.storageLocation === "Rack C" &&
+        batch.daysUntilExpiry !== null
+    ),
+    true
+  );
+
+  const reportsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/inventory/reports?days=30",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(reportsResponse.statusCode, 200);
+  const reports = reportsResponse.json() as {
+    supplierSummary: Array<{ supplierName: string; itemCount: number; totalStock: number }>;
+    movementVelocity: {
+      fastMoving: Array<{ id: number }>;
+      slowMoving: Array<{ id: number }>;
+      deadStock: Array<{ id: number }>;
+    };
+    expiringBatches: Array<{ id: number; batchNo: string }>;
+  };
+  assert.equal(
+    reports.supplierSummary.some(
+      (supplier) => supplier.supplierName === "Batch Supplier" && supplier.itemCount >= 1 && supplier.totalStock >= 110
+    ),
+    true
+  );
+  assert.equal(reports.expiringBatches.some((batch) => batch.id === batchCreated.batch.id), true);
+
+  await app.close();
+});
+
 test("inventory alerts provide low stock and restock recommendations", async () => {
   if (!process.env.DATABASE_URL) {
     return;
