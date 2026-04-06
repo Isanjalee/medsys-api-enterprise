@@ -865,10 +865,18 @@ export const createInventoryMovementSchema = z
   .object({
     movementType: z.enum(["in", "out", "adjustment"]),
     quantity: z.number().positive(),
+    movementUnit: z.string().min(1).max(20).optional().nullable(),
     reason: z.enum(["purchase", "dispense", "damage", "expired", "return", "adjustment", "manual"]).optional().nullable(),
     note: z.string().max(2000).optional().nullable(),
     referenceType: z.string().max(60).optional().nullable(),
     referenceId: z.number().int().positive().optional().nullable()
+  })
+  .strict();
+
+export const adjustInventoryStockSchema = z
+  .object({
+    actualStock: z.number().nonnegative(),
+    note: z.string().max(2000).optional().nullable()
   })
   .strict();
 
