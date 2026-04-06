@@ -2459,7 +2459,8 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     },
     payload: {
       movementType: "in",
-      quantity: 4,
+      movementUnit: "carton",
+      quantity: 2,
       reason: "purchase",
       note: "Received new stock",
       referenceType: "adjustment"
@@ -2468,17 +2469,67 @@ test("inventory lifecycle routes return stable item and movement data", async ()
 
   assert.equal(movementResponse.statusCode, 201);
   const movement = movementResponse.json() as {
-    inventoryItemId: number;
-    movementType: string;
-    reason: string | null;
-    note: string | null;
-    quantity: string;
+    movement: {
+      inventoryItemId: number;
+      movementType: string;
+      reason: string | null;
+      note: string | null;
+      quantity: string;
+    };
+    item: { id: number; stock: string; stockSummary: { purchasePackEquivalent: string | null } };
+    conversion: {
+      requestedQuantity: string;
+      requestedUnit: string;
+      baseQuantity: string;
+      baseUnit: string;
+    };
   };
-  assert.equal(movement.inventoryItemId, created.id);
-  assert.equal(movement.movementType, "in");
-  assert.equal(movement.reason, "purchase");
-  assert.equal(movement.note, "Received new stock");
-  assert.equal(movement.quantity, "4");
+  assert.equal(movement.movement.inventoryItemId, created.id);
+  assert.equal(movement.movement.movementType, "in");
+  assert.equal(movement.movement.reason, "purchase");
+  assert.equal(movement.movement.note, "Received new stock");
+  assert.equal(movement.movement.quantity, "480");
+  assert.equal(movement.item.id, created.id);
+  assert.equal(movement.item.stock, "490");
+  assert.equal(movement.item.stockSummary.purchasePackEquivalent, "2.04");
+  assert.equal(movement.conversion.requestedQuantity, "2");
+  assert.equal(movement.conversion.requestedUnit, "carton");
+  assert.equal(movement.conversion.baseQuantity, "480");
+  assert.equal(movement.conversion.baseUnit, "tablet");
+
+  const adjustResponse = await app.inject({
+    method: "POST",
+    url: `/v1/inventory/${created.id}/adjust-stock`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    },
+    payload: {
+      actualStock: 200,
+      note: "Cycle count correction"
+    }
+  });
+
+  assert.equal(adjustResponse.statusCode, 200);
+  const adjusted = adjustResponse.json() as {
+    previousStock: string;
+    actualStock: string;
+    appliedDelta: string;
+    direction: string;
+    item: { id: number; stock: string; stockStatus: string };
+    movement: { movementType: string; reason: string | null; quantity: string; note: string | null } | null;
+  };
+  assert.equal(adjusted.previousStock, "490");
+  assert.equal(adjusted.actualStock, "200");
+  assert.equal(adjusted.appliedDelta, "290");
+  assert.equal(adjusted.direction, "decrease");
+  assert.equal(adjusted.item.id, created.id);
+  assert.equal(adjusted.item.stock, "200");
+  assert.equal(adjusted.item.stockStatus, "in_stock");
+  assert.ok(adjusted.movement);
+  assert.equal(adjusted.movement?.movementType, "out");
+  assert.equal(adjusted.movement?.reason, "adjustment");
+  assert.equal(adjusted.movement?.quantity, "290");
+  assert.equal(adjusted.movement?.note, "Cycle count correction");
 
   const listResponse = await app.inject({
     method: "GET",
@@ -2493,11 +2544,12 @@ test("inventory lifecycle routes return stable item and movement data", async ()
     id: number;
     name: string;
     genericName: string | null;
-      dosageForm: string | null;
-      dispenseUnit: string | null;
-      purchaseUnit: string | null;
-      stockStatus: string;
-    }>;
+    dosageForm: string | null;
+    dispenseUnit: string | null;
+    purchaseUnit: string | null;
+    stockStatus: string;
+    stockSummary: { currentStock: string; minimumStock: string };
+  }>;
   const listed = items.find((item) => item.id === created.id);
   assert.ok(listed);
   assert.equal(listed.genericName, "Acetaminophen");
@@ -2505,6 +2557,45 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   assert.equal(listed.dispenseUnit, "strip");
   assert.equal(listed.purchaseUnit, "carton");
   assert.equal(listed.stockStatus, "in_stock");
+  assert.equal(listed.stockSummary.currentStock, "200");
+  assert.equal(listed.stockSummary.minimumStock, "5");
+
+  const detailResponse = await app.inject({
+    method: "GET",
+    url: `/v1/inventory/${created.id}`,
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(detailResponse.statusCode, 200);
+  const detail = detailResponse.json() as {
+    item: {
+      id: number;
+      stock: string;
+      stockSummary: {
+        currentStock: string;
+        minimumStock: string;
+        shortageToMinimum: string;
+        isBelowMinimum: boolean;
+        dispensePackEquivalent: string | null;
+        purchasePackEquivalent: string | null;
+      };
+    };
+    movementSummary: { recentMovementCount: number; lastMovementType: string | null };
+    recentMovements: Array<{ inventoryItemId: number }>;
+  };
+  assert.equal(detail.item.id, created.id);
+  assert.equal(detail.item.stock, "200");
+  assert.equal(detail.item.stockSummary.currentStock, "200");
+  assert.equal(detail.item.stockSummary.minimumStock, "5");
+  assert.equal(detail.item.stockSummary.shortageToMinimum, "0");
+  assert.equal(detail.item.stockSummary.isBelowMinimum, false);
+  assert.equal(detail.item.stockSummary.dispensePackEquivalent, "16.67");
+  assert.equal(detail.item.stockSummary.purchasePackEquivalent, "0.83");
+  assert.equal(detail.movementSummary.recentMovementCount >= 2, true);
+  assert.equal(detail.movementSummary.lastMovementType, "out");
+  assert.equal(detail.recentMovements.some((row) => row.inventoryItemId === created.id), true);
 
   const movementsResponse = await app.inject({
     method: "GET",
@@ -2518,6 +2609,10 @@ test("inventory lifecycle routes return stable item and movement data", async ()
   const movements = movementsResponse.json() as Array<{ inventoryItemId: number; movementType: string; reason: string | null }>;
   assert.equal(
     movements.some((row) => row.inventoryItemId === created.id && row.movementType === "in" && row.reason === "purchase"),
+    true
+  );
+  assert.equal(
+    movements.some((row) => row.inventoryItemId === created.id && row.movementType === "out" && row.reason === "adjustment"),
     true
   );
   await app.close();
@@ -2558,19 +2653,21 @@ test("inventory movement accepts the frontend alias payload shape", async () => 
     payload: {
       type: "in",
       quantity: 1,
+      movementUnit: "tablet",
       note: "Quick frontend alias"
     }
   });
 
   assert.equal(movementResponse.statusCode, 201);
   const movement = movementResponse.json() as {
-    inventoryItemId: number;
-    movementType: string;
-    quantity: string;
+    movement: { inventoryItemId: number; movementType: string; quantity: string };
+    conversion: { baseQuantity: string; baseUnit: string };
   };
-  assert.equal(movement.inventoryItemId, created.id);
-  assert.equal(movement.movementType, "in");
-  assert.equal(movement.quantity, "1");
+  assert.equal(movement.movement.inventoryItemId, created.id);
+  assert.equal(movement.movement.movementType, "in");
+  assert.equal(movement.movement.quantity, "1");
+  assert.equal(movement.conversion.baseQuantity, "1");
+  assert.equal(movement.conversion.baseUnit, "tablet");
   await app.close();
 });
 
@@ -2640,20 +2737,32 @@ test("inventory alerts provide low stock and restock recommendations", async () 
       stockoutRisk: boolean;
       expiryRisk: boolean;
       stockStatus: string;
+      shortageToMinimum: number;
+      suggestedPurchasePacks: number | null;
+      daysUntilExpiry: number | null;
     }>;
-    recommendations: Array<{ id: number; recommendedReorderQty: number }>;
+    recommendations: Array<{ id: number; recommendedReorderQty: number; suggestedPurchasePacks: number | null }>;
   };
   assert.equal(alertsBody.summary.lowStockCount >= 1, true);
   assert.equal(alertsBody.summary.stockoutRiskCount >= 1, true);
   assert.equal(alertsBody.summary.nearExpiryCount >= 1, true);
   assert.equal(
     alertsBody.alerts.some(
-      (item) => item.id === created.id && item.lowStock && item.stockoutRisk && item.expiryRisk && item.genericName === "Amoxicillin"
+      (item) =>
+        item.id === created.id &&
+        item.lowStock &&
+        item.stockoutRisk &&
+        item.expiryRisk &&
+        item.genericName === "Amoxicillin" &&
+        item.shortageToMinimum > 0 &&
+        item.daysUntilExpiry !== null
     ),
     true
   );
   assert.equal(
-    alertsBody.recommendations.some((item) => item.id === created.id && item.recommendedReorderQty > 0),
+    alertsBody.recommendations.some(
+      (item) => item.id === created.id && item.recommendedReorderQty > 0 && item.suggestedPurchasePacks === null
+    ),
     true
   );
 
