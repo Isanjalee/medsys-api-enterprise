@@ -332,6 +332,34 @@ Recommended frontend labels:
 - `Purchase Pack Equivalent`
 - `Dispense Pack Equivalent`
 
+### Inventory Actions In Simple Terms
+
+For doctor and assistant users, the inventory flow should be explained in operational language:
+
+- `Edit Item Details`
+  - change the item name, supplier, packaging setup, minimum stock level, and notes
+- `Add Stock`
+  - record newly received stock
+- `Remove Stock`
+  - record stock that was used, dispensed, damaged, or expired
+- `Correct Stock Count`
+  - set the system to the real counted quantity when physical stock and system stock do not match
+- `Add Batch`
+  - record a new lot or batch with its own expiry date and storage location
+
+### Operational Language Guide
+
+Recommended business wording for non-technical users:
+
+- `movementUnit` -> `Stock Unit Used`
+- `adjust-stock` -> `Correct Stock Count`
+- `stockSummary.currentStock` -> `Current Stock`
+- `stockSummary.minimumStock` -> `Minimum Stock Level`
+- `stockSummary.shortageToMinimum` -> `Short by`
+- `stockSummary.purchasePackEquivalent` -> `Equivalent Purchase Packs`
+- `stockSummary.dispensePackEquivalent` -> `Equivalent Dispense Packs`
+- `inventory reports` -> `Inventory Summary and Warnings`
+
 Recommended display rules:
 
 - show stock in base units, such as `200 tablets`
@@ -359,6 +387,14 @@ Meaning:
 - current stock = `1000 tablets`
 - equivalent to `100 cards`
 - equivalent to `10 boxes`
+
+Simple examples for staff-facing screens:
+
+- `Current Stock: 200 tablets`
+- `Minimum Stock Level: 50 tablets`
+- `Short by: 10 tablets`
+- `If 2 boxes are received and 1 box = 100 tablets, the system adds 200 tablets automatically.`
+- `If physical counted stock is 180, staff should use Correct Stock Count instead of manually calculating the difference.`
 
 Movement response shape now includes conversion details:
 
