@@ -175,6 +175,36 @@
       <li>Use <span class="mono">POST /v1/inventory/:id/adjust-stock</span> for “actual counted stock is X” corrections and <span class="mono">POST /v1/inventory/:id/batches</span> when receiving a new batch or lot.</li>
     </ul>
 
+    <h3>Inventory Actions In Simple Terms</h3>
+    <ul>
+      <li><strong>Edit Item Details</strong>: change the item name, supplier, packaging setup, minimum stock level, and notes.</li>
+      <li><strong>Add Stock</strong>: record newly received stock.</li>
+      <li><strong>Remove Stock</strong>: record stock that was used, dispensed, damaged, or expired.</li>
+      <li><strong>Correct Stock Count</strong>: set the system to the real counted quantity when physical stock and system stock do not match.</li>
+      <li><strong>Add Batch</strong>: record a new lot or batch with its own expiry date and storage location.</li>
+    </ul>
+
+    <h3>Operational Language Guide</h3>
+    <ul>
+      <li><span class="mono">movementUnit</span> should be shown to staff as <strong>Stock Unit Used</strong>.</li>
+      <li><span class="mono">adjust-stock</span> should be shown to staff as <strong>Correct Stock Count</strong>.</li>
+      <li><span class="mono">stockSummary.currentStock</span> should be shown as <strong>Current Stock</strong>.</li>
+      <li><span class="mono">stockSummary.minimumStock</span> should be shown as <strong>Minimum Stock Level</strong>.</li>
+      <li><span class="mono">stockSummary.shortageToMinimum</span> should be shown as <strong>Short by</strong>.</li>
+      <li><span class="mono">stockSummary.purchasePackEquivalent</span> should be shown as <strong>Equivalent Purchase Packs</strong>.</li>
+      <li><span class="mono">stockSummary.dispensePackEquivalent</span> should be shown as <strong>Equivalent Dispense Packs</strong>.</li>
+      <li><span class="mono">inventory reports</span> should be described as <strong>Inventory Summary and Warnings</strong>.</li>
+    </ul>
+
+    <h3>Simple Staff Examples</h3>
+    <ul>
+      <li><strong>Current Stock:</strong> 200 tablets</li>
+      <li><strong>Minimum Stock Level:</strong> 50 tablets</li>
+      <li><strong>Short by:</strong> 10 tablets</li>
+      <li>If 2 boxes are received and 1 box = 100 tablets, the system adds 200 tablets automatically.</li>
+      <li>If physical counted stock is 180, staff should use <strong>Correct Stock Count</strong> instead of manually calculating the difference.</li>
+    </ul>
+
     <h2>7. Error Handling Contract</h2>
     <table>
       <tr><th>Endpoint</th><th>Status</th><th>Meaning</th></tr>
