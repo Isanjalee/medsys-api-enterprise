@@ -289,6 +289,97 @@ test("analytics dashboard scopes doctor metrics to the requested doctor", async 
   await app.close();
 });
 
+test("reports module returns base report blocks and scopes doctor performance to the session doctor", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+
+  const ownerOverview = await app.inject({
+    method: "GET",
+    url: "/v1/reports/clinic-overview?range=7d",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(ownerOverview.statusCode, 200);
+  const overviewBody = ownerOverview.json() as {
+    generatedAt: string;
+    range: { preset: string; dateFrom: string; dateTo: string };
+    summary: { totalPatients: number };
+    charts: { appointmentStatusDistribution: unknown[] };
+    tables: { recentAppointments: unknown[] };
+  };
+  assert.equal(typeof overviewBody.generatedAt, "string");
+  assert.equal(overviewBody.range.preset, "7d");
+  assert.equal(typeof overviewBody.summary.totalPatients, "number");
+  assert.equal(Array.isArray(overviewBody.charts.appointmentStatusDistribution), true);
+  assert.equal(Array.isArray(overviewBody.tables.recentAppointments), true);
+
+  const doctorPerformance = await app.inject({
+    method: "GET",
+    url: "/v1/reports/doctor-performance?range=30d",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorPerformance.statusCode, 200);
+  const doctorBody = doctorPerformance.json() as {
+    summary: { totalDoctors: number; totalEncounters: number };
+    charts: { encountersByDoctor: Array<{ label: string; count: number }> };
+    tables: { doctors: Array<{ doctorId: number }> };
+  };
+  assert.equal(doctorBody.summary.totalDoctors >= 1, true);
+  assert.equal(doctorBody.summary.totalEncounters >= 0, true);
+  assert.equal(Array.isArray(doctorBody.charts.encountersByDoctor), true);
+  assert.equal(doctorBody.tables.doctors.every((row) => row.doctorId === doctorId), true);
+
+  const doctorScopedByOwner = await app.inject({
+    method: "GET",
+    url: `/v1/reports/doctor-performance?range=30d&doctorId=${doctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorScopedByOwner.statusCode, 200);
+
+  const assistantReport = await app.inject({
+    method: "GET",
+    url: "/v1/reports/assistant-performance?range=7d",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(assistantReport.statusCode, 200);
+
+  const inventoryUsageReport = await app.inject({
+    method: "GET",
+    url: "/v1/reports/inventory-usage?range=7d",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(inventoryUsageReport.statusCode, 200);
+
+  const followupReport = await app.inject({
+    method: "GET",
+    url: "/v1/reports/patient-followup?range=7d",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(followupReport.statusCode, 200);
+
+  await app.close();
+});
+
 test("analytics cache endpoint exposes cache hit and invalidation counters", async () => {
   if (!process.env.DATABASE_URL) {
     return;
