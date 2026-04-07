@@ -7,6 +7,7 @@ import encounterRoutes from "./v1/encounters.js";
 import prescriptionRoutes from "./v1/prescriptions.js";
 import inventoryRoutes from "./v1/inventory.js";
 import analyticsRoutes from "./v1/analytics.js";
+import reportsRoutes from "./v1/reports.js";
 import auditRoutes from "./v1/audit.js";
 import userRoutes from "./v1/users.js";
 import clinicalRoutes from "./v1/clinical.js";
@@ -28,6 +29,7 @@ const routesPlugin: FastifyPluginAsync = async (app) => {
   await app.register(prescriptionRoutes, { prefix: "/prescriptions" });
   await app.register(inventoryRoutes, { prefix: "/inventory" });
   await app.register(analyticsRoutes, { prefix: "/analytics" });
+  await app.register(reportsRoutes, { prefix: "/reports" });
   await app.register(auditRoutes, { prefix: "/audit" });
 };
 
