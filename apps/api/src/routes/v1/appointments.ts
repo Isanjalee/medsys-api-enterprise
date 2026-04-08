@@ -175,6 +175,7 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
         patientId: payload.patientId,
         doctorId: payload.doctorId ?? null,
         assistantId: payload.assistantId ?? null,
+        visitMode: "appointment",
         scheduledAt: new Date(payload.scheduledAt),
         status: initialStatus,
         registeredAt: now,
