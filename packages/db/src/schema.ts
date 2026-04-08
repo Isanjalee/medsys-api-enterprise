@@ -233,6 +233,7 @@ export const appointments = pgTable(
       .references(() => patients.id),
     doctorId: bigint("doctor_id", { mode: "number" }).references(() => users.id),
     assistantId: bigint("assistant_id", { mode: "number" }).references(() => users.id),
+    visitMode: varchar("visit_mode", { length: 20 }).notNull().default("appointment"),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
     status: appointmentStatusEnum("status").notNull(),
     registeredAt: timestamp("registered_at", { withTimezone: true }).notNull().defaultNow(),
@@ -474,6 +475,24 @@ export const inventoryMovements = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => [index("inventory_movements_item_idx").on(table.inventoryItemId)]
+);
+
+export const dailySummarySnapshots = pgTable(
+  "daily_summary_snapshots",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    roleContext: varchar("role_context", { length: 20 }).notNull(),
+    actorUserId: bigint("actor_user_id", { mode: "number" }).references(() => users.id),
+    summaryDate: date("summary_date").notNull(),
+    summaryType: varchar("summary_type", { length: 30 }).notNull().default("daily"),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("daily_summary_snapshots_org_date_idx").on(table.organizationId, table.summaryDate),
+    index("daily_summary_snapshots_org_role_date_idx").on(table.organizationId, table.roleContext, table.summaryDate)
+  ]
 );
 
 export const patientVitals = pgTable(
