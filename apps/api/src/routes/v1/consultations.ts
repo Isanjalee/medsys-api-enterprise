@@ -1024,6 +1024,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                   await tx
                     .update(appointments)
                     .set({
+                      visitMode: "appointment",
                       status: "in_consultation",
                       doctorId: appointmentRows[0].doctorId ?? resolvedDoctorId,
                       assistantId: appointmentRows[0].assistantId ?? resolvedAssistantId,
@@ -1077,10 +1078,11 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
 
                   return (
                     await tx
-                      .update(appointments)
-                      .set({
-                        status: "in_consultation",
-                        doctorId: activeRows[0].doctorId ?? resolvedDoctorId,
+                    .update(appointments)
+                    .set({
+                      visitMode: "walk_in",
+                      status: "in_consultation",
+                      doctorId: activeRows[0].doctorId ?? resolvedDoctorId,
                         assistantId: activeRows[0].assistantId ?? resolvedAssistantId,
                         waitingAt: activeRows[0].waitingAt ?? new Date(),
                         inConsultationAt: activeRows[0].inConsultationAt ?? checkedAt,
@@ -1101,6 +1103,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                       patientId: patient.id,
                       doctorId,
                       assistantId: resolvedAssistantId,
+                      visitMode: "walk_in",
                       scheduledAt: new Date(payload.scheduledAt ?? payload.checkedAt),
                       status: "in_consultation",
                       registeredAt: new Date(),
