@@ -252,6 +252,7 @@ export const clinicalCodeParamSchema = z
 
 export const analyticsDashboardRoleSchema = z.enum(["doctor", "assistant", "owner"]);
 export const analyticsDashboardRangeSchema = z.enum(["1d", "7d", "30d", "custom"]);
+export const visitModeSchema = z.enum(["appointment", "walk_in"]);
 
 export const analyticsDashboardQuerySchema = z
   .object({
@@ -289,6 +290,69 @@ export const analyticsDashboardQuerySchema = z
       });
     }
   });
+
+export const reportsRangeSchema = z.enum(["7d", "30d", "custom"]);
+
+export const reportsQuerySchema = z
+  .object({
+    range: reportsRangeSchema.optional().default("7d"),
+    dateFrom: optionalDateString,
+    dateTo: optionalDateString,
+    doctorId: z.coerce.number().int().positive().optional().nullable(),
+    assistantId: z.coerce.number().int().positive().optional().nullable(),
+    visitMode: visitModeSchema.optional(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable()
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.range === "custom") {
+      if (!value.dateFrom) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dateFrom"],
+          message: "dateFrom is required when range=custom"
+        });
+      }
+      if (!value.dateTo) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dateTo"],
+          message: "dateTo is required when range=custom"
+        });
+      }
+    }
+
+    if (value.dateFrom && value.dateTo && value.dateFrom > value.dateTo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dateFrom"],
+        message: "dateFrom must be on or before dateTo"
+      });
+    }
+  });
+
+export const dailySummaryQuerySchema = z
+  .object({
+    role: analyticsDashboardRoleSchema.optional(),
+    date: optionalDateString,
+    doctorId: z.coerce.number().int().positive().optional().nullable(),
+    assistantId: z.coerce.number().int().positive().optional().nullable(),
+    visitMode: visitModeSchema.optional(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable()
+  })
+  .strict();
+
+export const dailySummaryHistoryQuerySchema = z
+  .object({
+    role: analyticsDashboardRoleSchema.optional(),
+    date: optionalDateString,
+    doctorId: z.coerce.number().int().positive().optional().nullable(),
+    assistantId: z.coerce.number().int().positive().optional().nullable(),
+    visitMode: visitModeSchema.optional(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    limit: z.coerce.number().int().positive().max(50).default(10)
+  })
+  .strict();
 
 export const createUserSchema = z.object({
   firstName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid first name"),
