@@ -126,6 +126,7 @@ const visitsRoutes: FastifyPluginAsync = async (app) => {
             patientId: payload.patientId,
             doctorId: resolvedDoctorId,
             assistantId: resolvedAssistantId,
+            visitMode: "walk_in",
             scheduledAt: new Date(payload.scheduledAt ?? new Date().toISOString()),
             status: "in_consultation",
             registeredAt: now,
