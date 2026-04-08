@@ -26,6 +26,8 @@ const PERMISSIONS = [
   "appointment.create",
   "appointment.update",
   "analytics.read",
+  "task.read",
+  "task.write",
   "audit.read",
   "encounter.read",
   "encounter.write",
@@ -41,6 +43,8 @@ const CONSULTATION_WORKFLOW_TYPES = ["appointment", "walk_in"] as const;
 const CONSULTATION_DISPENSE_MODES = ["assistant_queue", "doctor_direct"] as const;
 const PRIORITY_LEVELS = ["low", "normal", "high", "critical"] as const;
 const DRUG_SOURCES = ["clinical", "outside"] as const;
+const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
+const TASK_SOURCE_TYPES = ["appointment", "consultation", "prescription", "dispense", "inventory_alert", "followup"] as const;
 
 const nicRegex = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
 const nameRegex = /^[A-Za-z .'-]+$/;
@@ -55,6 +59,8 @@ export const permissionSchema = z.enum(PERMISSIONS);
 export const appointmentStatusSchema = z.enum(APPOINTMENT_STATUSES);
 export const prioritySchema = z.enum(PRIORITY_LEVELS);
 export const drugSourceSchema = z.enum(DRUG_SOURCES);
+export const taskStatusSchema = z.enum(TASK_STATUSES);
+export const taskSourceTypeSchema = z.enum(TASK_SOURCE_TYPES);
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive()
@@ -351,6 +357,72 @@ export const dailySummaryHistoryQuerySchema = z
     visitMode: visitModeSchema.optional(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
     limit: z.coerce.number().int().positive().max(50).default(10)
+  })
+  .strict();
+
+export const listTasksQuerySchema = z
+  .object({
+    role: userRoleSchema.optional(),
+    status: taskStatusSchema.optional(),
+    priority: prioritySchema.optional(),
+    visitMode: visitModeSchema.optional(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    assignedUserId: z.coerce.number().int().positive().optional().nullable(),
+    sourceType: taskSourceTypeSchema.optional(),
+    limit: z.coerce.number().int().positive().max(100).default(50)
+  })
+  .strict();
+
+export const createTaskSchema = z
+  .object({
+    title: z.string().trim().min(1).max(180),
+    description: z.string().trim().max(4000).optional().nullable(),
+    taskType: z.string().trim().min(1).max(40),
+    sourceType: taskSourceTypeSchema,
+    sourceId: z.number().int().positive().optional().nullable(),
+    assignedRole: userRoleSchema,
+    assignedUserId: z.number().int().positive().optional().nullable(),
+    priority: prioritySchema.optional().default("normal"),
+    status: taskStatusSchema.optional().default("pending"),
+    visitMode: visitModeSchema.optional().nullable(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    dueAt: z.string().datetime().optional().nullable(),
+    metadata: z.record(z.string(), z.unknown()).optional().default({})
+  })
+  .strict();
+
+export const updateTaskSchema = z
+  .object({
+    title: z.string().trim().min(1).max(180).optional(),
+    description: z.string().trim().max(4000).optional().nullable(),
+    assignedRole: userRoleSchema.optional(),
+    assignedUserId: z.number().int().positive().optional().nullable(),
+    priority: prioritySchema.optional(),
+    status: taskStatusSchema.optional(),
+    visitMode: visitModeSchema.optional().nullable(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    dueAt: z.string().datetime().optional().nullable(),
+    metadata: z.record(z.string(), z.unknown()).optional()
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.description !== undefined ||
+      value.assignedRole !== undefined ||
+      value.assignedUserId !== undefined ||
+      value.priority !== undefined ||
+      value.status !== undefined ||
+      value.visitMode !== undefined ||
+      value.doctorWorkflowMode !== undefined ||
+      value.dueAt !== undefined ||
+      value.metadata !== undefined,
+    "At least one field must be provided"
+  );
+
+export const completeTaskSchema = z
+  .object({
+    note: z.string().trim().max(2000).optional().nullable()
   })
   .strict();
 

@@ -475,6 +475,104 @@ test("daily summary endpoints generate role-aware snapshots and expose history",
   await app.close();
 });
 
+test("task engine creates, lists, updates, and completes role-aware tasks", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+
+  const createTaskResponse = await app.inject({
+    method: "POST",
+    url: "/v1/tasks",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      title: `Review delayed walk-in queue ${Date.now()}`,
+      description: "Patient has waited beyond target window.",
+      taskType: "queue_review",
+      sourceType: "consultation",
+      sourceId: 1,
+      assignedRole: "doctor",
+      assignedUserId: doctorId,
+      priority: "high",
+      visitMode: "walk_in",
+      doctorWorkflowMode: "self_service",
+      metadata: {
+        queueDelayMinutes: 32
+      }
+    }
+  });
+
+  assert.equal(createTaskResponse.statusCode, 201);
+  const createdTask = createTaskResponse.json() as {
+    task: { id: number; assignedUserId: number | null; visitMode: string | null; doctorWorkflowMode: string | null };
+  };
+  assert.equal(createdTask.task.assignedUserId, doctorId);
+  assert.equal(createdTask.task.visitMode, "walk_in");
+  assert.equal(createdTask.task.doctorWorkflowMode, "self_service");
+
+  const doctorTasksResponse = await app.inject({
+    method: "GET",
+    url: "/v1/tasks?status=pending&visitMode=walk_in&doctorWorkflowMode=self_service",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorTasksResponse.statusCode, 200);
+  const doctorTasks = doctorTasksResponse.json() as {
+    items: Array<{ id: number; assignedUserId: number | null; assignedRole: string; status: string }>;
+  };
+  assert.equal(doctorTasks.items.some((item) => item.id === createdTask.task.id), true);
+
+  const updateTaskResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/tasks/${createdTask.task.id}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      status: "in_progress",
+      dueAt: "2026-04-10T09:00:00Z"
+    }
+  });
+
+  assert.equal(updateTaskResponse.statusCode, 200);
+  const updatedTaskBody = updateTaskResponse.json() as {
+    task: { status: string };
+    events: Array<{ eventType: string }>;
+  };
+  assert.equal(updatedTaskBody.task.status, "in_progress");
+  assert.equal(updatedTaskBody.events.some((event) => event.eventType === "updated"), true);
+
+  const completeTaskResponse = await app.inject({
+    method: "POST",
+    url: `/v1/tasks/${createdTask.task.id}/complete`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      note: "Reviewed and completed by doctor"
+    }
+  });
+
+  assert.equal(completeTaskResponse.statusCode, 200);
+  const completedTaskBody = completeTaskResponse.json() as {
+    task: { status: string; completedAt: string | null };
+    events: Array<{ eventType: string }>;
+  };
+  assert.equal(completedTaskBody.task.status, "completed");
+  assert.equal(typeof completedTaskBody.task.completedAt, "string");
+  assert.equal(completedTaskBody.events.some((event) => event.eventType === "completed"), true);
+
+  await app.close();
+});
+
 test("analytics cache endpoint exposes cache hit and invalidation counters", async () => {
   if (!process.env.DATABASE_URL) {
     return;

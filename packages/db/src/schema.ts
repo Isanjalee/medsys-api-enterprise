@@ -495,6 +495,50 @@ export const dailySummarySnapshots = pgTable(
   ]
 );
 
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    title: varchar("title", { length: 180 }).notNull(),
+    description: text("description"),
+    taskType: varchar("task_type", { length: 40 }).notNull(),
+    sourceType: varchar("source_type", { length: 40 }).notNull(),
+    sourceId: bigint("source_id", { mode: "number" }),
+    assignedRole: userRoleEnum("assigned_role").notNull(),
+    assignedUserId: bigint("assigned_user_id", { mode: "number" }).references(() => users.id),
+    priority: priorityLevelEnum("priority").notNull().default("normal"),
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    visitMode: varchar("visit_mode", { length: 20 }),
+    doctorWorkflowMode: doctorWorkflowModeEnum("doctor_workflow_mode"),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    index("tasks_org_status_idx").on(table.organizationId, table.status),
+    index("tasks_org_role_idx").on(table.organizationId, table.assignedRole),
+    index("tasks_org_due_idx").on(table.organizationId, table.dueAt)
+  ]
+);
+
+export const taskEvents = pgTable(
+  "task_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    taskId: bigint("task_id", { mode: "number" })
+      .notNull()
+      .references(() => tasks.id),
+    actorUserId: bigint("actor_user_id", { mode: "number" }).references(() => users.id),
+    eventType: varchar("event_type", { length: 40 }).notNull(),
+    payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("task_events_task_idx").on(table.taskId)]
+);
+
 export const patientVitals = pgTable(
   "patient_vitals",
   {
