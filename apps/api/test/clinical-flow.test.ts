@@ -301,7 +301,7 @@ test("reports module returns base report blocks and scopes doctor performance to
 
   const ownerOverview = await app.inject({
     method: "GET",
-    url: "/v1/reports/clinic-overview?range=7d",
+    url: "/v1/reports/clinic-overview?range=7d&visitMode=appointment",
     headers: {
       authorization: `Bearer ${ownerLogin.accessToken}`
     }
@@ -311,19 +311,22 @@ test("reports module returns base report blocks and scopes doctor performance to
   const overviewBody = ownerOverview.json() as {
     generatedAt: string;
     range: { preset: string; dateFrom: string; dateTo: string };
+    filters: { visitMode: string | null; doctorWorkflowMode: string | null };
     summary: { totalPatients: number };
     charts: { appointmentStatusDistribution: unknown[] };
     tables: { recentAppointments: unknown[] };
   };
   assert.equal(typeof overviewBody.generatedAt, "string");
   assert.equal(overviewBody.range.preset, "7d");
+  assert.equal(overviewBody.filters.visitMode, "appointment");
+  assert.equal(overviewBody.filters.doctorWorkflowMode, null);
   assert.equal(typeof overviewBody.summary.totalPatients, "number");
   assert.equal(Array.isArray(overviewBody.charts.appointmentStatusDistribution), true);
   assert.equal(Array.isArray(overviewBody.tables.recentAppointments), true);
 
   const doctorPerformance = await app.inject({
     method: "GET",
-    url: "/v1/reports/doctor-performance?range=30d",
+    url: "/v1/reports/doctor-performance?range=30d&doctorWorkflowMode=self_service",
     headers: {
       authorization: `Bearer ${doctorLogin.accessToken}`
     }
@@ -331,10 +334,12 @@ test("reports module returns base report blocks and scopes doctor performance to
 
   assert.equal(doctorPerformance.statusCode, 200);
   const doctorBody = doctorPerformance.json() as {
+    filters: { doctorWorkflowMode: string | null };
     summary: { totalDoctors: number; totalEncounters: number };
     charts: { encountersByDoctor: Array<{ label: string; count: number }> };
     tables: { doctors: Array<{ doctorId: number }> };
   };
+  assert.equal(doctorBody.filters.doctorWorkflowMode, "self_service");
   assert.equal(doctorBody.summary.totalDoctors >= 1, true);
   assert.equal(doctorBody.summary.totalEncounters >= 0, true);
   assert.equal(Array.isArray(doctorBody.charts.encountersByDoctor), true);
@@ -376,6 +381,96 @@ test("reports module returns base report blocks and scopes doctor performance to
     }
   });
   assert.equal(followupReport.statusCode, 200);
+
+  await app.close();
+});
+
+test("daily summary endpoints generate role-aware snapshots and expose history", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const assistantId = await getUserIdByEmail(app, ownerLogin.accessToken, "assistant", "assistant@medsys.local");
+
+  const doctorSummary = await app.inject({
+    method: "GET",
+    url: "/v1/reports/daily-summary?doctorWorkflowMode=self_service",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorSummary.statusCode, 200);
+  const doctorBody = doctorSummary.json() as {
+    snapshotId: number | null;
+    roleContext: string;
+    summaryDate: string;
+    generatedAt: string;
+    filterContext: { visitMode: string | null; doctorWorkflowMode: string | null };
+    summary: Record<string, unknown>;
+    insights: string[];
+  };
+  assert.equal(typeof doctorBody.snapshotId, "number");
+  assert.equal(doctorBody.roleContext, "doctor");
+  assert.equal(doctorBody.filterContext.doctorWorkflowMode, "self_service");
+  assert.equal(typeof doctorBody.summaryDate, "string");
+  assert.equal(typeof doctorBody.generatedAt, "string");
+  assert.equal(Array.isArray(doctorBody.insights), true);
+
+  const doctorHistory = await app.inject({
+    method: "GET",
+    url: "/v1/reports/daily-summary/history?limit=5&doctorWorkflowMode=self_service",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorHistory.statusCode, 200);
+  const doctorHistoryBody = doctorHistory.json() as {
+    roleContext: string;
+    items: Array<{ id: number; roleContext: string; payload: { roleContext: string; filterContext: { doctorWorkflowMode: string | null } } }>;
+  };
+  assert.equal(doctorHistoryBody.roleContext, "doctor");
+  assert.equal(doctorHistoryBody.items.length >= 1, true);
+  assert.equal(doctorHistoryBody.items[0]?.roleContext, "doctor");
+  assert.equal(doctorHistoryBody.items[0]?.payload.roleContext, "doctor");
+  assert.equal(doctorHistoryBody.items[0]?.payload.filterContext.doctorWorkflowMode, "self_service");
+
+  const ownerAssistantSummary = await app.inject({
+    method: "GET",
+    url: `/v1/reports/daily-summary?role=assistant&assistantId=${assistantId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(ownerAssistantSummary.statusCode, 200);
+  const ownerAssistantBody = ownerAssistantSummary.json() as {
+    roleContext: string;
+    summary: Record<string, unknown>;
+  };
+  assert.equal(ownerAssistantBody.roleContext, "assistant");
+  assert.equal(typeof ownerAssistantBody.summary, "object");
+
+  const ownerDoctorHistory = await app.inject({
+    method: "GET",
+    url: `/v1/reports/daily-summary/history?role=doctor&doctorId=${doctorId}&limit=5`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+
+  assert.equal(ownerDoctorHistory.statusCode, 200);
+  const ownerDoctorHistoryBody = ownerDoctorHistory.json() as {
+    roleContext: string;
+    items: Array<{ payload: { roleContext: string } }>;
+  };
+  assert.equal(ownerDoctorHistoryBody.roleContext, "doctor");
+  assert.equal(Array.isArray(ownerDoctorHistoryBody.items), true);
 
   await app.close();
 });
