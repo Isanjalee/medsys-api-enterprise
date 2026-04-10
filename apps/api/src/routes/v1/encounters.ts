@@ -13,6 +13,7 @@ import { createEncounterBundleSchema, idParamSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import { syncEncounterFollowup } from "../../lib/followups/followup-service.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
 
@@ -237,20 +238,49 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
       let vitalId: number | null = null;
       if (payload.vitals) {
-        const vitalRows = await tx
-          .insert(patientVitals)
-          .values({
-            organizationId: actor.organizationId,
-            patientId: payload.patientId,
-            encounterId: encounter.id,
-            bpSystolic: payload.vitals.bpSystolic ?? null,
-            bpDiastolic: payload.vitals.bpDiastolic ?? null,
-            heartRate: payload.vitals.heartRate ?? null,
-            temperatureC: payload.vitals.temperatureC?.toString() ?? null,
-            spo2: payload.vitals.spo2 ?? null,
-            recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt)
-          })
-          .returning({ id: patientVitals.id });
+        const existingVitalRows = await tx
+          .select({ id: patientVitals.id })
+          .from(patientVitals)
+          .where(
+            and(
+              eq(patientVitals.organizationId, actor.organizationId),
+              eq(patientVitals.patientId, payload.patientId),
+              eq(patientVitals.encounterId, encounter.id),
+              isNull(patientVitals.deletedAt)
+            )
+          )
+          .orderBy(desc(patientVitals.id))
+          .limit(1);
+
+        const vitalRows =
+          existingVitalRows.length === 1
+            ? await tx
+                .update(patientVitals)
+                .set({
+                  bpSystolic: payload.vitals.bpSystolic ?? null,
+                  bpDiastolic: payload.vitals.bpDiastolic ?? null,
+                  heartRate: payload.vitals.heartRate ?? null,
+                  temperatureC: payload.vitals.temperatureC?.toString() ?? null,
+                  spo2: payload.vitals.spo2 ?? null,
+                  recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt),
+                  updatedAt: new Date()
+                })
+                .where(eq(patientVitals.id, existingVitalRows[0].id))
+                .returning({ id: patientVitals.id })
+            : await tx
+                .insert(patientVitals)
+                .values({
+                  organizationId: actor.organizationId,
+                  patientId: payload.patientId,
+                  encounterId: encounter.id,
+                  bpSystolic: payload.vitals.bpSystolic ?? null,
+                  bpDiastolic: payload.vitals.bpDiastolic ?? null,
+                  heartRate: payload.vitals.heartRate ?? null,
+                  temperatureC: payload.vitals.temperatureC?.toString() ?? null,
+                  spo2: payload.vitals.spo2 ?? null,
+                  recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt)
+                })
+                .returning({ id: patientVitals.id });
         vitalId = vitalRows[0].id;
       }
 
@@ -285,6 +315,16 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
         .update(appointments)
         .set({ status: "completed", completedAt: checkedAt, updatedAt: new Date() })
         .where(and(eq(appointments.id, payload.appointmentId), eq(appointments.organizationId, actor.organizationId)));
+
+      await syncEncounterFollowup({
+        db: tx,
+        organizationId: actor.organizationId,
+        encounterId: encounter.id,
+        patientId: payload.patientId,
+        doctorId: payload.doctorId,
+        nextVisitDate: payload.nextVisitDate ?? null,
+        createdByUserId: actor.userId
+      });
 
       return { encounterId: encounter.id, prescriptionId, vitalId };
     });
