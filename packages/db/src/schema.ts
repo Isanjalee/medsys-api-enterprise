@@ -539,6 +539,35 @@ export const taskEvents = pgTable(
   (table) => [index("task_events_task_idx").on(table.taskId)]
 );
 
+export const patientFollowups = pgTable(
+  "patient_followups",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    encounterId: bigint("encounter_id", { mode: "number" }).references(() => encounters.id),
+    doctorId: bigint("doctor_id", { mode: "number" }).references(() => users.id),
+    followupType: varchar("followup_type", { length: 40 }).notNull(),
+    dueDate: date("due_date").notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    visitMode: varchar("visit_mode", { length: 20 }),
+    doctorWorkflowMode: doctorWorkflowModeEnum("doctor_workflow_mode"),
+    note: text("note"),
+    createdByUserId: bigint("created_by_user_id", { mode: "number" }).references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    index("patient_followups_org_due_idx").on(table.organizationId, table.dueDate),
+    index("patient_followups_org_status_idx").on(table.organizationId, table.status),
+    index("patient_followups_org_doctor_idx").on(table.organizationId, table.doctorId),
+    index("patient_followups_patient_idx").on(table.patientId)
+  ]
+);
+
 export const patientVitals = pgTable(
   "patient_vitals",
   {
