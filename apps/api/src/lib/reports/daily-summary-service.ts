@@ -6,7 +6,9 @@ import {
   encounters,
   inventoryItems,
   patients,
+  patientFollowups,
   prescriptions,
+  testOrders,
   users
 } from "@medsys/db";
 
@@ -40,6 +42,8 @@ type DailySummaryResponse = {
     doctorWorkflowMode: "self_service" | "clinic_supported" | null;
   };
   summary: Record<string, unknown>;
+  comparisons?: Record<string, unknown>;
+  attentionFlags?: string[];
   insights: string[];
 };
 
@@ -83,6 +87,27 @@ const pushEncounterModeFilters = (conditions: any[], scope: DailySummaryScope) =
   }
 };
 
+const averageConsultationMinutes = (rows: Array<{ checkedAt: Date; closedAt: Date | null }>) => {
+  const completedRows = rows.filter((row) => row.closedAt instanceof Date && row.closedAt.getTime() >= row.checkedAt.getTime());
+  if (!completedRows.length) {
+    return null;
+  }
+
+  const totalMinutes = completedRows.reduce(
+    (sum, row) => sum + (row.closedAt!.getTime() - row.checkedAt.getTime()) / (1000 * 60),
+    0
+  );
+
+  return Number((totalMinutes / completedRows.length).toFixed(1));
+};
+
+const calculateChangePercent = (current: number, previous: number) => {
+  if (previous === 0) {
+    return current === 0 ? 0 : 100;
+  }
+  return Number((((current - previous) / previous) * 100).toFixed(1));
+};
+
 const buildDoctorSummary = async ({
   db,
   organizationId,
@@ -92,6 +117,9 @@ const buildDoctorSummary = async ({
 }: DailySummaryParams): Promise<DailySummaryResponse> => {
   const dayStart = startOfDayUtc(summaryDate);
   const dayEnd = endOfDayUtc(summaryDate);
+  const previousDay = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
+  const previousDayStart = startOfDayUtc(previousDay.toISOString().slice(0, 10));
+  const previousDayEnd = endOfDayUtc(previousDay.toISOString().slice(0, 10));
   const doctorId = scope.doctorId!;
   const encounterConditions = [
     eq(encounters.organizationId, organizationId),
@@ -136,19 +164,45 @@ const buildDoctorSummary = async ({
   }
 
   const followupConditions = [
+    eq(patientFollowups.organizationId, organizationId),
+    eq(patientFollowups.doctorId, doctorId),
+    eq(patientFollowups.status, "pending"),
+    lte(patientFollowups.dueDate, (new Date(generatedAt.getTime() + 7 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10))
+  ];
+  if (scope.visitMode) {
+    followupConditions.push(eq(patientFollowups.visitMode, scope.visitMode));
+  }
+  if (scope.doctorWorkflowMode) {
+    followupConditions.push(eq(patientFollowups.doctorWorkflowMode, scope.doctorWorkflowMode));
+  }
+
+  const appointmentDayConditions = [
+    eq(appointments.organizationId, organizationId),
+    eq(appointments.doctorId, doctorId),
+    gte(appointments.scheduledAt, dayStart),
+    lte(appointments.scheduledAt, dayEnd),
+    isNull(appointments.deletedAt)
+  ];
+  pushAppointmentModeFilters(appointmentDayConditions, scope);
+
+  const previousEncounterConditions = [
     eq(encounters.organizationId, organizationId),
     eq(encounters.doctorId, doctorId),
-    sql`${encounters.nextVisitDate} IS NOT NULL`,
-    sql`${encounters.nextVisitDate} <= ${(new Date(generatedAt.getTime() + 7 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)}`,
+    gte(encounters.checkedAt, previousDayStart),
+    lte(encounters.checkedAt, previousDayEnd),
     isNull(encounters.deletedAt)
   ];
-  pushEncounterModeFilters(followupConditions, scope);
+  pushEncounterModeFilters(previousEncounterConditions, scope);
 
-  const [encounterCount, waitingCount, prescriptionCount, followupDueSoonCount, lowStockCount] = await Promise.all([
+  const [encounterRows, appointmentRows, waitingCount, prescriptionCount, testsOrderedCount, followupDueSoonCount, lowStockCount, previousEncounterCountRows] = await Promise.all([
     db
-      .select({ count: sql<number>`count(*)` })
+      .select({ checkedAt: encounters.checkedAt, closedAt: encounters.closedAt })
       .from(encounters)
       .where(and(...encounterConditions)),
+    db
+      .select({ visitMode: appointments.visitMode })
+      .from(appointments)
+      .where(and(...appointmentDayConditions)),
     db
       .select({ count: sql<number>`count(*)` })
       .from(appointments)
@@ -159,7 +213,12 @@ const buildDoctorSummary = async ({
       .where(and(...prescriptionConditions)),
     db
       .select({ count: sql<number>`count(*)` })
-      .from(encounters)
+      .from(testOrders)
+      .innerJoin(encounters, eq(encounters.id, testOrders.encounterId))
+      .where(and(...encounterConditions)),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(patientFollowups)
       .where(and(...followupConditions)),
     db
       .select({ count: sql<number>`count(*)` })
@@ -170,20 +229,35 @@ const buildDoctorSummary = async ({
           isNull(inventoryItems.deletedAt),
           sql`${inventoryItems.stock} <= ${inventoryItems.reorderLevel}`
         )
-      )
+      ),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(encounters)
+      .where(and(...previousEncounterConditions))
   ]);
 
-  const patientsSeenToday = Number(encounterCount[0]?.count ?? 0);
+  const patientsSeenToday = encounterRows.length;
   const patientsWaitingNow = Number(waitingCount[0]?.count ?? 0);
   const prescriptionsIssuedToday = Number(prescriptionCount[0]?.count ?? 0);
+  const testsOrderedToday = Number(testsOrderedCount[0]?.count ?? 0);
   const followupsDueSoon = Number(followupDueSoonCount[0]?.count ?? 0);
   const lowStockItems = Number(lowStockCount[0]?.count ?? 0);
+  const walkInPatientsToday = appointmentRows.filter((row: { visitMode: string }) => row.visitMode === "walk_in").length;
+  const appointmentPatientsToday = appointmentRows.filter((row: { visitMode: string }) => row.visitMode === "appointment").length;
+  const averageConsultationTimeMinutes = averageConsultationMinutes(encounterRows as Array<{ checkedAt: Date; closedAt: Date | null }>);
+  const previousPatientsSeenToday = Number(previousEncounterCountRows[0]?.count ?? 0);
+  const patientsSeenChangePercent = calculateChangePercent(patientsSeenToday, previousPatientsSeenToday);
+  const attentionFlags = [];
+  if (patientsWaitingNow > 0) attentionFlags.push("waiting_queue");
+  if (followupsDueSoon > 0) attentionFlags.push("followups_due");
+  if (lowStockItems > 0) attentionFlags.push("low_stock_items");
 
   const insights = [
     `You saw ${patientsSeenToday} patient${patientsSeenToday === 1 ? "" : "s"} on ${summaryDate}.`,
     `${patientsWaitingNow} patient${patientsWaitingNow === 1 ? " is" : "s are"} waiting under your queue right now.`,
     `${followupsDueSoon} follow-up${followupsDueSoon === 1 ? "" : "s"} are due within the next 7 days.`
   ];
+  insights.push(`${walkInPatientsToday} walk-in and ${appointmentPatientsToday} appointment patient${patientsSeenToday === 1 ? "" : "s"} shaped today's load.`);
 
   if (lowStockItems > 0) {
     insights.push(`${lowStockItems} inventory item${lowStockItems === 1 ? "" : "s"} are at or below minimum stock.`);
@@ -199,11 +273,20 @@ const buildDoctorSummary = async ({
     },
     summary: {
       patientsSeenToday,
+      walkInPatientsToday,
+      appointmentPatientsToday,
       patientsWaitingNow,
       prescriptionsIssuedToday,
+      testsOrderedToday,
+      averageConsultationTimeMinutes,
       followupsDueSoon,
       lowStockItems
     },
+    comparisons: {
+      previousPatientsSeenToday,
+      patientsSeenChangePercent
+    },
+    attentionFlags,
     insights
   };
 };
@@ -217,6 +300,9 @@ const buildAssistantSummary = async ({
 }: DailySummaryParams): Promise<DailySummaryResponse> => {
   const dayStart = startOfDayUtc(summaryDate);
   const dayEnd = endOfDayUtc(summaryDate);
+  const previousDay = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
+  const previousDayStart = startOfDayUtc(previousDay.toISOString().slice(0, 10));
+  const previousDayEnd = endOfDayUtc(previousDay.toISOString().slice(0, 10));
   const assistantId = scope.assistantId!;
   const appointmentConditions = [
     eq(appointments.organizationId, organizationId),
@@ -243,9 +329,18 @@ const buildAssistantSummary = async ({
   ];
   pushAppointmentModeFilters(delayedQueueConditions, scope);
 
-  const [registeredTodayCount, queueWaitingCount, dispenseCount, delayedQueueCount, doctorLoadRows] = await Promise.all([
+  const previousAppointmentConditions = [
+    eq(appointments.organizationId, organizationId),
+    eq(appointments.assistantId, assistantId),
+    gte(appointments.registeredAt, previousDayStart),
+    lte(appointments.registeredAt, previousDayEnd),
+    isNull(appointments.deletedAt)
+  ];
+  pushAppointmentModeFilters(previousAppointmentConditions, scope);
+
+  const [registeredRows, queueWaitingCount, dispenseCount, delayedQueueCount, doctorLoadRows, previousRegisteredCountRows] = await Promise.all([
     db
-      .select({ count: sql<number>`count(*)` })
+      .select({ visitMode: appointments.visitMode })
       .from(appointments)
       .where(and(...appointmentConditions)),
     db
@@ -295,14 +390,25 @@ const buildAssistantSummary = async ({
       .leftJoin(users, eq(users.id, appointments.doctorId))
       .where(and(...queueConditions))
       .groupBy(appointments.doctorId, users.firstName, users.lastName)
-      .orderBy(desc(sql<number>`count(*)`))
+      .orderBy(desc(sql<number>`count(*)`)),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(appointments)
+      .where(and(...previousAppointmentConditions))
   ]);
 
-  const registeredToday = Number(registeredTodayCount[0]?.count ?? 0);
+  const registeredToday = registeredRows.length;
   const waitingQueueNow = Number(queueWaitingCount[0]?.count ?? 0);
   const dispensedToday = Number(dispenseCount[0]?.count ?? 0);
   const delayedQueueCountValue = Number(delayedQueueCount[0]?.count ?? 0);
+  const walkInRegisteredToday = registeredRows.filter((row: { visitMode: string }) => row.visitMode === "walk_in").length;
+  const appointmentRegisteredToday = registeredRows.filter((row: { visitMode: string }) => row.visitMode === "appointment").length;
+  const previousRegisteredToday = Number(previousRegisteredCountRows[0]?.count ?? 0);
+  const registrationsChangePercent = calculateChangePercent(registeredToday, previousRegisteredToday);
   const highestLoadDoctor = (doctorLoadRows as Array<{ firstName: string | null; lastName: string | null; count: number }>)[0];
+  const attentionFlags = [];
+  if (delayedQueueCountValue > 0) attentionFlags.push("delayed_queue");
+  if (waitingQueueNow > 0) attentionFlags.push("waiting_queue");
 
   const insights = [
     `${registeredToday} registration${registeredToday === 1 ? "" : "s"} were handled today.`,
@@ -328,10 +434,17 @@ const buildAssistantSummary = async ({
     },
     summary: {
       registeredToday,
+      walkInRegisteredToday,
+      appointmentRegisteredToday,
       waitingQueueNow,
       dispensedToday,
       delayedQueueCount: delayedQueueCountValue
     },
+    comparisons: {
+      previousRegisteredToday,
+      registrationsChangePercent
+    },
+    attentionFlags,
     insights
   };
 };
@@ -345,6 +458,9 @@ const buildOwnerSummary = async ({
 }: DailySummaryParams): Promise<DailySummaryResponse> => {
   const dayStart = startOfDayUtc(summaryDate);
   const dayEnd = endOfDayUtc(summaryDate);
+  const previousDay = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
+  const previousDayStart = startOfDayUtc(previousDay.toISOString().slice(0, 10));
+  const previousDayEnd = endOfDayUtc(previousDay.toISOString().slice(0, 10));
   const appointmentConditions = [
     eq(appointments.organizationId, organizationId),
     gte(appointments.scheduledAt, dayStart),
@@ -362,31 +478,69 @@ const buildOwnerSummary = async ({
   pushEncounterModeFilters(encounterConditions, scope);
 
   const followupConditions = [
-    eq(encounters.organizationId, organizationId),
-    sql`${encounters.nextVisitDate} IS NOT NULL`,
-    sql`${encounters.nextVisitDate} <= ${(new Date(generatedAt.getTime() + 7 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)}`,
-    isNull(encounters.deletedAt)
+    eq(patientFollowups.organizationId, organizationId),
+    eq(patientFollowups.status, "pending"),
+    lte(patientFollowups.dueDate, (new Date(generatedAt.getTime() + 7 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10))
   ];
-  pushEncounterModeFilters(followupConditions, scope);
+  if (scope.visitMode) {
+    followupConditions.push(eq(patientFollowups.visitMode, scope.visitMode));
+  }
+  if (scope.doctorWorkflowMode) {
+    followupConditions.push(eq(patientFollowups.doctorWorkflowMode, scope.doctorWorkflowMode));
+  }
+
+  const prescriptionConditions = [
+    eq(prescriptions.organizationId, organizationId),
+    gte(prescriptions.createdAt, dayStart),
+    lte(prescriptions.createdAt, dayEnd),
+    isNull(prescriptions.deletedAt)
+  ];
+  if (scope.visitMode || scope.doctorWorkflowMode) {
+    prescriptionConditions.push(
+      sql`exists (
+        select 1
+        from encounters report_encounters
+        join appointments report_appointments
+          on report_appointments.id = report_encounters.appointment_id
+         and report_appointments.scheduled_at = report_encounters.appointment_scheduled_at
+        join users workflow_user on workflow_user.id = report_encounters.doctor_id
+        where report_encounters.id = ${prescriptions.encounterId}
+          and report_encounters.organization_id = ${prescriptions.organizationId}
+          ${scope.visitMode ? sql`and report_appointments.visit_mode = ${scope.visitMode}` : sql``}
+          ${scope.doctorWorkflowMode ? sql`and workflow_user.doctor_workflow_mode = ${scope.doctorWorkflowMode}` : sql``}
+      )`
+    );
+  }
+
+  const previousAppointmentConditions = [
+    eq(appointments.organizationId, organizationId),
+    gte(appointments.scheduledAt, previousDayStart),
+    lte(appointments.scheduledAt, previousDayEnd),
+    isNull(appointments.deletedAt)
+  ];
+  pushAppointmentModeFilters(previousAppointmentConditions, scope);
 
   const [
     totalPatientsCount,
-    appointmentsTodayCount,
-    encountersTodayCount,
+    appointmentRows,
+    encounterRows,
     lowStockCount,
     followupsDueSoonCount,
-    doctorLoadRows
+    prescriptionCount,
+    testsOrderedCount,
+    doctorLoadRows,
+    previousAppointmentCountRows
   ] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)` })
       .from(patients)
       .where(and(eq(patients.organizationId, organizationId), isNull(patients.deletedAt))),
     db
-      .select({ count: sql<number>`count(*)` })
+      .select({ visitMode: appointments.visitMode, status: appointments.status })
       .from(appointments)
       .where(and(...appointmentConditions)),
     db
-      .select({ count: sql<number>`count(*)` })
+      .select({ checkedAt: encounters.checkedAt, closedAt: encounters.closedAt })
       .from(encounters)
       .where(and(...encounterConditions)),
     db
@@ -401,8 +555,17 @@ const buildOwnerSummary = async ({
       ),
     db
       .select({ count: sql<number>`count(*)` })
-      .from(encounters)
+      .from(patientFollowups)
       .where(and(...followupConditions)),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(prescriptions)
+      .where(and(...prescriptionConditions)),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(testOrders)
+      .innerJoin(encounters, eq(encounters.id, testOrders.encounterId))
+      .where(and(...encounterConditions)),
     db
       .select({
         doctorId: encounters.doctorId,
@@ -414,15 +577,33 @@ const buildOwnerSummary = async ({
       .innerJoin(users, eq(users.id, encounters.doctorId))
       .where(and(...encounterConditions))
       .groupBy(encounters.doctorId, users.firstName, users.lastName)
-      .orderBy(desc(sql<number>`count(*)`))
+      .orderBy(desc(sql<number>`count(*)`)),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(appointments)
+      .where(and(...previousAppointmentConditions))
   ]);
 
   const totalPatients = Number(totalPatientsCount[0]?.count ?? 0);
-  const appointmentsToday = Number(appointmentsTodayCount[0]?.count ?? 0);
-  const encountersToday = Number(encountersTodayCount[0]?.count ?? 0);
+  const appointmentsToday = appointmentRows.length;
+  const encountersToday = encounterRows.length;
   const lowStockItems = Number(lowStockCount[0]?.count ?? 0);
   const followupsDueSoon = Number(followupsDueSoonCount[0]?.count ?? 0);
+  const prescriptionsIssuedToday = Number(prescriptionCount[0]?.count ?? 0);
+  const testsOrderedToday = Number(testsOrderedCount[0]?.count ?? 0);
+  const walkInToday = appointmentRows.filter((row: { visitMode: string }) => row.visitMode === "walk_in").length;
+  const appointmentModeToday = appointmentRows.filter((row: { visitMode: string }) => row.visitMode === "appointment").length;
+  const pendingPatientsNow = appointmentRows.filter((row: { status: string }) => row.status === "waiting").length;
+  const previousAppointmentsToday = Number(previousAppointmentCountRows[0]?.count ?? 0);
+  const appointmentsChangePercent = calculateChangePercent(appointmentsToday, previousAppointmentsToday);
+  const averageConsultationTimeMinutes = averageConsultationMinutes(
+    encounterRows as Array<{ checkedAt: Date; closedAt: Date | null }>
+  );
   const busiestDoctor = (doctorLoadRows as Array<{ firstName: string; lastName: string; count: number }>)[0];
+  const attentionFlags = [];
+  if (pendingPatientsNow > 0) attentionFlags.push("pending_patients");
+  if (lowStockItems > 0) attentionFlags.push("low_stock_items");
+  if (followupsDueSoon > 0) attentionFlags.push("followups_due");
 
   const insights = [
     `${appointmentsToday} appointment${appointmentsToday === 1 ? "" : "s"} were scheduled on ${summaryDate}.`,
@@ -453,9 +634,20 @@ const buildOwnerSummary = async ({
       totalPatients,
       appointmentsToday,
       encountersToday,
+      walkInToday,
+      appointmentModeToday,
+      pendingPatientsNow,
+      prescriptionsIssuedToday,
+      testsOrderedToday,
+      averageConsultationTimeMinutes,
       lowStockItems,
       followupsDueSoon
     },
+    comparisons: {
+      previousAppointmentsToday,
+      appointmentsChangePercent
+    },
+    attentionFlags,
     insights
   };
 };
