@@ -210,7 +210,9 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       range: parseRange(query),
       filters: {
         doctorId: actor.role === "doctor" ? actor.userId : (query.doctorId ?? null),
-        assistantId: null
+        assistantId: null,
+        visitMode: query.visitMode,
+        doctorWorkflowMode: query.doctorWorkflowMode ?? null
       },
       generatedAt: now
     });
@@ -227,7 +229,9 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       range: parseRange(query),
       filters: {
         doctorId: null,
-        assistantId: actor.role === "assistant" ? actor.userId : (query.assistantId ?? null)
+        assistantId: actor.role === "assistant" ? actor.userId : (query.assistantId ?? null),
+        visitMode: query.visitMode,
+        doctorWorkflowMode: query.doctorWorkflowMode ?? null
       },
       generatedAt: now
     });
@@ -258,7 +262,9 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       range: parseRange(query),
       filters: {
         doctorId: actor.role === "doctor" ? actor.userId : (query.doctorId ?? null),
-        assistantId: null
+        assistantId: null,
+        visitMode: query.visitMode,
+        doctorWorkflowMode: query.doctorWorkflowMode ?? null
       },
       generatedAt: now
     });
