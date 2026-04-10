@@ -27,6 +27,7 @@ import { calculateAgeFromDob } from "../../lib/date.js";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { splitFullName } from "../../lib/names.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import { syncEncounterFollowup } from "../../lib/followups/followup-service.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
 const activeVisitStatuses = ["waiting", "in_consultation"] as const;
@@ -560,6 +561,16 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
       const clinicalPrescriptionItems = prescriptionItemsPayload.filter((item) => item.source === "clinical");
       const outsidePrescriptionItems = prescriptionItemsPayload.filter((item) => item.source === "outside");
       const checkedAt = new Date(payload.checkedAt);
+      const isWorkflowEditOnly =
+        Boolean(payload.vitals) &&
+        diagnoses.length === 0 &&
+        allergies.length === 0 &&
+        tests.length === 0 &&
+        diagnosesToPersistAsConditions.length === 0 &&
+        prescriptionItemsPayload.length === 0 &&
+        !payload.prescription &&
+        !payload.dispense &&
+        !payload.clinicalSummary;
 
       const result = await app.db.transaction(async (tx) => {
         const ensureFamilyMembership = async (
@@ -987,15 +998,31 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         const { patient, created } = await resolveOrCreatePatient();
 
         if (!created && allergies.length > 0) {
-          await tx.insert(patientAllergies).values(
-            allergies.map((allergy) => ({
-              organizationId: actor.organizationId,
-              patientId: patient.id,
-              allergyName: allergy.allergyName,
-              severity: allergy.severity ?? null,
-              isActive: allergy.isActive ?? true
-            }))
+          const existingAllergies = await tx
+            .select({ allergyName: patientAllergies.allergyName })
+            .from(patientAllergies)
+            .where(
+              and(
+                eq(patientAllergies.organizationId, actor.organizationId),
+                eq(patientAllergies.patientId, patient.id),
+                isNull(patientAllergies.deletedAt)
+              )
+            );
+          const existingAllergyNames = new Set(existingAllergies.map((row) => row.allergyName.toLowerCase()));
+          const allergiesToInsert = allergies.filter(
+            (allergy) => !existingAllergyNames.has(allergy.allergyName.toLowerCase())
           );
+          if (allergiesToInsert.length > 0) {
+            await tx.insert(patientAllergies).values(
+              allergiesToInsert.map((allergy) => ({
+                organizationId: actor.organizationId,
+                patientId: patient.id,
+                allergyName: allergy.allergyName,
+                severity: allergy.severity ?? null,
+                isActive: allergy.isActive ?? true
+              }))
+            );
+          }
         }
 
         const visit =
@@ -1014,6 +1041,9 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                   .limit(1);
                 assertOrThrow(appointmentRows.length === 1, 404, "Appointment not found");
                 assertOrThrow(appointmentRows[0].patientId === patient.id, 409, "Appointment does not belong to patient");
+                if (isWorkflowEditOnly) {
+                  return appointmentRows[0];
+                }
                 assertOrThrow(
                   inArrayValue(appointmentRows[0].status, activeVisitStatuses),
                   409,
@@ -1042,6 +1072,23 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                 )[0];
               })()
             : await (async () => {
+                if (payload.appointmentId && isWorkflowEditOnly) {
+                  const existingVisitRows = await tx
+                    .select()
+                    .from(appointments)
+                    .where(
+                      and(
+                        eq(appointments.id, payload.appointmentId),
+                        eq(appointments.organizationId, actor.organizationId),
+                        eq(appointments.patientId, patient.id),
+                        isNull(appointments.deletedAt)
+                      )
+                    )
+                    .limit(1);
+                  assertOrThrow(existingVisitRows.length === 1, 404, "Walk-in visit not found");
+                  return existingVisitRows[0];
+                }
+
                 const activeRows = await tx
                   .select()
                   .from(appointments)
@@ -1070,11 +1117,9 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                     )
                     .limit(1);
 
-                  assertOrThrow(
-                    existingEncounter.length === 0,
-                    409,
-                    "Active walk-in consultation already exists for this patient. Complete or dispense the current consultation before starting a new one."
-                  );
+                  if (existingEncounter.length === 1) {
+                    return activeRows[0];
+                  }
 
                   return (
                     await tx
@@ -1117,22 +1162,75 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                 )[0];
               })();
 
-        const encounterRows = await tx
-          .insert(encounters)
-          .values({
-            organizationId: actor.organizationId,
-            appointmentId: visit.id,
-            appointmentScheduledAt: visit.scheduledAt,
-            patientId: patient.id,
-            doctorId,
-            checkedAt,
-            closedAt: checkedAt,
-            notes: payload.notes ?? null,
-            nextVisitDate: payload.nextVisitDate ?? null,
-            status: "completed"
+        const existingEncounterRows = await tx
+          .select({
+            id: encounters.id,
+            notes: encounters.notes,
+            nextVisitDate: encounters.nextVisitDate
           })
-          .returning();
-        const encounter = encounterRows[0];
+          .from(encounters)
+          .where(
+            and(
+              eq(encounters.organizationId, actor.organizationId),
+              eq(encounters.appointmentId, visit.id),
+              eq(encounters.patientId, patient.id),
+              isNull(encounters.deletedAt)
+            )
+          )
+          .orderBy(desc(encounters.id))
+          .limit(1);
+
+        const shouldReuseEncounter = existingEncounterRows.length === 1;
+
+        const encounter =
+          shouldReuseEncounter
+            ? (
+                await tx
+                  .update(encounters)
+                  .set({
+                    notes: payload.notes !== undefined ? payload.notes ?? null : existingEncounterRows[0].notes,
+                    nextVisitDate:
+                      payload.nextVisitDate !== undefined
+                        ? payload.nextVisitDate ?? null
+                        : existingEncounterRows[0].nextVisitDate,
+                    updatedAt: new Date()
+                  })
+                  .where(eq(encounters.id, existingEncounterRows[0].id))
+                  .returning()
+              )[0]
+            : (
+                await tx
+                  .insert(encounters)
+                  .values({
+                    organizationId: actor.organizationId,
+                    appointmentId: visit.id,
+                    appointmentScheduledAt: visit.scheduledAt,
+                    patientId: patient.id,
+                    doctorId,
+                    checkedAt,
+                    closedAt: checkedAt,
+                    notes: payload.notes ?? null,
+                    nextVisitDate: payload.nextVisitDate ?? null,
+                    status: "completed"
+                  })
+                  .returning()
+              )[0];
+
+        if (shouldReuseEncounter) {
+          await tx
+            .delete(encounterDiagnoses)
+            .where(
+              and(
+                eq(encounterDiagnoses.organizationId, actor.organizationId),
+                eq(encounterDiagnoses.encounterId, encounter.id)
+              )
+            );
+          await tx
+            .delete(testOrders)
+            .where(
+              and(eq(testOrders.organizationId, actor.organizationId), eq(testOrders.encounterId, encounter.id))
+            );
+        }
 
         if (diagnoses.length > 0) {
           await tx.insert(encounterDiagnoses).values(
@@ -1157,34 +1255,88 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         }
 
         if (diagnosesToPersistAsConditions.length > 0) {
-          await tx.insert(patientConditions).values(
-            diagnosesToPersistAsConditions.map((diagnosis) => ({
-              organizationId: actor.organizationId,
-              patientId: patient.id,
-              conditionName: diagnosis.diagnosisName,
-              icd10Code: diagnosis.icd10Code ?? null,
-              status: "active"
-            }))
+          const existingConditions = await tx
+            .select({
+              conditionName: patientConditions.conditionName,
+              icd10Code: patientConditions.icd10Code
+            })
+            .from(patientConditions)
+            .where(
+              and(
+                eq(patientConditions.organizationId, actor.organizationId),
+                eq(patientConditions.patientId, patient.id),
+                isNull(patientConditions.deletedAt)
+              )
+            );
+          const existingConditionKeys = new Set(
+            existingConditions.map((row) => `${row.conditionName.toLowerCase()}::${row.icd10Code ?? ""}`)
           );
+          const conditionsToInsert = diagnosesToPersistAsConditions.filter(
+            (diagnosis) =>
+              !existingConditionKeys.has(`${diagnosis.diagnosisName.toLowerCase()}::${diagnosis.icd10Code ?? ""}`)
+          );
+          if (conditionsToInsert.length > 0) {
+            await tx.insert(patientConditions).values(
+              conditionsToInsert.map((diagnosis) => ({
+                organizationId: actor.organizationId,
+                patientId: patient.id,
+                conditionName: diagnosis.diagnosisName,
+                icd10Code: diagnosis.icd10Code ?? null,
+                status: "active"
+              }))
+            );
+          }
         }
 
         let vital = null;
         if (payload.vitals) {
-          const vitalRows = await tx
-            .insert(patientVitals)
-            .values({
-              organizationId: actor.organizationId,
-              patientId: patient.id,
-              encounterId: encounter.id,
-              bpSystolic: payload.vitals.bpSystolic ?? null,
-              bpDiastolic: payload.vitals.bpDiastolic ?? null,
-              heartRate: payload.vitals.heartRate ?? null,
-              temperatureC: payload.vitals.temperatureC?.toString() ?? null,
-              spo2: payload.vitals.spo2 ?? null,
-              recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt)
-            })
-            .returning();
-          vital = vitalRows[0];
+          const existingVitalRows = await tx
+            .select({ id: patientVitals.id })
+            .from(patientVitals)
+            .where(
+              and(
+                eq(patientVitals.organizationId, actor.organizationId),
+                eq(patientVitals.patientId, patient.id),
+                eq(patientVitals.encounterId, encounter.id),
+                isNull(patientVitals.deletedAt)
+              )
+            )
+            .orderBy(desc(patientVitals.id))
+            .limit(1);
+
+          vital =
+            existingVitalRows.length === 1
+              ? (
+                  await tx
+                    .update(patientVitals)
+                    .set({
+                      bpSystolic: payload.vitals.bpSystolic ?? null,
+                      bpDiastolic: payload.vitals.bpDiastolic ?? null,
+                      heartRate: payload.vitals.heartRate ?? null,
+                      temperatureC: payload.vitals.temperatureC?.toString() ?? null,
+                      spo2: payload.vitals.spo2 ?? null,
+                      recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt),
+                      updatedAt: new Date()
+                    })
+                    .where(eq(patientVitals.id, existingVitalRows[0].id))
+                    .returning()
+                )[0]
+              : (
+                  await tx
+                    .insert(patientVitals)
+                    .values({
+                      organizationId: actor.organizationId,
+                      patientId: patient.id,
+                      encounterId: encounter.id,
+                      bpSystolic: payload.vitals.bpSystolic ?? null,
+                      bpDiastolic: payload.vitals.bpDiastolic ?? null,
+                      heartRate: payload.vitals.heartRate ?? null,
+                      temperatureC: payload.vitals.temperatureC?.toString() ?? null,
+                      spo2: payload.vitals.spo2 ?? null,
+                      recordedAt: new Date(payload.vitals.recordedAt ?? payload.checkedAt)
+                    })
+                    .returning()
+                )[0];
         }
 
         let prescriptionId: number | null = null;
@@ -1239,19 +1391,21 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           payload.clinicalSummary ?? null
         ].filter((part): part is string => Boolean(part));
 
-        await tx.insert(patientTimelineEvents).values({
-          organizationId: actor.organizationId,
-          patientId: patient.id,
-          encounterId: encounter.id,
-          eventDate: payload.checkedAt.slice(0, 10),
-          title: "Consultation completed",
-          description: timelineDescriptionParts.length > 0 ? timelineDescriptionParts.join("\n") : null,
-          eventKind: "consultation",
-          tags: timelineTags,
-          value: `encounter:${encounter.id}`
-        });
+        if (!shouldReuseEncounter) {
+          await tx.insert(patientTimelineEvents).values({
+            organizationId: actor.organizationId,
+            patientId: patient.id,
+            encounterId: encounter.id,
+            eventDate: payload.checkedAt.slice(0, 10),
+            title: "Consultation completed",
+            description: timelineDescriptionParts.length > 0 ? timelineDescriptionParts.join("\n") : null,
+            eventKind: "consultation",
+            tags: timelineTags,
+            value: `encounter:${encounter.id}`
+          });
+        }
 
-        if (payload.clinicalSummary) {
+        if (!shouldReuseEncounter && payload.clinicalSummary) {
           await tx.insert(patientHistoryEntries).values({
             organizationId: actor.organizationId,
             patientId: patient.id,
@@ -1260,8 +1414,13 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        const workflowStatus =
-          workflowType === "appointment"
+        const workflowStatus = shouldReuseEncounter
+          ? visit.status === "completed"
+            ? "completed"
+            : workflowType === "appointment"
+              ? "doctor_completed"
+              : "ready_for_dispense"
+          : workflowType === "appointment"
             ? clinicalPrescriptionItems.length === 0
               ? "completed"
               : directDispenseRequested
@@ -1278,17 +1437,29 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
             ? "completed"
             : "in_consultation";
 
-        const closedVisit = (
-          await tx
-            .update(appointments)
-            .set({
-              status: persistedVisitStatus,
-              completedAt: persistedVisitStatus === "completed" ? checkedAt : null,
-              updatedAt: new Date()
-            })
-            .where(and(eq(appointments.id, visit.id), eq(appointments.organizationId, actor.organizationId)))
-            .returning()
-        )[0];
+        const closedVisit = shouldReuseEncounter
+          ? visit
+          : (
+              await tx
+                .update(appointments)
+                .set({
+                  status: persistedVisitStatus,
+                  completedAt: persistedVisitStatus === "completed" ? checkedAt : null,
+                  updatedAt: new Date()
+                })
+                .where(and(eq(appointments.id, visit.id), eq(appointments.organizationId, actor.organizationId)))
+                .returning()
+            )[0];
+
+        await syncEncounterFollowup({
+          db: tx,
+          organizationId: actor.organizationId,
+          encounterId: encounter.id,
+          patientId: patient.id,
+          doctorId,
+          nextVisitDate: encounter.nextVisitDate ?? null,
+          createdByUserId: actor.userId
+        });
 
         return {
           patient,
