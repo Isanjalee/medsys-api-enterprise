@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { encounters } from "@medsys/db";
+import { and, eq } from "drizzle-orm";
 import { buildApp } from "../src/app.js";
 import { calculateAgeFromDob } from "../src/lib/date.js";
 
@@ -335,14 +337,25 @@ test("reports module returns base report blocks and scopes doctor performance to
   assert.equal(doctorPerformance.statusCode, 200);
   const doctorBody = doctorPerformance.json() as {
     filters: { doctorWorkflowMode: string | null };
-    summary: { totalDoctors: number; totalEncounters: number };
-    charts: { encountersByDoctor: Array<{ label: string; count: number }> };
-    tables: { doctors: Array<{ doctorId: number }> };
+    summary: {
+      totalDoctors: number;
+      totalEncounters: number;
+      averageConsultationMinutes: number | null;
+      prescriptionsIssued: number;
+      testsOrdered: number;
+      followupsScheduled: number;
+    };
+    charts: { encountersByDoctor: Array<{ label: string; count: number }>; diagnosisDistribution: unknown[] };
+    tables: { doctors: Array<{ doctorId: number; averageMinutes: number | null; followupsScheduled: number }> };
   };
   assert.equal(doctorBody.filters.doctorWorkflowMode, "self_service");
   assert.equal(doctorBody.summary.totalDoctors >= 1, true);
   assert.equal(doctorBody.summary.totalEncounters >= 0, true);
+  assert.equal(typeof doctorBody.summary.prescriptionsIssued, "number");
+  assert.equal(typeof doctorBody.summary.testsOrdered, "number");
+  assert.equal(typeof doctorBody.summary.followupsScheduled, "number");
   assert.equal(Array.isArray(doctorBody.charts.encountersByDoctor), true);
+  assert.equal(Array.isArray(doctorBody.charts.diagnosisDistribution), true);
   assert.equal(doctorBody.tables.doctors.every((row) => row.doctorId === doctorId), true);
 
   const doctorScopedByOwner = await app.inject({
@@ -357,30 +370,52 @@ test("reports module returns base report blocks and scopes doctor performance to
 
   const assistantReport = await app.inject({
     method: "GET",
-    url: "/v1/reports/assistant-performance?range=7d",
+    url: "/v1/reports/assistant-performance?range=7d&visitMode=walk_in",
     headers: {
       authorization: `Bearer ${ownerLogin.accessToken}`
     }
   });
   assert.equal(assistantReport.statusCode, 200);
+  const assistantBody = assistantReport.json() as {
+    filters: { visitMode: string | null };
+    summary: { waitingQueueNow: number; delayedQueueCount: number };
+    charts: { throughputByAssistant: Array<{ throughput: number }> };
+  };
+  assert.equal(assistantBody.filters.visitMode, "walk_in");
+  assert.equal(typeof assistantBody.summary.waitingQueueNow, "number");
+  assert.equal(typeof assistantBody.summary.delayedQueueCount, "number");
+  assert.equal(Array.isArray(assistantBody.charts.throughputByAssistant), true);
 
   const inventoryUsageReport = await app.inject({
     method: "GET",
-    url: "/v1/reports/inventory-usage?range=7d",
+    url: "/v1/reports/inventory-usage?range=7d&visitMode=walk_in",
     headers: {
       authorization: `Bearer ${ownerLogin.accessToken}`
     }
   });
   assert.equal(inventoryUsageReport.statusCode, 200);
+  const inventoryUsageBody = inventoryUsageReport.json() as {
+    filters: { visitMode: string | null };
+    summary: { movementCount: number; outgoingCount: number; lowStockCount: number };
+  };
+  assert.equal(inventoryUsageBody.filters.visitMode, "walk_in");
+  assert.equal(typeof inventoryUsageBody.summary.movementCount, "number");
 
   const followupReport = await app.inject({
     method: "GET",
-    url: "/v1/reports/patient-followup?range=7d",
+    url: "/v1/reports/patient-followup?range=7d&doctorWorkflowMode=self_service",
     headers: {
       authorization: `Bearer ${ownerLogin.accessToken}`
     }
   });
   assert.equal(followupReport.statusCode, 200);
+  const followupBody = followupReport.json() as {
+    filters: { doctorWorkflowMode: string | null };
+    summary: { createdInRangeCount: number; repeatPatientsWithFollowups: number };
+  };
+  assert.equal(followupBody.filters.doctorWorkflowMode, "self_service");
+  assert.equal(typeof followupBody.summary.createdInRangeCount, "number");
+  assert.equal(typeof followupBody.summary.repeatPatientsWithFollowups, "number");
 
   await app.close();
 });
@@ -411,7 +446,13 @@ test("daily summary endpoints generate role-aware snapshots and expose history",
     summaryDate: string;
     generatedAt: string;
     filterContext: { visitMode: string | null; doctorWorkflowMode: string | null };
-    summary: Record<string, unknown>;
+    summary: {
+      patientsSeenToday: number;
+      walkInPatientsToday: number;
+      appointmentPatientsToday: number;
+      prescriptionsIssuedToday: number;
+      testsOrderedToday: number;
+    };
     insights: string[];
   };
   assert.equal(typeof doctorBody.snapshotId, "number");
@@ -419,6 +460,9 @@ test("daily summary endpoints generate role-aware snapshots and expose history",
   assert.equal(doctorBody.filterContext.doctorWorkflowMode, "self_service");
   assert.equal(typeof doctorBody.summaryDate, "string");
   assert.equal(typeof doctorBody.generatedAt, "string");
+  assert.equal(typeof doctorBody.summary.walkInPatientsToday, "number");
+  assert.equal(typeof doctorBody.summary.appointmentPatientsToday, "number");
+  assert.equal(typeof doctorBody.summary.testsOrderedToday, "number");
   assert.equal(Array.isArray(doctorBody.insights), true);
 
   const doctorHistory = await app.inject({
@@ -451,10 +495,12 @@ test("daily summary endpoints generate role-aware snapshots and expose history",
   assert.equal(ownerAssistantSummary.statusCode, 200);
   const ownerAssistantBody = ownerAssistantSummary.json() as {
     roleContext: string;
-    summary: Record<string, unknown>;
+    summary: { registeredToday: number; walkInRegisteredToday: number; appointmentRegisteredToday: number };
   };
   assert.equal(ownerAssistantBody.roleContext, "assistant");
-  assert.equal(typeof ownerAssistantBody.summary, "object");
+  assert.equal(typeof ownerAssistantBody.summary.registeredToday, "number");
+  assert.equal(typeof ownerAssistantBody.summary.walkInRegisteredToday, "number");
+  assert.equal(typeof ownerAssistantBody.summary.appointmentRegisteredToday, "number");
 
   const ownerDoctorHistory = await app.inject({
     method: "GET",
@@ -569,6 +615,109 @@ test("task engine creates, lists, updates, and completes role-aware tasks", asyn
   assert.equal(completedTaskBody.task.status, "completed");
   assert.equal(typeof completedTaskBody.task.completedAt, "string");
   assert.equal(completedTaskBody.events.some((event) => event.eventType === "completed"), true);
+
+  await app.close();
+});
+
+test("follow-up module creates, lists, and updates doctor-scoped follow-up records", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+
+  const encounterRows = await app.readDb
+    .select({
+      id: encounters.id,
+      patientId: encounters.patientId
+    })
+    .from(encounters)
+    .where(and(eq(encounters.organizationId, ORGANIZATION_ID), eq(encounters.doctorId, doctorId)))
+    .limit(1);
+  assert.equal(encounterRows.length >= 1, true);
+
+  const encounter = encounterRows[0]!;
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/followups",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      patientId: encounter.patientId,
+      encounterId: encounter.id,
+      followupType: "review",
+      dueDate: "2026-04-20",
+      note: "Review symptoms in one week"
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+  const createdBody = createResponse.json() as {
+    followup: {
+      id: number;
+      patientId: number;
+      encounterId: number | null;
+      doctorId: number | null;
+      followupType: string;
+      dueDate: string;
+      status: string;
+      visitMode: string | null;
+      doctorWorkflowMode: string | null;
+      note: string | null;
+      patientName: string;
+    };
+  };
+  assert.equal(createdBody.followup.patientId, encounter.patientId);
+  assert.equal(createdBody.followup.encounterId, encounter.id);
+  assert.equal(createdBody.followup.doctorId, doctorId);
+  assert.equal(createdBody.followup.followupType, "review");
+  assert.equal(createdBody.followup.status, "pending");
+  assert.equal(typeof createdBody.followup.patientName, "string");
+
+  const doctorList = await app.inject({
+    method: "GET",
+    url: "/v1/followups?status=pending&limit=10",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(doctorList.statusCode, 200);
+  const doctorListBody = doctorList.json() as {
+    items: Array<{ id: number; doctorId: number | null; followupType: string }>;
+  };
+  assert.equal(doctorListBody.items.some((item) => item.id === createdBody.followup.id), true);
+  assert.equal(doctorListBody.items.every((item) => item.doctorId === doctorId), true);
+
+  const updateResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/followups/${createdBody.followup.id}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      status: "completed",
+      note: "Patient reviewed and stable"
+    }
+  });
+
+  assert.equal(updateResponse.statusCode, 200);
+  const updatedBody = updateResponse.json() as {
+    followup: {
+      id: number;
+      status: string;
+      note: string | null;
+      completedAt: string | null;
+    };
+  };
+  assert.equal(updatedBody.followup.id, createdBody.followup.id);
+  assert.equal(updatedBody.followup.status, "completed");
+  assert.equal(updatedBody.followup.note, "Patient reviewed and stable");
+  assert.equal(typeof updatedBody.followup.completedAt, "string");
 
   await app.close();
 });
@@ -5544,6 +5693,230 @@ test("consultation workflow can create a guardian patient from guardianDraft and
     patient: { family_id: number | null };
   };
   assert.equal(guardianDetail.patient.family_id, body.patient.family_id);
+
+  await app.close();
+});
+
+test("consultation workflow reuses the existing walk-in encounter when saving vitals-only edits", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Walk In Vital Edit ${Date.now()} Patient`);
+
+  const initialResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      patientId,
+      checkedAt: "2026-04-10T09:10:00Z",
+      reason: "Walk-in consultation",
+      notes: "Initial walk-in note",
+      vitals: {
+        heartRate: 84,
+        temperatureC: 37.1
+      }
+    }
+  });
+
+  assert.equal(initialResponse.statusCode, 201);
+  const initialBody = initialResponse.json() as {
+    visit: { id: number; status: string };
+    encounter_id: number;
+    vital: { id: number; heart_rate: number | null; temperature_c: number | null } | null;
+  };
+  assert.equal(initialBody.visit.status, "completed");
+  assert.ok(initialBody.vital);
+  assert.equal(initialBody.vital?.heart_rate, 84);
+  assert.equal(initialBody.vital?.temperature_c, 37.1);
+
+  const editResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      appointmentId: initialBody.visit.id,
+      patientId,
+      checkedAt: "2026-04-10T09:20:00Z",
+      vitals: {
+        heartRate: 96,
+        temperatureC: 38.4,
+        spo2: 99
+      }
+    }
+  });
+
+  assert.equal(editResponse.statusCode, 201);
+  const editBody = editResponse.json() as {
+    visit: { id: number; status: string };
+    encounter_id: number;
+    vital: { id: number; heart_rate: number | null; temperature_c: number | null; spo2: number | null } | null;
+    workflow_status: string;
+  };
+  assert.equal(editBody.visit.id, initialBody.visit.id);
+  assert.equal(editBody.visit.status, "completed");
+  assert.equal(editBody.encounter_id, initialBody.encounter_id);
+  assert.equal(editBody.workflow_status, "completed");
+  assert.equal(editBody.vital?.id, initialBody.vital?.id);
+  assert.equal(editBody.vital?.heart_rate, 96);
+  assert.equal(editBody.vital?.temperature_c, 38.4);
+  assert.equal(editBody.vital?.spo2, 99);
+
+  const listVitalsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${patientId}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(listVitalsResponse.statusCode, 200);
+  const vitals = listVitalsResponse.json() as Array<{
+    id: number;
+    encounter_id: number | null;
+    heart_rate: number | null;
+    temperature_c: number | null;
+    spo2: number | null;
+  }>;
+  assert.equal(vitals.filter((row) => row.encounter_id === initialBody.encounter_id).length, 1);
+  assert.equal(vitals[0].id, initialBody.vital?.id);
+  assert.equal(vitals[0].heart_rate, 96);
+  assert.equal(vitals[0].temperature_c, 38.4);
+  assert.equal(vitals[0].spo2, 99);
+
+  await app.close();
+});
+
+test("consultation workflow auto-reuses an active walk-in encounter when the frontend resubmits the full form", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const doctorLogin = await loginAs(app, "doctor@medsys.local");
+  const patientId = await createPatientAs(app, ownerLogin.accessToken, `Walk In Full Resave ${Date.now()} Patient`);
+
+  const initialResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      patientId,
+      checkedAt: "2026-04-10T12:00:00Z",
+      reason: "Walk-in consultation",
+      priority: "normal",
+      vitals: {
+        bpSystolic: 120,
+        bpDiastolic: 80,
+        heartRate: 90,
+        temperatureC: 37.2,
+        spo2: 98
+      }
+    }
+  });
+
+  assert.equal(initialResponse.statusCode, 201);
+  const initialBody = initialResponse.json() as {
+    visit: { id: number };
+    encounter_id: number;
+    vital: { id: number; heart_rate: number | null } | null;
+  };
+
+  const resaveResponse = await app.inject({
+    method: "POST",
+    url: "/v1/consultations/save",
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    },
+    payload: {
+      workflowType: "walk_in",
+      patientId,
+      checkedAt: "2026-04-10T12:15:32.244Z",
+      reason: "Walk-in consultation",
+      priority: "normal",
+      diagnoses: [
+        {
+          diagnosisName: "Hypertensive heart disease with heart failure",
+          icd10Code: "I11.0"
+        }
+      ],
+      tests: [
+        {
+          testName: "Heart rate",
+          status: "ordered"
+        }
+      ],
+      vitals: {
+        bpSystolic: 120,
+        bpDiastolic: 90,
+        heartRate: 110,
+        temperatureC: 38,
+        spo2: 90
+      },
+      allergies: [
+        {
+          allergyName: "Sound",
+          severity: "high",
+          isActive: true
+        }
+      ]
+    }
+  });
+
+  assert.equal(resaveResponse.statusCode, 201);
+  const resaveBody = resaveResponse.json() as {
+    visit: { id: number };
+    encounter_id: number;
+    vital: {
+      id: number;
+      bp_systolic: number | null;
+      bp_diastolic: number | null;
+      heart_rate: number | null;
+      temperature_c: number | null;
+      spo2: number | null;
+    } | null;
+  };
+  assert.equal(resaveBody.visit.id, initialBody.visit.id);
+  assert.equal(resaveBody.encounter_id, initialBody.encounter_id);
+  assert.equal(resaveBody.vital?.id, initialBody.vital?.id);
+  assert.equal(resaveBody.vital?.bp_diastolic, 90);
+  assert.equal(resaveBody.vital?.heart_rate, 110);
+  assert.equal(resaveBody.vital?.temperature_c, 38);
+  assert.equal(resaveBody.vital?.spo2, 90);
+
+  const listVitalsResponse = await app.inject({
+    method: "GET",
+    url: `/v1/patients/${patientId}/vitals`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+
+  assert.equal(listVitalsResponse.statusCode, 200);
+  const vitals = listVitalsResponse.json() as Array<{
+    id: number;
+    encounter_id: number | null;
+    heart_rate: number | null;
+    spo2: number | null;
+  }>;
+  assert.equal(vitals.filter((row) => row.encounter_id === initialBody.encounter_id).length, 1);
+  assert.equal(vitals[0].id, initialBody.vital?.id);
+  assert.equal(vitals[0].heart_rate, 110);
+  assert.equal(vitals[0].spo2, 90);
 
   await app.close();
 });
