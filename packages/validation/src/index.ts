@@ -45,6 +45,7 @@ const PRIORITY_LEVELS = ["low", "normal", "high", "critical"] as const;
 const DRUG_SOURCES = ["clinical", "outside"] as const;
 const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
 const TASK_SOURCE_TYPES = ["appointment", "consultation", "prescription", "dispense", "inventory_alert", "followup"] as const;
+const FOLLOWUP_STATUSES = ["pending", "completed", "missed", "cancelled"] as const;
 
 const nicRegex = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
 const nameRegex = /^[A-Za-z .'-]+$/;
@@ -61,6 +62,7 @@ export const prioritySchema = z.enum(PRIORITY_LEVELS);
 export const drugSourceSchema = z.enum(DRUG_SOURCES);
 export const taskStatusSchema = z.enum(TASK_STATUSES);
 export const taskSourceTypeSchema = z.enum(TASK_SOURCE_TYPES);
+export const followupStatusSchema = z.enum(FOLLOWUP_STATUSES);
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive()
@@ -425,6 +427,65 @@ export const completeTaskSchema = z
     note: z.string().trim().max(2000).optional().nullable()
   })
   .strict();
+
+export const listFollowupsQuerySchema = z
+  .object({
+    patientId: z.coerce.number().int().positive().optional().nullable(),
+    doctorId: z.coerce.number().int().positive().optional().nullable(),
+    status: followupStatusSchema.optional(),
+    dueFrom: optionalDateString,
+    dueTo: optionalDateString,
+    visitMode: visitModeSchema.optional(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    limit: z.coerce.number().int().positive().max(100).default(50)
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.dueFrom && value.dueTo && value.dueFrom > value.dueTo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dueFrom"],
+        message: "dueFrom must be on or before dueTo"
+      });
+    }
+  });
+
+export const createFollowupSchema = z
+  .object({
+    patientId: z.number().int().positive(),
+    encounterId: z.number().int().positive().optional().nullable(),
+    doctorId: z.number().int().positive().optional().nullable(),
+    followupType: z.string().trim().min(1).max(40),
+    dueDate: z.string().date(),
+    status: followupStatusSchema.optional().default("pending"),
+    visitMode: visitModeSchema.optional().nullable(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    note: z.string().trim().max(4000).optional().nullable()
+  })
+  .strict();
+
+export const updateFollowupSchema = z
+  .object({
+    doctorId: z.number().int().positive().optional().nullable(),
+    followupType: z.string().trim().min(1).max(40).optional(),
+    dueDate: z.string().date().optional(),
+    status: followupStatusSchema.optional(),
+    visitMode: visitModeSchema.optional().nullable(),
+    doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
+    note: z.string().trim().max(4000).optional().nullable()
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.doctorId !== undefined ||
+      value.followupType !== undefined ||
+      value.dueDate !== undefined ||
+      value.status !== undefined ||
+      value.visitMode !== undefined ||
+      value.doctorWorkflowMode !== undefined ||
+      value.note !== undefined,
+    "At least one field must be provided"
+  );
 
 export const createUserSchema = z.object({
   firstName: z.string().trim().min(1).max(80).regex(nameRegex, "Invalid first name"),
