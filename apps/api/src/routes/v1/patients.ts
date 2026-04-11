@@ -1785,7 +1785,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
               isNull(patientVitals.deletedAt)
             )
           )
-          .orderBy(desc(patientVitals.recordedAt))
+          .orderBy(desc(patientVitals.recordedAt), desc(patientVitals.id))
           .limit(20),
         app.readDb
           .select()
