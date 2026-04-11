@@ -39,7 +39,7 @@ try {
   Write-Host "Local URLs"
   Write-Host "  API:     http://localhost:4000"
   Write-Host "  Swagger: http://localhost:4000/api/v1/docs"
-  Write-Host "  DB UI:   http://localhost:8081"
+  Write-Host "  DB UI:   http://localhost:8181"
   Write-Host "  Health:  http://localhost:4000/healthz"
   Write-Host ""
 
