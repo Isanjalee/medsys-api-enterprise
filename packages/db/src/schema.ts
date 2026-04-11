@@ -56,6 +56,18 @@ const auditTimestamps = {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 };
 
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slug: varchar("slug", { length: 80 }).notNull(),
+    name: varchar("name", { length: 160 }).notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps
+  },
+  (table) => [uniqueIndex("organizations_slug_idx").on(table.slug)]
+);
+
 export const users = pgTable(
   "users",
   {
