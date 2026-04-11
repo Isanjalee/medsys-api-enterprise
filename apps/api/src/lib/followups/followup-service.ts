@@ -180,7 +180,11 @@ export const syncEncounterFollowup = async ({
 
   const encounterMeta = encounterRows[0];
   const existingRows = await db
-    .select({ id: patientFollowups.id, status: patientFollowups.status })
+    .select({
+      id: patientFollowups.id,
+      status: patientFollowups.status,
+      completedAt: patientFollowups.completedAt
+    })
     .from(patientFollowups)
     .where(and(eq(patientFollowups.organizationId, organizationId), eq(patientFollowups.encounterId, encounterId)))
     .limit(1);
@@ -210,7 +214,7 @@ export const syncEncounterFollowup = async ({
         visitMode: encounterMeta.visitMode,
         doctorWorkflowMode: encounterMeta.doctorWorkflowMode ?? null,
         updatedAt: new Date(),
-        completedAt: existingRows[0].status === "completed" ? new Date() : null
+        completedAt: existingRows[0].status === "completed" ? existingRows[0].completedAt : null
       })
       .where(eq(patientFollowups.id, existingRows[0].id));
     return existingRows[0].id;
