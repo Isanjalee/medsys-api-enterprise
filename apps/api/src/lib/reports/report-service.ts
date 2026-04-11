@@ -94,6 +94,9 @@ type PatientFollowupRow = {
   id: number;
   patientId: number;
   doctorId: number | null;
+  patientName: string;
+  doctorName: string | null;
+  followupType: string;
   dueDate: string;
   createdAt: Date;
   status: string;
@@ -147,6 +150,12 @@ const calculateChangePercent = (current: number, previous: number) => {
 };
 
 const pushAppointmentModeFilters = (conditions: any[], filters: ReportFilters) => {
+  if (filters.doctorId) {
+    conditions.push(eq(appointments.doctorId, filters.doctorId));
+  }
+  if (filters.assistantId) {
+    conditions.push(eq(appointments.assistantId, filters.assistantId));
+  }
   if (filters.visitMode) {
     conditions.push(eq(appointments.visitMode, filters.visitMode));
   }
@@ -162,6 +171,19 @@ const pushAppointmentModeFilters = (conditions: any[], filters: ReportFilters) =
 };
 
 const pushEncounterModeFilters = (conditions: any[], filters: ReportFilters) => {
+  if (filters.doctorId) {
+    conditions.push(eq(encounters.doctorId, filters.doctorId));
+  }
+  if (filters.assistantId) {
+    conditions.push(
+      sql`exists (
+        select 1 from appointments report_appointments
+        where report_appointments.id = ${encounters.appointmentId}
+          and report_appointments.organization_id = ${encounters.organizationId}
+          and report_appointments.assistant_id = ${filters.assistantId}
+      )`
+    );
+  }
   if (filters.visitMode) {
     conditions.push(
       sql`exists (
@@ -221,7 +243,7 @@ export const buildClinicOverviewReport = async ({ db, organizationId, range, fil
     lte(prescriptions.createdAt, range.end),
     isNull(prescriptions.deletedAt)
   ];
-  if (filters.visitMode || filters.doctorWorkflowMode) {
+  if (filters.doctorId || filters.assistantId || filters.visitMode || filters.doctorWorkflowMode) {
     prescriptionConditions.push(
       sql`exists (
         select 1
@@ -233,6 +255,8 @@ export const buildClinicOverviewReport = async ({ db, organizationId, range, fil
           on workflow_user.id = report_encounters.doctor_id
         where report_encounters.id = ${prescriptions.encounterId}
           and report_encounters.organization_id = ${prescriptions.organizationId}
+          ${filters.doctorId ? sql`and report_encounters.doctor_id = ${filters.doctorId}` : sql``}
+          ${filters.assistantId ? sql`and report_appointments.assistant_id = ${filters.assistantId}` : sql``}
           ${filters.visitMode ? sql`and report_appointments.visit_mode = ${filters.visitMode}` : sql``}
           ${filters.doctorWorkflowMode ? sql`and workflow_user.doctor_workflow_mode = ${filters.doctorWorkflowMode}` : sql``}
       )`
@@ -408,9 +432,6 @@ export const buildDoctorPerformanceReport = async ({ db, organizationId, range, 
     lte(encounters.checkedAt, range.end),
     isNull(encounters.deletedAt)
   ];
-  if (filters.doctorId) {
-    conditions.push(eq(encounters.doctorId, filters.doctorId));
-  }
   pushEncounterModeFilters(conditions, filters);
   const previousConditions = [
     eq(encounters.organizationId, organizationId),
@@ -418,9 +439,6 @@ export const buildDoctorPerformanceReport = async ({ db, organizationId, range, 
     lte(encounters.checkedAt, previousRange.end),
     isNull(encounters.deletedAt)
   ];
-  if (filters.doctorId) {
-    previousConditions.push(eq(encounters.doctorId, filters.doctorId));
-  }
   pushEncounterModeFilters(previousConditions, filters);
 
   const rows = await db
@@ -454,6 +472,12 @@ export const buildDoctorPerformanceReport = async ({ db, organizationId, range, 
               and report_encounters.checked_at <= ${range.end}
               and report_encounters.deleted_at is null
               ${filters.doctorId ? sql`and report_encounters.doctor_id = ${filters.doctorId}` : sql``}
+              ${filters.assistantId ? sql`and exists (
+                select 1 from appointments report_appointments
+                where report_appointments.id = report_encounters.appointment_id
+                  and report_appointments.organization_id = report_encounters.organization_id
+                  and report_appointments.assistant_id = ${filters.assistantId}
+              )` : sql``}
               ${filters.visitMode ? sql`and exists (
                 select 1 from appointments report_appointments
                 where report_appointments.id = report_encounters.appointment_id
@@ -476,6 +500,20 @@ export const buildDoctorPerformanceReport = async ({ db, organizationId, range, 
           eq(patientFollowups.organizationId, organizationId),
           eq(patientFollowups.status, "pending"),
           ...(filters.doctorId ? [eq(patientFollowups.doctorId, filters.doctorId)] : []),
+          ...(filters.assistantId
+            ? [
+                sql`exists (
+                  select 1
+                  from encounters report_encounters
+                  join appointments report_appointments
+                    on report_appointments.id = report_encounters.appointment_id
+                   and report_appointments.scheduled_at = report_encounters.appointment_scheduled_at
+                  where report_encounters.id = ${patientFollowups.encounterId}
+                    and report_encounters.organization_id = ${patientFollowups.organizationId}
+                    and report_appointments.assistant_id = ${filters.assistantId}
+                )`
+              ]
+            : []),
           ...(filters.visitMode ? [eq(patientFollowups.visitMode, filters.visitMode)] : []),
           ...(filters.doctorWorkflowMode ? [eq(patientFollowups.doctorWorkflowMode, filters.doctorWorkflowMode)] : []),
           gte(patientFollowups.createdAt, range.start),
@@ -583,9 +621,6 @@ export const buildAssistantPerformanceReport = async ({
     lte(appointments.scheduledAt, range.end),
     isNull(appointments.deletedAt)
   ];
-  if (filters.assistantId) {
-    appointmentConditions.push(eq(appointments.assistantId, filters.assistantId));
-  }
   pushAppointmentModeFilters(appointmentConditions, filters);
   const waitingQueueConditions = [
     eq(appointments.organizationId, organizationId),
@@ -604,9 +639,6 @@ export const buildAssistantPerformanceReport = async ({
     lte(appointments.scheduledAt, previousRange.end),
     isNull(appointments.deletedAt)
   ];
-  if (filters.assistantId) {
-    previousAppointmentConditions.push(eq(appointments.assistantId, filters.assistantId));
-  }
   pushAppointmentModeFilters(previousAppointmentConditions, filters);
 
   const dispenseConditions = [
@@ -617,7 +649,7 @@ export const buildAssistantPerformanceReport = async ({
   if (filters.assistantId) {
     dispenseConditions.push(eq(dispenseRecords.assistantId, filters.assistantId));
   }
-  if (filters.doctorWorkflowMode || filters.visitMode) {
+  if (filters.doctorId || filters.doctorWorkflowMode || filters.visitMode) {
     dispenseConditions.push(
       sql`exists (
         select 1
@@ -629,6 +661,7 @@ export const buildAssistantPerformanceReport = async ({
         join users workflow_user on workflow_user.id = report_prescriptions.doctor_id
         where report_prescriptions.id = ${dispenseRecords.prescriptionId}
           and report_prescriptions.organization_id = ${dispenseRecords.organizationId}
+          ${filters.doctorId ? sql`and report_prescriptions.doctor_id = ${filters.doctorId}` : sql``}
           ${filters.visitMode ? sql`and report_appointments.visit_mode = ${filters.visitMode}` : sql``}
           ${filters.doctorWorkflowMode ? sql`and workflow_user.doctor_workflow_mode = ${filters.doctorWorkflowMode}` : sql``}
       )`
@@ -741,7 +774,7 @@ export const buildInventoryUsageReport = async ({ db, organizationId, range, fil
     gte(inventoryMovements.createdAt, range.start),
     lte(inventoryMovements.createdAt, range.end)
   ];
-  if (filters.visitMode || filters.doctorWorkflowMode) {
+  if (filters.doctorId || filters.assistantId || filters.visitMode || filters.doctorWorkflowMode) {
     movementConditions.push(
       sql`exists (
         select 1
@@ -754,6 +787,8 @@ export const buildInventoryUsageReport = async ({ db, organizationId, range, fil
         where inventory_movements.reference_type = 'prescription'
           and report_prescriptions.id = inventory_movements.reference_id
           and report_prescriptions.organization_id = ${inventoryMovements.organizationId}
+          ${filters.doctorId ? sql`and report_prescriptions.doctor_id = ${filters.doctorId}` : sql``}
+          ${filters.assistantId ? sql`and report_appointments.assistant_id = ${filters.assistantId}` : sql``}
           ${filters.visitMode ? sql`and report_appointments.visit_mode = ${filters.visitMode}` : sql``}
           ${filters.doctorWorkflowMode ? sql`and workflow_user.doctor_workflow_mode = ${filters.doctorWorkflowMode}` : sql``}
       )`
@@ -764,7 +799,7 @@ export const buildInventoryUsageReport = async ({ db, organizationId, range, fil
     gte(inventoryMovements.createdAt, previousRange.start),
     lte(inventoryMovements.createdAt, previousRange.end)
   ];
-  if (filters.visitMode || filters.doctorWorkflowMode) {
+  if (filters.doctorId || filters.assistantId || filters.visitMode || filters.doctorWorkflowMode) {
     previousMovementConditions.push(
       sql`exists (
         select 1
@@ -777,6 +812,8 @@ export const buildInventoryUsageReport = async ({ db, organizationId, range, fil
         where inventory_movements.reference_type = 'prescription'
           and report_prescriptions.id = inventory_movements.reference_id
           and report_prescriptions.organization_id = ${inventoryMovements.organizationId}
+          ${filters.doctorId ? sql`and report_prescriptions.doctor_id = ${filters.doctorId}` : sql``}
+          ${filters.assistantId ? sql`and report_appointments.assistant_id = ${filters.assistantId}` : sql``}
           ${filters.visitMode ? sql`and report_appointments.visit_mode = ${filters.visitMode}` : sql``}
           ${filters.doctorWorkflowMode ? sql`and workflow_user.doctor_workflow_mode = ${filters.doctorWorkflowMode}` : sql``}
       )`
@@ -868,6 +905,20 @@ export const buildPatientFollowupReport = async ({ db, organizationId, range, fi
   if (filters.doctorId) {
     conditions.push(eq(patientFollowups.doctorId, filters.doctorId));
   }
+  if (filters.assistantId) {
+    conditions.push(
+      sql`exists (
+        select 1
+        from encounters report_encounters
+        join appointments report_appointments
+          on report_appointments.id = report_encounters.appointment_id
+         and report_appointments.scheduled_at = report_encounters.appointment_scheduled_at
+        where report_encounters.id = ${patientFollowups.encounterId}
+          and report_encounters.organization_id = ${patientFollowups.organizationId}
+          and report_appointments.assistant_id = ${filters.assistantId}
+      )`
+    );
+  }
   if (filters.visitMode) {
     conditions.push(eq(patientFollowups.visitMode, filters.visitMode));
   }
@@ -883,6 +934,20 @@ export const buildPatientFollowupReport = async ({ db, organizationId, range, fi
   if (filters.doctorId) {
     previousConditions.push(eq(patientFollowups.doctorId, filters.doctorId));
   }
+  if (filters.assistantId) {
+    previousConditions.push(
+      sql`exists (
+        select 1
+        from encounters report_encounters
+        join appointments report_appointments
+          on report_appointments.id = report_encounters.appointment_id
+         and report_appointments.scheduled_at = report_encounters.appointment_scheduled_at
+        where report_encounters.id = ${patientFollowups.encounterId}
+          and report_encounters.organization_id = ${patientFollowups.organizationId}
+          and report_appointments.assistant_id = ${filters.assistantId}
+      )`
+    );
+  }
   if (filters.visitMode) {
     previousConditions.push(eq(patientFollowups.visitMode, filters.visitMode));
   }
@@ -896,11 +961,20 @@ export const buildPatientFollowupReport = async ({ db, organizationId, range, fi
         id: patientFollowups.id,
         patientId: patientFollowups.patientId,
         doctorId: patientFollowups.doctorId,
+        patientName: sql<string>`${patients.firstName} || ' ' || ${patients.lastName}`,
+        doctorName: sql<string | null>`case
+          when ${users.firstName} is not null and ${users.lastName} is not null
+          then ${users.firstName} || ' ' || ${users.lastName}
+          else null
+        end`,
+        followupType: patientFollowups.followupType,
         dueDate: patientFollowups.dueDate,
         createdAt: patientFollowups.createdAt,
         status: patientFollowups.status
       })
       .from(patientFollowups)
+      .innerJoin(patients, eq(patients.id, patientFollowups.patientId))
+      .leftJoin(users, eq(users.id, patientFollowups.doctorId))
       .where(and(...conditions)),
     db
       .select({ count: sql<number>`count(*)` })
