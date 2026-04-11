@@ -31,7 +31,126 @@ Enterprise-ready healthcare backend scaffold aligned to frontend flows in:
   /terraform
 ```
 
-## Quick start
+## Required software
+- Git 2.40+
+- Node.js 20.x LTS (npm 10+)
+- Docker Desktop 4.x+ with Compose v2
+- 8 GB RAM minimum (OpenSearch needs memory)
+
+Optional but recommended:
+- Postman or Insomnia for API testing
+- VS Code + REST Client extension
+
+## Quick start (full system, end-to-end)
+This repository is the backend monorepo. Frontend can be in a separate repo and connect through `http://localhost:8080/v1`.
+
+1. Clone backend and prepare env:
+```bash
+git clone <your-backend-repo-url>
+cd medsys-api-enterprise
+cp .env.example .env
+```
+
+2. Set JWT keys in `.env` (required):
+- Either paste existing PEM values from your secure vault, or generate local dev keys with OpenSSL:
+```bash
+openssl genrsa -out access.priv.pem 2048
+openssl rsa -in access.priv.pem -pubout -out access.pub.pem
+openssl genrsa -out refresh.priv.pem 2048
+openssl rsa -in refresh.priv.pem -pubout -out refresh.pub.pem
+```
+- Copy file contents into:
+  - `JWT_ACCESS_PRIVATE_KEY`
+  - `JWT_ACCESS_PUBLIC_KEY`
+  - `JWT_REFRESH_PRIVATE_KEY`
+  - `JWT_REFRESH_PUBLIC_KEY`
+
+3. Start infrastructure:
+```bash
+docker compose up -d postgres pgbouncer redis opensearch adminer
+```
+
+4. Install backend dependencies:
+```bash
+npm install
+```
+
+5. Run DB migrations:
+```bash
+npm run db:migrate
+npm run db:info
+```
+
+6. Start backend API and worker (local dev):
+```bash
+npm run dev
+```
+- API base URL: `http://localhost:3000/v1`
+- Health/docs base: `http://localhost:3000`
+
+7. Connect frontend repo to backend:
+- In FE env file (`.env.local` or `.env` based on framework):
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/v1
+# or
+VITE_API_BASE_URL=http://localhost:3000/v1
+```
+- Start FE normally (`npm run dev` in FE repo).
+
+8. Verify integration:
+- Login from FE with seeded account
+- Open inventory/patient pages
+- Ensure FE calls backend endpoints under `/v1/*`
+
+## One-command containerized mode (API + Worker + Infra)
+Use this when a tester wants minimal setup.
+
+1. Prepare `.env` from `.env.example`.
+2. Run migrations inside Docker:
+```bash
+docker compose --profile tools run --rm migrate
+```
+3. Start services:
+```bash
+docker compose up -d
+```
+4. Endpoints:
+- API from host: `http://localhost:8080/v1`
+- Adminer: `http://localhost:8181`
+- PostgreSQL: `localhost:5432`
+- PgBouncer: `localhost:6432`
+- Redis: `localhost:6379`
+- OpenSearch: `http://localhost:9200`
+
+Optional FE in same compose:
+```bash
+docker compose --profile ui up -d frontend
+```
+Set `FRONTEND_REPO_PATH` in your shell if FE repo path differs from `../medsys-frontend`.
+
+## Frontend-backend contract for teammates
+When someone clones both FE and BE repos for testing, use this standard:
+- Backend owns API contract under `/v1`.
+- Frontend reads one env var for API base URL.
+- Never hardcode localhost URLs in FE code.
+- Keep `.env.example` committed in both repos; never commit real secrets.
+
+Minimum FE requirement:
+- `API_BASE_URL` (or framework equivalent) must point to BE:
+  - Local dev mode: `http://localhost:3000/v1`
+  - Dockerized API mode: `http://localhost:8080/v1`
+
+## Common issues
+- `400 Bad Request` from FE proxy with generic error:
+  - Call backend directly (`localhost:3000` or `localhost:8080`) to get full validation message.
+- `ECONNREFUSED` DB:
+  - Confirm Docker containers are healthy and `DATABASE_URL` uses PgBouncer (`localhost:6432`) in local mode.
+- OpenSearch startup fails:
+  - Increase Docker memory and keep at least 8 GB available.
+- JWT errors at startup:
+  - Verify PEM key values are present and valid in `.env`.
+
+## Backend-only quick start (legacy flow)
 1. Copy `.env.example` to `.env` and set JWT RSA keys.
 2. Start local dependencies:
 ```bash
@@ -39,7 +158,7 @@ docker compose -f infra/docker/docker-compose.yml up -d
 ```
 Database web UI:
 ```text
-http://localhost:8081
+http://localhost:8181
 system: PostgreSQL
 server: postgres
 username: medsys
@@ -66,16 +185,27 @@ npm run dev
 ```bash
 npm run dev -w @medsys/worker
 ```
-
 ## Baseline seeded users
 - Organization: `11111111-1111-1111-1111-111111111111`
+- Organization slug: `default-clinic`
 - Owner: `owner@medsys.local`
 - Doctor: `doctor@medsys.local`
 - Assistant: `assistant@medsys.local`
 - Password: `ChangeMe123!`
 
+## Multi-organization bootstrap
+- `POST /v1/auth/bootstrap-organization` creates a new organization plus its first owner account
+- response includes:
+  - `organization.id`
+  - `organization.slug`
+  - owner `user`
+  - `accessToken`
+  - `refreshToken`
+- use the returned `organization.id` as `organizationId` for future login requests
+- new organizations start with empty tenant data and do not see records from the seeded default clinic
+
 ## API (v1)
-- `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/register`, `/v1/auth/me`, `/v1/auth/status`
+- `/v1/auth/login`, `/v1/auth/login-with-slug`, `/v1/auth/resolve-organization`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/register`, `/v1/auth/bootstrap-organization`, `/v1/auth/me`, `/v1/auth/status`
 - `/v1/users`
 - `/v1/clinical/icd10`
 - `/v1/clinical/diagnoses`, `/v1/clinical/tests`, `/v1/clinical/diagnoses/:code/recommended-tests`
@@ -241,3 +371,4 @@ For clinics operating without an assistant, the doctor workflow natively support
 - Login lockout uses `AUTH_LOGIN_MAX_ATTEMPTS` and `AUTH_LOGIN_LOCKOUT_SECONDS`; sensitive throttles use `SECURITY_SENSITIVE_WINDOW_SECONDS`.
 - Consolidated developer-facing implementation and roadmap tracking is maintained in [docs/MEDSYS_Backend_Developer_Tracker.html](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Developer_Tracker.html) and [docs/MEDSYS_Backend_Developer_Tracker.pdf](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/docs/MEDSYS_Backend_Developer_Tracker.pdf).
 - CI now runs DB-backed backend smoke coverage via [backend-ci.yml](d:/Projects/MEDLINK/medsys-api-enterprise/medsys-api-enterprise/.github/workflows/backend-ci.yml).
+
