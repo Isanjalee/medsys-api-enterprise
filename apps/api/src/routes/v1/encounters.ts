@@ -10,6 +10,7 @@ import {
   testOrders
 } from "@medsys/db";
 import { createEncounterBundleSchema, idParamSchema } from "@medsys/validation";
+import { serializePatientVital } from "../../lib/api-serializers.js";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
@@ -399,7 +400,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
     assertOrThrow(found.length === 1, 404, "Encounter not found");
 
-    const [diagnosisRows, testRows, prescriptionRows] = await Promise.all([
+    const [diagnosisRows, testRows, prescriptionRows, vitalRows] = await Promise.all([
       app.readDb
         .select()
         .from(encounterDiagnoses)
@@ -413,7 +414,31 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
       app.readDb
         .select()
         .from(prescriptions)
-        .where(and(eq(prescriptions.encounterId, id), eq(prescriptions.organizationId, actor.organizationId)))
+        .where(and(eq(prescriptions.encounterId, id), eq(prescriptions.organizationId, actor.organizationId))),
+      app.readDb
+        .select({
+          id: patientVitals.id,
+          patientId: patientVitals.patientId,
+          encounterId: patientVitals.encounterId,
+          bpSystolic: patientVitals.bpSystolic,
+          bpDiastolic: patientVitals.bpDiastolic,
+          heartRate: patientVitals.heartRate,
+          temperatureC: patientVitals.temperatureC,
+          spo2: patientVitals.spo2,
+          recordedAt: patientVitals.recordedAt,
+          createdAt: patientVitals.createdAt,
+          updatedAt: patientVitals.updatedAt
+        })
+        .from(patientVitals)
+        .where(
+          and(
+            eq(patientVitals.encounterId, id),
+            eq(patientVitals.organizationId, actor.organizationId),
+            isNull(patientVitals.deletedAt)
+          )
+        )
+        .orderBy(desc(patientVitals.recordedAt), desc(patientVitals.id))
+        .limit(1)
     ]);
 
     const prescriptionIds = prescriptionRows.map((row) => row.id);
@@ -432,6 +457,7 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       encounter: found[0],
+      vital: vitalRows[0] ? serializePatientVital(vitalRows[0]) : null,
       diagnoses: diagnosisRows,
       tests: testRows,
       prescriptions: prescriptionRows,
