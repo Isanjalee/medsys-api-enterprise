@@ -94,6 +94,7 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
         doctorId: resolvedDoctorId,
         assistantId: resolvedAssistantId
       },
+      operationMode: query.operationMode ?? "hybrid",
       range: {
         preset: rangePreset,
         start,

@@ -30,6 +30,7 @@ type DbClient = ReturnType<typeof buildDbClient>["db"];
 
 type DashboardRole = "doctor" | "assistant" | "owner";
 type DashboardRangePreset = "1d" | "7d" | "30d" | "custom";
+type OperationMode = "walk_in" | "appointment" | "hybrid";
 
 type DashboardActor = {
   role: DashboardRole;
@@ -49,6 +50,7 @@ type DashboardInput = {
   organizationId: string;
   actor: DashboardActor;
   scope: DashboardScope;
+  operationMode: OperationMode;
   range: {
     preset: DashboardRangePreset;
     start: Date;
@@ -285,7 +287,8 @@ const buildBaseRoleContext = (input: DashboardInput) => ({
   roles: input.actor.roles,
   doctorId: input.scope.doctorId,
   assistantId: input.scope.assistantId,
-  workflowProfile: input.workflowProfile
+  workflowProfile: input.workflowProfile,
+  operationMode: input.operationMode
 });
 
 const buildBaseRange = (input: DashboardInput) => ({
@@ -293,6 +296,91 @@ const buildBaseRange = (input: DashboardInput) => ({
   dateFrom: input.range.start.toISOString(),
   dateTo: input.range.end.toISOString()
 });
+
+const applyOwnerOperationMode = <
+  T extends {
+    summary: Record<string, unknown>;
+    charts: Record<string, unknown>;
+    insights: Array<{ id: string; level: string; message: string }>;
+    tables: Record<string, unknown>;
+    alerts: Array<{ id: string; severity: string; message: string }>;
+  }
+>(
+  payload: T,
+  operationMode: OperationMode
+) => {
+  const modePolicy = {
+    operationMode,
+    showAppointmentMetrics: operationMode !== "walk_in",
+    showWalkInMetrics: operationMode !== "appointment"
+  };
+
+  if (operationMode === "hybrid") {
+    return { ...payload, modePolicy };
+  }
+
+  const summary = { ...payload.summary };
+  const charts = { ...payload.charts };
+  const tables = { ...payload.tables };
+  const insights = [...payload.insights];
+
+  if (operationMode === "walk_in") {
+    const organizationGrowth =
+      summary.organizationGrowth && typeof summary.organizationGrowth === "object"
+        ? { ...(summary.organizationGrowth as Record<string, unknown>) }
+        : null;
+    if (organizationGrowth) {
+      delete organizationGrowth.appointmentVolume;
+      summary.organizationGrowth = organizationGrowth;
+    }
+
+    const operationalPerformance =
+      summary.operationalPerformance && typeof summary.operationalPerformance === "object"
+        ? { ...(summary.operationalPerformance as Record<string, unknown>) }
+        : null;
+    if (operationalPerformance) {
+      delete operationalPerformance.cancellationRate;
+      summary.operationalPerformance = operationalPerformance;
+    }
+
+    delete charts.appointmentStatusDistribution;
+    delete tables.appointmentStatusDistribution;
+  }
+
+  if (operationMode === "appointment") {
+    const operationalPerformance =
+      summary.operationalPerformance && typeof summary.operationalPerformance === "object"
+        ? { ...(summary.operationalPerformance as Record<string, unknown>) }
+        : null;
+    if (operationalPerformance) {
+      delete operationalPerformance.walkInRate;
+      summary.operationalPerformance = operationalPerformance;
+    }
+
+    const quality =
+      summary.quality && typeof summary.quality === "object"
+        ? { ...(summary.quality as Record<string, unknown>) }
+        : null;
+    if (quality) {
+      delete quality.guardianLinkageCoverageForMinors;
+      summary.quality = quality;
+    }
+
+    const index = insights.findIndex((item) => item.id === "walkin-trend");
+    if (index >= 0) {
+      insights.splice(index, 1);
+    }
+  }
+
+  return {
+    ...payload,
+    summary,
+    charts,
+    tables,
+    insights,
+    modePolicy
+  };
+};
 
 const fetchAppointments = async (
   db: DbClient,
@@ -806,7 +894,8 @@ const buildDoctorDashboard = async (input: DashboardInput) => {
     }))
   ];
 
-  return {
+  return applyOwnerOperationMode(
+    {
     roleContext: buildBaseRoleContext(input),
     generatedAt: input.generatedAt.toISOString(),
     range: buildBaseRange(input),
@@ -821,7 +910,9 @@ const buildDoctorDashboard = async (input: DashboardInput) => {
       unmatchedPrescriptionItems
     },
     alerts
-  };
+    },
+    input.operationMode
+  );
 };
 
 const buildAssistantDashboard = async (input: DashboardInput) => {
