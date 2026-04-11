@@ -46,6 +46,7 @@ const DRUG_SOURCES = ["clinical", "outside"] as const;
 const TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
 const TASK_SOURCE_TYPES = ["appointment", "consultation", "prescription", "dispense", "inventory_alert", "followup"] as const;
 const FOLLOWUP_STATUSES = ["pending", "completed", "missed", "cancelled"] as const;
+const organizationSlugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const nicRegex = /^([0-9]{9}[vVxX]|[0-9]{12})$/;
 const nameRegex = /^[A-Za-z .'-]+$/;
@@ -223,13 +224,49 @@ export const authLoginSchema = z
   .object({
     email: z.string().trim().toLowerCase().email(),
     password: z.string().min(1),
-    organizationId: z.string().uuid()
+    organizationId: z.string().uuid(),
+    roleHint: userRoleSchema.optional().nullable()
+  })
+  .strict();
+
+export const authLoginWithSlugSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email(),
+    password: z.string().min(1),
+    organizationSlug: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(organizationSlugRegex, "Invalid organization slug"),
+    roleHint: userRoleSchema.optional().nullable()
+  })
+  .strict();
+
+export const resolveOrganizationSchema = z
+  .object({
+    organizationSlug: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(organizationSlugRegex, "Invalid organization slug")
   })
   .strict();
 
 export const refreshTokenSchema = z
   .object({
     refreshToken: z.string().min(20)
+  })
+  .strict();
+
+export const bootstrapOrganizationSchema = z
+  .object({
+    organizationName: z.string().trim().min(2).max(160),
+    organizationSlug: z.string().trim().min(3).max(80).regex(organizationSlugRegex, "Invalid organization slug"),
+    ownerName: z.string().trim().min(2).max(120),
+    ownerEmail: z.string().trim().toLowerCase().email().max(160),
+    password: z.string().min(8).max(128)
   })
   .strict();
 
@@ -261,11 +298,13 @@ export const clinicalCodeParamSchema = z
 export const analyticsDashboardRoleSchema = z.enum(["doctor", "assistant", "owner"]);
 export const analyticsDashboardRangeSchema = z.enum(["1d", "7d", "30d", "custom"]);
 export const visitModeSchema = z.enum(["appointment", "walk_in"]);
+export const operationModeSchema = z.enum(["walk_in", "appointment", "hybrid"]);
 
 export const analyticsDashboardQuerySchema = z
   .object({
     range: analyticsDashboardRangeSchema.optional().default("7d"),
     role: analyticsDashboardRoleSchema.optional(),
+    operationMode: operationModeSchema.optional().default("hybrid"),
     doctorId: z.coerce.number().int().positive().optional().nullable(),
     assistantId: z.coerce.number().int().positive().optional().nullable(),
     dateFrom: optionalDateString,
