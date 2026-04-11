@@ -70,11 +70,27 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     return { preset: query.range ?? "7d", start, end } as const;
   };
 
-  const validateScopedFilters = (actorRole: string, query: { doctorId?: number | null; assistantId?: number | null }) => {
-    if (actorRole !== "owner" && (query.doctorId || query.assistantId)) {
+  const validateScopedFilters = (
+    actor: AuthenticatedActor,
+    query: { doctorId?: number | null; assistantId?: number | null }
+  ) => {
+    if (actor.role === "owner") {
+      return;
+    }
+
+    if (query.doctorId && (actor.role !== "doctor" || query.doctorId !== actor.userId)) {
       throw validationError([
         {
           field: "doctorId",
+          message: "Only owner users can request another user's scoped report."
+        }
+      ]);
+    }
+
+    if (query.assistantId && (actor.role !== "assistant" || query.assistantId !== actor.userId)) {
+      throw validationError([
+        {
+          field: "assistantId",
           message: "Only owner users can request another user's scoped report."
         }
       ]);
@@ -140,7 +156,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/daily-summary", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(dailySummaryQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const generatedAt = new Date();
     const summaryDate = query.date ?? generatedAt.toISOString().slice(0, 10);
     const scope = resolveDailySummaryScope(actor, query);
@@ -169,7 +185,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/daily-summary/history", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(dailySummaryHistoryQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const scope = resolveDailySummaryScope(actor, query);
     const items = await listDailySummaryHistory({
       db: app.analyticsDb,
@@ -188,7 +204,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/clinic-overview", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const now = new Date();
     return buildClinicOverviewReport({
       db: app.analyticsDb,
@@ -202,7 +218,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/doctor-performance", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const now = new Date();
     return buildDoctorPerformanceReport({
       db: app.analyticsDb,
@@ -221,7 +237,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/assistant-performance", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const now = new Date();
     return buildAssistantPerformanceReport({
       db: app.analyticsDb,
@@ -240,7 +256,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/inventory-usage", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const now = new Date();
     return buildInventoryUsageReport({
       db: app.analyticsDb,
@@ -254,7 +270,7 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/patient-followup", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
-    validateScopedFilters(actor.role, query);
+    validateScopedFilters(actor, query);
     const now = new Date();
     return buildPatientFollowupReport({
       db: app.analyticsDb,
