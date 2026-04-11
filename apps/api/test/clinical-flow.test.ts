@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { encounters } from "@medsys/db";
+import { encounters, patientFollowups } from "@medsys/db";
 import { and, eq } from "drizzle-orm";
 import { buildApp } from "../src/app.js";
 import { calculateAgeFromDob } from "../src/lib/date.js";
+import { syncEncounterFollowup } from "../src/lib/followups/followup-service.js";
 
 const ORGANIZATION_ID = "11111111-1111-1111-1111-111111111111";
 const DEFAULT_PATIENT_DOB = "1990-06-01";
@@ -124,6 +125,183 @@ test("auth status endpoint returns bootstrap metadata", async () => {
   await app.close();
 });
 
+test("organization bootstrap creates an isolated tenant with its own owner and empty data scope", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const uniqueSuffix = Date.now().toString();
+
+  const bootstrapResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/bootstrap-organization",
+    payload: {
+      organizationName: `Tenant ${uniqueSuffix} Clinic`,
+      organizationSlug: `tenant-${uniqueSuffix}`,
+      ownerName: "Tenant Owner",
+      ownerEmail: `tenant-owner-${uniqueSuffix}@medsys.local`,
+      password: "ChangeMe123!"
+    }
+  });
+
+  assert.equal(bootstrapResponse.statusCode, 201);
+  const bootstrapBody = bootstrapResponse.json() as {
+    organization: { id: string; slug: string; name: string; is_active: boolean };
+    accessToken: string;
+    user: { email: string; role: string; roles: string[] };
+  };
+  assert.equal(typeof bootstrapBody.organization.id, "string");
+  assert.equal(bootstrapBody.organization.slug, `tenant-${uniqueSuffix}`);
+  assert.equal(bootstrapBody.organization.name, `Tenant ${uniqueSuffix} Clinic`);
+  assert.equal(bootstrapBody.organization.is_active, true);
+  assert.equal(bootstrapBody.user.email, `tenant-owner-${uniqueSuffix}@medsys.local`);
+  assert.equal(bootstrapBody.user.role, "owner");
+  assert.deepEqual(bootstrapBody.user.roles, ["owner"]);
+
+  const tenantHeaders = {
+    authorization: `Bearer ${bootstrapBody.accessToken}`
+  };
+
+  const tenantMeResponse = await app.inject({
+    method: "GET",
+    url: "/v1/auth/me",
+    headers: tenantHeaders
+  });
+  assert.equal(tenantMeResponse.statusCode, 200);
+
+  const emptyPatientsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/patients",
+    headers: tenantHeaders
+  });
+  assert.equal(emptyPatientsResponse.statusCode, 200);
+  assert.equal((emptyPatientsResponse.json() as { patients: unknown[] }).patients.length, 0);
+
+  const emptyFollowupsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/followups",
+    headers: tenantHeaders
+  });
+  assert.equal(emptyFollowupsResponse.statusCode, 200);
+  assert.equal((emptyFollowupsResponse.json() as { items: unknown[] }).items.length, 0);
+
+  const emptyInventoryResponse = await app.inject({
+    method: "GET",
+    url: "/v1/inventory",
+    headers: tenantHeaders
+  });
+  assert.equal(emptyInventoryResponse.statusCode, 200);
+  assert.equal(Array.isArray(emptyInventoryResponse.json()), true);
+  assert.equal((emptyInventoryResponse.json() as unknown[]).length, 0);
+
+  const tenantPatientResponse = await app.inject({
+    method: "POST",
+    url: "/v1/patients",
+    headers: tenantHeaders,
+    payload: {
+      name: `Tenant Patient ${uniqueSuffix}`,
+      dateOfBirth: DEFAULT_PATIENT_DOB
+    }
+  });
+  assert.equal(tenantPatientResponse.statusCode, 201);
+
+  const defaultOwnerLogin = await loginAs(app, "owner@medsys.local");
+  const defaultPatientsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/patients",
+    headers: {
+      authorization: `Bearer ${defaultOwnerLogin.accessToken}`
+    }
+  });
+  assert.equal(defaultPatientsResponse.statusCode, 200);
+  const defaultPatients = defaultPatientsResponse.json() as { patients: Array<{ name: string }> };
+  assert.equal(defaultPatients.patients.some((patient) => patient.name === `Tenant Patient ${uniqueSuffix}`), false);
+
+  await app.close();
+});
+
+test("tenant slug auth flow resolves organization and logs in without organization UUID in UI", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const uniqueSuffix = Date.now().toString();
+  const organizationSlug = `tenant-login-${uniqueSuffix}`;
+  const ownerEmail = `tenant-login-owner-${uniqueSuffix}@medsys.local`;
+  const password = "ChangeMe123!";
+
+  try {
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/v1/auth/bootstrap-organization",
+      payload: {
+        organizationName: `Tenant Login ${uniqueSuffix} Clinic`,
+        organizationSlug,
+        ownerName: "Tenant Owner",
+        ownerEmail,
+        password
+      }
+    });
+    assert.equal(bootstrapResponse.statusCode, 201);
+    const bootstrapBody = bootstrapResponse.json() as {
+      organization: { id: string; slug: string };
+    };
+
+    const resolveResponse = await app.inject({
+      method: "POST",
+      url: "/v1/auth/resolve-organization",
+      payload: {
+        organizationSlug
+      }
+    });
+    assert.equal(resolveResponse.statusCode, 200);
+    const resolveBody = resolveResponse.json() as {
+      organization: { id: string; slug: string; name: string; is_active: boolean };
+    };
+    assert.equal(resolveBody.organization.id, bootstrapBody.organization.id);
+    assert.equal(resolveBody.organization.slug, organizationSlug);
+    assert.equal(resolveBody.organization.is_active, true);
+
+    const slugLoginResponse = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login-with-slug",
+      payload: {
+        organizationSlug,
+        email: ownerEmail,
+        password,
+        roleHint: "owner"
+      }
+    });
+    assert.equal(slugLoginResponse.statusCode, 200);
+    const slugLoginBody = slugLoginResponse.json() as {
+      accessToken: string;
+      user: { email: string; role: string };
+      organization: { id: string; slug: string };
+    };
+    assert.equal(typeof slugLoginBody.accessToken, "string");
+    assert.equal(slugLoginBody.user.email, ownerEmail);
+    assert.equal(slugLoginBody.user.role, "owner");
+    assert.equal(slugLoginBody.organization.id, bootstrapBody.organization.id);
+    assert.equal(slugLoginBody.organization.slug, organizationSlug);
+
+    const legacyLoginWithRoleHint = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        organizationId: bootstrapBody.organization.id,
+        email: ownerEmail,
+        password,
+        roleHint: "owner"
+      }
+    });
+    assert.equal(legacyLoginWithRoleHint.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
 test("analytics overview returns numeric counters for authorized users", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -197,6 +375,48 @@ test("analytics dashboard returns owner role-aware sections", async () => {
   assert.equal(Array.isArray(body.insights), true);
   assert.equal(typeof body.tables, "object");
   assert.equal(Array.isArray(body.alerts), true);
+  await app.close();
+});
+
+test("owner analytics dashboard in walk-in mode hides appointment-centric metrics", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const loginBody = await loginAs(app, "owner@medsys.local");
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/analytics/dashboard?range=7d&operationMode=walk_in",
+    headers: {
+      authorization: `Bearer ${loginBody.accessToken}`
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    roleContext: { resolvedRole: string; operationMode: string };
+    summary: {
+      organizationGrowth?: { appointmentVolume?: number };
+      operationalPerformance?: { cancellationRate?: number };
+    };
+    charts: Record<string, unknown>;
+    modePolicy: {
+      operationMode: string;
+      showAppointmentMetrics: boolean;
+      showWalkInMetrics: boolean;
+    };
+  };
+  assert.equal(body.roleContext.resolvedRole, "owner");
+  assert.equal(body.roleContext.operationMode, "walk_in");
+  assert.equal(body.modePolicy.operationMode, "walk_in");
+  assert.equal(body.modePolicy.showAppointmentMetrics, false);
+  assert.equal(body.modePolicy.showWalkInMetrics, true);
+  assert.equal(body.summary.organizationGrowth?.appointmentVolume, undefined);
+  assert.equal(body.summary.operationalPerformance?.cancellationRate, undefined);
+  assert.equal(Object.prototype.hasOwnProperty.call(body.charts, "appointmentStatusDistribution"), false);
+
   await app.close();
 });
 
@@ -300,6 +520,92 @@ test("reports module returns base report blocks and scopes doctor performance to
   const ownerLogin = await loginAs(app, "owner@medsys.local");
   const doctorLogin = await loginAs(app, "doctor@medsys.local");
   const doctorId = await getUserIdByEmail(app, ownerLogin.accessToken, "doctor", "doctor@medsys.local");
+  const assistantId = await getUserIdByEmail(app, ownerLogin.accessToken, "assistant", "assistant@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+
+  const createDoctorResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Scoped",
+      lastName: `Doctor${uniqueSuffix}`,
+      email: `scoped-doctor-${uniqueSuffix}@medsys.local`,
+      password: "strong-pass-123",
+      role: "doctor"
+    }
+  });
+  assert.equal(createDoctorResponse.statusCode, 201);
+  const secondDoctorId = (createDoctorResponse.json() as { user: { id: number } }).user.id;
+
+  const createAssistantResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Scoped",
+      lastName: `Assistant${uniqueSuffix}`,
+      email: `scoped-assistant-${uniqueSuffix}@medsys.local`,
+      password: "strong-pass-123",
+      role: "assistant"
+    }
+  });
+  assert.equal(createAssistantResponse.statusCode, 201);
+  const secondAssistantId = (createAssistantResponse.json() as { user: { id: number } }).user.id;
+
+  const now = Date.now();
+  const dueSoonDate = new Date(now + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const saveScopedConsultation = async ({
+    assignedDoctorId,
+    assignedAssistantId,
+    patientName,
+    checkedAt
+  }: {
+    assignedDoctorId: number;
+    assignedAssistantId: number;
+    patientName: string;
+    checkedAt: string;
+  }) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/consultations/save",
+      headers: {
+        authorization: `Bearer ${ownerLogin.accessToken}`
+      },
+      payload: {
+        workflowType: "walk_in",
+        doctorId: assignedDoctorId,
+        assistantId: assignedAssistantId,
+        checkedAt,
+        scheduledAt: checkedAt,
+        nextVisitDate: dueSoonDate,
+        patientDraft: {
+          name: patientName,
+          dateOfBirth: DEFAULT_PATIENT_DOB
+        },
+        diagnoses: [{ diagnosisName: "Acute viral fever", icd10Code: "B34.9" }]
+      }
+    });
+
+    assert.equal(response.statusCode, 201);
+  };
+
+  await saveScopedConsultation({
+    assignedDoctorId: doctorId,
+    assignedAssistantId: assistantId,
+    patientName: `Scoped Primary ${uniqueSuffix}`,
+    checkedAt: new Date(now - 60 * 60 * 1000).toISOString()
+  });
+  await saveScopedConsultation({
+    assignedDoctorId: secondDoctorId,
+    assignedAssistantId: secondAssistantId,
+    patientName: `Scoped Secondary ${uniqueSuffix}`,
+    checkedAt: new Date(now - 30 * 60 * 1000).toISOString()
+  });
 
   const ownerOverview = await app.inject({
     method: "GET",
@@ -368,6 +674,25 @@ test("reports module returns base report blocks and scopes doctor performance to
 
   assert.equal(doctorScopedByOwner.statusCode, 200);
 
+  const clinicScopedByDoctor = await app.inject({
+    method: "GET",
+    url: `/v1/reports/clinic-overview?range=30d&doctorId=${secondDoctorId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(clinicScopedByDoctor.statusCode, 200);
+  const clinicScopedBody = clinicScopedByDoctor.json() as {
+    filters: { doctorId: number | null };
+    charts: { doctorWorkloadDistribution: Array<{ label: string; count: number }> };
+  };
+  assert.equal(clinicScopedBody.filters.doctorId, secondDoctorId);
+  assert.equal(clinicScopedBody.charts.doctorWorkloadDistribution.length >= 1, true);
+  assert.equal(
+    clinicScopedBody.charts.doctorWorkloadDistribution.every((row) => row.label.includes(`Doctor${uniqueSuffix}`)),
+    true
+  );
+
   const assistantReport = await app.inject({
     method: "GET",
     url: "/v1/reports/assistant-performance?range=7d&visitMode=walk_in",
@@ -385,6 +710,22 @@ test("reports module returns base report blocks and scopes doctor performance to
   assert.equal(typeof assistantBody.summary.waitingQueueNow, "number");
   assert.equal(typeof assistantBody.summary.delayedQueueCount, "number");
   assert.equal(Array.isArray(assistantBody.charts.throughputByAssistant), true);
+
+  const assistantScopedReport = await app.inject({
+    method: "GET",
+    url: `/v1/reports/assistant-performance?range=30d&assistantId=${secondAssistantId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(assistantScopedReport.statusCode, 200);
+  const assistantScopedBody = assistantScopedReport.json() as {
+    filters: { assistantId: number | null };
+    tables: { assistants: Array<{ assistantId: number; assistantName: string }> };
+  };
+  assert.equal(assistantScopedBody.filters.assistantId, secondAssistantId);
+  assert.equal(assistantScopedBody.tables.assistants.length >= 1, true);
+  assert.equal(assistantScopedBody.tables.assistants.every((row) => row.assistantId === secondAssistantId), true);
 
   const inventoryUsageReport = await app.inject({
     method: "GET",
@@ -416,6 +757,40 @@ test("reports module returns base report blocks and scopes doctor performance to
   assert.equal(followupBody.filters.doctorWorkflowMode, "self_service");
   assert.equal(typeof followupBody.summary.createdInRangeCount, "number");
   assert.equal(typeof followupBody.summary.repeatPatientsWithFollowups, "number");
+
+  const followupScopedByAssistant = await app.inject({
+    method: "GET",
+    url: `/v1/reports/patient-followup?range=30d&assistantId=${secondAssistantId}`,
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    }
+  });
+  assert.equal(followupScopedByAssistant.statusCode, 200);
+  const followupScopedBody = followupScopedByAssistant.json() as {
+    filters: { assistantId: number | null };
+    tables: {
+      overdue: Array<{ patientName: string; followupType: string }>;
+      dueSoon: Array<{ patientName: string; followupType: string }>;
+    };
+  };
+  const followupRows = [...followupScopedBody.tables.overdue, ...followupScopedBody.tables.dueSoon];
+  assert.equal(followupScopedBody.filters.assistantId, secondAssistantId);
+  assert.equal(followupRows.length >= 1, true);
+  assert.equal(
+    followupRows.some(
+      (row) => row.patientName === `Scoped Secondary ${uniqueSuffix}` && row.followupType === "review"
+    ),
+    true
+  );
+
+  const doctorSelfScopedOverview = await app.inject({
+    method: "GET",
+    url: `/v1/reports/clinic-overview?range=30d&doctorId=${doctorId}`,
+    headers: {
+      authorization: `Bearer ${doctorLogin.accessToken}`
+    }
+  });
+  assert.equal(doctorSelfScopedOverview.statusCode, 200);
 
   await app.close();
 });
@@ -718,6 +1093,35 @@ test("follow-up module creates, lists, and updates doctor-scoped follow-up recor
   assert.equal(updatedBody.followup.status, "completed");
   assert.equal(updatedBody.followup.note, "Patient reviewed and stable");
   assert.equal(typeof updatedBody.followup.completedAt, "string");
+
+  const preservedCompletedAt = updatedBody.followup.completedAt!;
+  await syncEncounterFollowup({
+    db: app.db,
+    organizationId: ORGANIZATION_ID,
+    encounterId: encounter.id,
+    patientId: encounter.patientId,
+    doctorId,
+    nextVisitDate: "2026-04-25",
+    createdByUserId: doctorId
+  });
+
+  const syncedRows = await app.readDb
+    .select({
+      dueDate: patientFollowups.dueDate,
+      status: patientFollowups.status,
+      completedAt: patientFollowups.completedAt
+    })
+    .from(patientFollowups)
+    .where(eq(patientFollowups.id, createdBody.followup.id))
+    .limit(1);
+
+  assert.equal(syncedRows.length, 1);
+  assert.equal(syncedRows[0]!.dueDate, "2026-04-25");
+  assert.equal(syncedRows[0]!.status, "completed");
+  assert.equal(
+    syncedRows[0]!.completedAt instanceof Date ? syncedRows[0]!.completedAt.toISOString() : syncedRows[0]!.completedAt,
+    preservedCompletedAt
+  );
 
   await app.close();
 });
