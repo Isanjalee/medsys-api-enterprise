@@ -47,7 +47,7 @@ services:
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     ports:
-      - "8081:8080"
+      - "8181:8080"
 
   opensearch:
     image: opensearchproject/opensearch:2.15.0

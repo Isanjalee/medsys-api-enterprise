@@ -1,0 +1,142 @@
+name: medsys-fullstack
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: medsys-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medsys
+      POSTGRES_USER: medsys
+      POSTGRES_PASSWORD: medsys
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medsys -d medsys"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: medsys-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:5432"
+    volumes:
+      - ./infra/docker/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./infra/docker/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+  redis:
+    image: redis:7
+    container_name: medsys-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: medsys-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+
+  adminer:
+    image: adminer:4
+    container_name: medsys-adminer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8181:8080"
+
+  migrate:
+    image: redgate/flyway:10-alpine
+    container_name: medsys-flyway
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./infra/flyway/sql:/flyway/sql:ro
+    command: >
+      -url=jdbc:postgresql://postgres:5432/medsys
+      -user=medsys
+      -password=medsys
+      migrate
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: medsys-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: postgres://medsys:medsys@pgbouncer:5432/medsys
+      DATABASE_READ_URL: postgres://medsys:medsys@pgbouncer:5432/medsys
+      REDIS_URL: redis://redis:6379
+      OPENSEARCH_URL: http://opensearch:9200
+    ports:
+      - "8080:3000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    container_name: medsys-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      api:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://medsys:medsys@pgbouncer:5432/medsys
+      DATABASE_READ_URL: postgres://medsys:medsys@pgbouncer:5432/medsys
+      REDIS_URL: redis://redis:6379
+
+  # Optional FE service template for separate FE repo.
+  # Enable with: docker compose --profile ui up -d frontend
+  frontend:
+    profiles: ["ui"]
+    image: node:20-alpine
+    container_name: medsys-frontend
+    working_dir: /workspace
+    volumes:
+      - ${FRONTEND_REPO_PATH:-../medsys-frontend}:/workspace
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080/v1
+      VITE_API_BASE_URL: http://localhost:8080/v1
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3001:3000"
+
+volumes:
+  postgres_data:
