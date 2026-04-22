@@ -4112,6 +4112,47 @@ test("doctor cannot access users list without user.read permission", async () =>
   await app.close();
 });
 
+test("assistant and doctor can list appointment doctors for dropdown without user.read", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const assistant = await loginAs(app, "assistant@medsys.local");
+  const doctor = await loginAs(app, "doctor@medsys.local");
+
+  const assistantResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments/doctors",
+    headers: {
+      authorization: `Bearer ${assistant.accessToken}`
+    }
+  });
+
+  assert.equal(assistantResponse.statusCode, 200);
+  const assistantBody = assistantResponse.json() as {
+    doctors: Array<{ id: number; name: string; email: string; doctor_workflow_mode: string | null; is_active: boolean }>;
+  };
+  assert.equal(Array.isArray(assistantBody.doctors), true);
+  assert.equal(assistantBody.doctors.some((row) => row.email === "doctor@medsys.local"), true);
+
+  const doctorResponse = await app.inject({
+    method: "GET",
+    url: "/v1/appointments/doctors",
+    headers: {
+      authorization: `Bearer ${doctor.accessToken}`
+    }
+  });
+
+  assert.equal(doctorResponse.statusCode, 200);
+  const doctorBody = doctorResponse.json() as {
+    doctors: Array<{ id: number; name: string; email: string; doctor_workflow_mode: string | null; is_active: boolean }>;
+  };
+  assert.equal(doctorBody.doctors.some((row) => row.email === "doctor@medsys.local"), true);
+
+  await app.close();
+});
+
 test("clinical icd10 endpoint maps provider suggestions", async () => {
   if (!process.env.DATABASE_URL) {
     return;

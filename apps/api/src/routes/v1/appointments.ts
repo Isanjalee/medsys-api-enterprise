@@ -1,10 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
-import { appointments, patients } from "@medsys/db";
+import { appointments, patients, userRoles, users } from "@medsys/db";
 import { createAppointmentSchema, idParamSchema, listAppointmentsQuerySchema, updateAppointmentSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import { buildDisplayName } from "../../lib/names.js";
 
 const appointmentQueueCacheKey = (organizationId: string): string => `${organizationId}:waiting`;
 
@@ -47,6 +48,10 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       operationId: "AppointmentsController_findAll",
       summary: "List appointments"
     },
+    "GET /doctors": {
+      operationId: "AppointmentsController_listDoctors",
+      summary: "List active doctors for appointment assignment dropdown"
+    },
     "POST /": {
       operationId: "AppointmentsController_create",
       summary: "Create appointment",
@@ -86,6 +91,34 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.addHook("preHandler", app.authenticate);
+
+  app.get("/doctors", { preHandler: app.authorizePermissions(["appointment.create"]) }, async (request) => {
+    const actor = request.actor!;
+
+    const rows = await app.readDb
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        doctorWorkflowMode: users.doctorWorkflowMode,
+        isActive: users.isActive
+      })
+      .from(userRoles)
+      .innerJoin(users, eq(userRoles.userId, users.id))
+      .where(and(eq(users.organizationId, actor.organizationId), eq(userRoles.role, "doctor"), eq(users.isActive, true)))
+      .orderBy(asc(users.firstName), asc(users.lastName), asc(users.id));
+
+    return {
+      doctors: rows.map((row) => ({
+        id: row.id,
+        name: buildDisplayName(row.firstName, row.lastName),
+        email: row.email,
+        doctor_workflow_mode: row.doctorWorkflowMode ?? null,
+        is_active: row.isActive
+      }))
+    };
+  });
 
   app.get("/", { preHandler: app.authorizePermissions(["appointment.read"]) }, async (request) => {
     const actor = request.actor!;
