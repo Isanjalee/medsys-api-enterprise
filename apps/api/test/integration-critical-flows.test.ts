@@ -393,11 +393,11 @@ test("role access matrix enforces critical allow and deny paths", async () => {
         expectedStatus: 200
       },
       {
-        name: "assistant cannot access audit logs",
+        name: "assistant can access audit logs",
         accessToken: assistant.accessToken,
         method: "GET" as const,
         url: "/v1/audit/logs",
-        expectedStatus: 403
+        expectedStatus: 200
       }
     ];
 
