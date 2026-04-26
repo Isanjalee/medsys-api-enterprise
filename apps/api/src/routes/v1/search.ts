@@ -27,7 +27,8 @@ const searchRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "doctorId",
-          message: "doctorId is required when requesting my_patients outside a doctor session."
+          message: "doctorId is required when requesting my_patients outside a doctor session.",
+          code: "DOCTOR_ID_REQUIRED_FOR_SCOPE"
         }
       ]);
     }
