@@ -68,6 +68,7 @@ type ParsedTaskListQuery = {
   assignedUserId?: number | null;
   sourceType?: "appointment" | "consultation" | "prescription" | "dispense" | "inventory_alert" | "followup";
   limit: number;
+  offset: number;
 };
 
 const resolveTaskFilters = (
@@ -81,7 +82,8 @@ const resolveTaskFilters = (
     throw validationError([
       {
         field: "assignedUserId",
-        message: "Only owner users can request another user's tasks."
+        message: "Only owner users can request another user's tasks.",
+        code: "SCOPE_OWNER_REQUIRED"
       }
     ]);
   }
@@ -90,7 +92,8 @@ const resolveTaskFilters = (
     throw validationError([
       {
         field: "role",
-        message: "Only owner users can request another role task list."
+        message: "Only owner users can request another role task list.",
+        code: "SCOPE_OWNER_REQUIRED"
       }
     ]);
   }
@@ -103,7 +106,8 @@ const resolveTaskFilters = (
     doctorWorkflowMode: query.doctorWorkflowMode ?? null,
     assignedUserId: actor.role === "owner" ? (query.assignedUserId ?? null) : actor.userId,
     sourceType: query.sourceType,
-    limit: query.limit
+    limit: query.limit,
+    offset: query.offset
   };
 };
 
@@ -135,19 +139,25 @@ const taskRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", { preHandler: app.authorizePermissions(["task.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(listTasksQuerySchema, request.query ?? {});
-    const items = await listTasks({
+    const result = await listTasks({
       db: app.readDb,
       organizationId: actor.organizationId,
       filters: resolveTaskFilters(
         { role: actor.role as "owner" | "doctor" | "assistant", userId: actor.userId },
         {
           ...query,
-          limit: query.limit ?? 50
+          limit: query.limit ?? 50,
+          offset: query.offset ?? 0
         }
       )
     });
 
-    return { items };
+    return {
+      items: result.items,
+      limit: query.limit ?? 50,
+      offset: query.offset ?? 0,
+      total: result.total
+    };
   });
 
   app.post(
@@ -285,7 +295,8 @@ const taskRoutes: FastifyPluginAsync = async (app) => {
         throw validationError([
           {
             field: "id",
-            message: "Only the assigned user or owner can complete this task."
+            message: "Only the assigned user or owner can complete this task.",
+            code: "TASK_ASSIGNMENT_SCOPE_VIOLATION"
           }
         ]);
       }
