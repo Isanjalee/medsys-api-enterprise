@@ -52,6 +52,7 @@ type ParsedFollowupListQuery = {
   visitMode?: "appointment" | "walk_in";
   doctorWorkflowMode?: "self_service" | "clinic_supported" | null;
   limit: number;
+  offset: number;
 };
 
 const resolveFollowupListFilters = (
@@ -62,7 +63,8 @@ const resolveFollowupListFilters = (
     throw validationError([
       {
         field: "doctorId",
-        message: "Doctor users can only request their own follow-ups."
+        message: "Doctor users can only request their own follow-ups.",
+        code: "DOCTOR_SCOPE_VIOLATION"
       }
     ]);
   }
@@ -75,7 +77,8 @@ const resolveFollowupListFilters = (
     dueTo: query.dueTo ?? null,
     visitMode: query.visitMode ?? null,
     doctorWorkflowMode: query.doctorWorkflowMode ?? null,
-    limit: query.limit ?? 50
+    limit: query.limit ?? 50,
+    offset: query.offset ?? 0
   };
 };
 
@@ -102,7 +105,7 @@ const followupRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", { preHandler: app.authorizePermissions(["encounter.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(listFollowupsQuerySchema, request.query ?? {});
-    const items = await listFollowups({
+    const result = await listFollowups({
       db: app.readDb,
       organizationId: actor.organizationId,
       filters: resolveFollowupListFilters(
@@ -115,12 +118,18 @@ const followupRoutes: FastifyPluginAsync = async (app) => {
           dueTo: query.dueTo ?? null,
           visitMode: query.visitMode,
           doctorWorkflowMode: query.doctorWorkflowMode ?? null,
-          limit: query.limit ?? 50
+          limit: query.limit ?? 50,
+          offset: query.offset ?? 0
         }
       )
     });
 
-    return { items };
+    return {
+      items: result.items,
+      limit: query.limit ?? 50,
+      offset: query.offset ?? 0,
+      total: result.total
+    };
   });
 
   app.post(
@@ -167,7 +176,8 @@ const followupRoutes: FastifyPluginAsync = async (app) => {
           throw validationError([
             {
               field: "patientId",
-              message: "patientId must match the encounter patient."
+              message: "patientId must match the encounter patient.",
+              code: "ENCOUNTER_PATIENT_MISMATCH"
             }
           ]);
         }
@@ -246,7 +256,8 @@ const followupRoutes: FastifyPluginAsync = async (app) => {
         throw validationError([
           {
             field: "id",
-            message: "Doctor users can only update their own follow-ups."
+            message: "Doctor users can only update their own follow-ups.",
+            code: "DOCTOR_SCOPE_VIOLATION"
           }
         ]);
       }
