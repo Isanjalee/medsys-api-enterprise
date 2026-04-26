@@ -397,7 +397,8 @@ export const dailySummaryHistoryQuerySchema = z
     assistantId: z.coerce.number().int().positive().optional().nullable(),
     visitMode: visitModeSchema.optional(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
-    limit: z.coerce.number().int().positive().max(50).default(10)
+    limit: z.coerce.number().int().positive().max(50).default(10),
+    offset: z.coerce.number().int().min(0).default(0)
   })
   .strict();
 
@@ -410,7 +411,8 @@ export const listTasksQuerySchema = z
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
     assignedUserId: z.coerce.number().int().positive().optional().nullable(),
     sourceType: taskSourceTypeSchema.optional(),
-    limit: z.coerce.number().int().positive().max(100).default(50)
+    limit: z.coerce.number().int().positive().max(100).default(50),
+    offset: z.coerce.number().int().min(0).default(0)
   })
   .strict();
 
@@ -476,7 +478,8 @@ export const listFollowupsQuerySchema = z
     dueTo: optionalDateString,
     visitMode: visitModeSchema.optional(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
-    limit: z.coerce.number().int().positive().max(100).default(50)
+    limit: z.coerce.number().int().positive().max(100).default(50),
+    offset: z.coerce.number().int().min(0).default(0)
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -1142,7 +1145,8 @@ export const listAuditLogsQuerySchema = z
     action: z.string().max(30).optional(),
     from: z.string().datetime().optional(),
     to: z.string().datetime().optional(),
-    limit: z.coerce.number().int().positive().max(1000).optional()
+    limit: z.coerce.number().int().positive().max(1000).default(100),
+    offset: z.coerce.number().int().min(0).default(0)
   })
   .strict();
 

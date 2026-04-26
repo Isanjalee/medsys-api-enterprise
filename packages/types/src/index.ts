@@ -102,6 +102,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "analytics.read",
     "task.read",
     "task.write",
+    "audit.read",
     "encounter.read",
     "family.read",
     "family.write",
