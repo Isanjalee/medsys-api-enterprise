@@ -82,7 +82,8 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "doctorId",
-          message: "Only owner users can request another user's scoped report."
+          message: "Only owner users can request another user's scoped report.",
+          code: "SCOPE_OWNER_REQUIRED"
         }
       ]);
     }
@@ -91,7 +92,8 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "assistantId",
-          message: "Only owner users can request another user's scoped report."
+          message: "Only owner users can request another user's scoped report.",
+          code: "SCOPE_OWNER_REQUIRED"
         }
       ]);
     }
@@ -113,7 +115,8 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "role",
-          message: "Only owner users can request another role summary."
+          message: "Only owner users can request another role summary.",
+          code: "ROLE_SCOPE_NOT_ALLOWED"
         }
       ]);
     }
@@ -127,7 +130,8 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "doctorId",
-          message: "doctorId is required when requesting a doctor daily summary outside a doctor session."
+          message: "doctorId is required when requesting a doctor daily summary outside a doctor session.",
+          code: "DOCTOR_ID_REQUIRED_FOR_ROLE_SCOPE"
         }
       ]);
     }
@@ -136,7 +140,8 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "assistantId",
-          message: "assistantId is required when requesting an assistant daily summary outside an assistant session."
+          message: "assistantId is required when requesting an assistant daily summary outside an assistant session.",
+          code: "ASSISTANT_ID_REQUIRED_FOR_ROLE_SCOPE"
         }
       ]);
     }
@@ -187,17 +192,21 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     const query = parseOrThrowValidation(dailySummaryHistoryQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
     const scope = resolveDailySummaryScope(actor, query);
-    const items = await listDailySummaryHistory({
+    const history = await listDailySummaryHistory({
       db: app.analyticsDb,
       organizationId: actor.organizationId,
       scope,
       summaryDate: query.date ?? null,
-      limit: query.limit ?? 10
+      limit: query.limit ?? 10,
+      offset: query.offset ?? 0
     });
 
     return {
       roleContext: scope.role,
-      items
+      items: history.items,
+      limit: query.limit ?? 10,
+      offset: query.offset ?? 0,
+      total: history.total
     };
   });
 
