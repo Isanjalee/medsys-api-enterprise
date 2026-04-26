@@ -39,7 +39,8 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "role",
-          message: "Only owner users can request another role dashboard."
+          message: "Only owner users can request another role dashboard.",
+          code: "ROLE_SCOPE_NOT_ALLOWED"
         }
       ]);
     }
@@ -55,7 +56,8 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "doctorId",
-          message: "doctorId is required when requesting a doctor dashboard outside a doctor session."
+          message: "doctorId is required when requesting a doctor dashboard outside a doctor session.",
+          code: "DOCTOR_ID_REQUIRED_FOR_ROLE_SCOPE"
         }
       ]);
     }
@@ -64,7 +66,8 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       throw validationError([
         {
           field: "assistantId",
-          message: "assistantId is required when requesting an assistant dashboard outside an assistant session."
+          message: "assistantId is required when requesting an assistant dashboard outside an assistant session.",
+          code: "ASSISTANT_ID_REQUIRED_FOR_ROLE_SCOPE"
         }
       ]);
     }
