@@ -16,15 +16,46 @@ import { createSafeErrorLog, createSafeRequestLog, scrubPhi } from "./lib/phi-sc
 
 const buildValidationErrorEnvelope = (
   requestId: string,
-  issues: Array<{ field: string; message: string }>
+  issues: Array<{ field: string; message: string; code: string }>
 ) => ({
   error: "Validation failed.",
+  message: "Validation failed.",
   code: "VALIDATION_ERROR",
+  details: {
+    issues
+  },
   severity: "warning" as const,
   userMessage: "Please check the highlighted fields and try again.",
   requestId,
   statusCode: 400,
   issues
+});
+
+const buildErrorEnvelope = ({
+  requestId,
+  statusCode,
+  code,
+  message,
+  severity,
+  userMessage,
+  details
+}: {
+  requestId: string;
+  statusCode: number;
+  code: string;
+  message: string;
+  severity: "warning" | "error";
+  userMessage: string;
+  details?: Record<string, unknown> | null;
+}) => ({
+  error: message,
+  message,
+  code,
+  details: details ?? null,
+  severity,
+  userMessage,
+  requestId,
+  statusCode
 });
 
 export const buildApp = async () => {
@@ -133,17 +164,26 @@ export const buildApp = async () => {
     if ((error as { code?: string }).code === "FST_ERR_CTP_INVALID_JSON_BODY") {
       return reply
         .status(400)
-        .send(buildValidationErrorEnvelope(request.id, [{ field: "body", message: "Must be valid JSON." }]));
+        .send(
+          buildValidationErrorEnvelope(request.id, [
+            {
+              field: "body",
+              message: "Must be valid JSON.",
+              code: "INVALID_FORMAT"
+            }
+          ])
+        );
     }
     if (error instanceof HttpError) {
-      return reply.status(error.statusCode).send({
-        message: error.message,
+      return reply.status(error.statusCode).send(buildErrorEnvelope({
+        requestId: request.id,
+        statusCode: error.statusCode,
         code: error.code,
+        message: error.message,
         severity: error.severity,
         userMessage: error.userMessage,
-        requestId: request.id,
-        statusCode: error.statusCode
-      });
+        details: error.details
+      }));
     }
     request.log.error(
       {
@@ -153,14 +193,17 @@ export const buildApp = async () => {
       },
       "Unhandled error"
     );
-    return reply.status(500).send({
-      message: "Internal server error",
-      code: "INTERNAL_SERVER_ERROR",
-      severity: "error",
-      userMessage: "Something went wrong. Please try again.",
-      requestId: request.id,
-      statusCode: 500
-    });
+    return reply.status(500).send(
+      buildErrorEnvelope({
+        requestId: request.id,
+        statusCode: 500,
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Internal server error",
+        severity: "error",
+        userMessage: "Something went wrong. Please try again.",
+        details: null
+      })
+    );
   });
 
   app.get("/docs", async (_request, reply) => {
