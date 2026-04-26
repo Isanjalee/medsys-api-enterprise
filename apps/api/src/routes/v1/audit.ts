@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { auditLogs } from "@medsys/db";
 import { listAuditLogsQuerySchema } from "@medsys/validation";
 import { parseOrThrowValidation } from "../../lib/http-error.js";
@@ -25,12 +25,27 @@ const auditRoutes: FastifyPluginAsync = async (app) => {
     if (query.from) conditions.push(gte(auditLogs.createdAt, new Date(query.from)));
     if (query.to) conditions.push(lte(auditLogs.createdAt, new Date(query.to)));
 
-    return app.readDb
-      .select()
-      .from(auditLogs)
-      .where(and(...conditions))
-      .orderBy(desc(auditLogs.createdAt))
-      .limit(Math.min(query.limit ?? 100, 1000));
+    const whereClause = and(...conditions);
+    const limit = Math.min(query.limit ?? 100, 1000);
+    const offset = query.offset ?? 0;
+
+    const [items, totalRows] = await Promise.all([
+      app.readDb
+        .select()
+        .from(auditLogs)
+        .where(whereClause)
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(limit)
+        .offset(offset),
+      app.readDb.select({ count: sql<number>`count(*)` }).from(auditLogs).where(whereClause)
+    ]);
+
+    return {
+      items,
+      limit,
+      offset,
+      total: Number(totalRows[0]?.count ?? 0)
+    };
   });
 };
 
