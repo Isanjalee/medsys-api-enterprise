@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { taskEvents, tasks, users } from "@medsys/db";
 
 type DbClient = any;
@@ -12,6 +12,7 @@ export type TaskFilters = {
   assignedUserId?: number | null;
   sourceType?: "appointment" | "consultation" | "prescription" | "dispense" | "inventory_alert" | "followup";
   limit: number;
+  offset: number;
 };
 
 export const serializeTask = (row: any) => ({
@@ -47,7 +48,7 @@ export const listTasks = async ({
   organizationId: string;
   filters: TaskFilters;
 }) => {
-  const conditions = [eq(tasks.organizationId, organizationId)];
+  const conditions: SQL<unknown>[] = [eq(tasks.organizationId, organizationId)];
   if (filters.role) conditions.push(eq(tasks.assignedRole, filters.role));
   if (filters.status) conditions.push(eq(tasks.status, filters.status));
   if (filters.priority) conditions.push(eq(tasks.priority, filters.priority));
@@ -56,35 +57,44 @@ export const listTasks = async ({
   if (filters.assignedUserId) conditions.push(eq(tasks.assignedUserId, filters.assignedUserId));
   if (filters.sourceType) conditions.push(eq(tasks.sourceType, filters.sourceType));
 
-  const rows = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      description: tasks.description,
-      taskType: tasks.taskType,
-      sourceType: tasks.sourceType,
-      sourceId: tasks.sourceId,
-      assignedRole: tasks.assignedRole,
-      assignedUserId: tasks.assignedUserId,
-      assignedUserFirstName: users.firstName,
-      assignedUserLastName: users.lastName,
-      priority: tasks.priority,
-      status: tasks.status,
-      visitMode: tasks.visitMode,
-      doctorWorkflowMode: tasks.doctorWorkflowMode,
-      dueAt: tasks.dueAt,
-      metadata: tasks.metadata,
-      createdAt: tasks.createdAt,
-      updatedAt: tasks.updatedAt,
-      completedAt: tasks.completedAt
-    })
-    .from(tasks)
-    .leftJoin(users, eq(users.id, tasks.assignedUserId))
-    .where(and(...conditions))
-    .orderBy(desc(tasks.createdAt))
-    .limit(filters.limit);
+  const whereClause = and(...conditions);
 
-  return rows.map(serializeTask);
+  const [rows, totalRows] = await Promise.all([
+    db
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        description: tasks.description,
+        taskType: tasks.taskType,
+        sourceType: tasks.sourceType,
+        sourceId: tasks.sourceId,
+        assignedRole: tasks.assignedRole,
+        assignedUserId: tasks.assignedUserId,
+        assignedUserFirstName: users.firstName,
+        assignedUserLastName: users.lastName,
+        priority: tasks.priority,
+        status: tasks.status,
+        visitMode: tasks.visitMode,
+        doctorWorkflowMode: tasks.doctorWorkflowMode,
+        dueAt: tasks.dueAt,
+        metadata: tasks.metadata,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+        completedAt: tasks.completedAt
+      })
+      .from(tasks)
+      .leftJoin(users, eq(users.id, tasks.assignedUserId))
+      .where(whereClause)
+      .orderBy(desc(tasks.createdAt))
+      .limit(filters.limit)
+      .offset(filters.offset),
+    db.select({ count: sql<number>`count(*)` }).from(tasks).where(whereClause)
+  ]);
+
+  return {
+    items: rows.map(serializeTask),
+    total: Number(totalRows[0]?.count ?? 0)
+  };
 };
 
 export const getTaskById = async ({
@@ -174,4 +184,3 @@ export const createTaskEvent = async ({
 
   return inserted[0] ?? null;
 };
-
