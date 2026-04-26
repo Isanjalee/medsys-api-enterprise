@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import authRoutes from "./v1/auth.js";
+import systemRoutes from "./v1/system.js";
 import patientRoutes from "./v1/patients.js";
 import familyRoutes from "./v1/families.js";
 import appointmentRoutes from "./v1/appointments.js";
@@ -18,6 +19,7 @@ import visitsRoutes from "./v1/visits.js";
 import consultationRoutes from "./v1/consultations.js";
 
 const routesPlugin: FastifyPluginAsync = async (app) => {
+  await app.register(systemRoutes);
   await app.register(authRoutes, { prefix: "/auth" });
   await app.register(userRoutes, { prefix: "/users" });
   await app.register(clinicalRoutes, { prefix: "/clinical" });
