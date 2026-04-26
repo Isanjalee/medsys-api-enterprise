@@ -1295,22 +1295,25 @@ const buildOwnerDashboard = async (input: DashboardInput) => {
       : [])
   ];
 
-  return {
-    roleContext: buildBaseRoleContext(input),
-    generatedAt: input.generatedAt.toISOString(),
-    range: buildBaseRange(input),
-    summary,
-    charts,
-    insights,
-    tables: {
-      doctorPerformance,
-      assistantPerformance,
-      topDiagnoses: buildTopList(data.diagnosisRows.map((row) => row.diagnosisName)),
-      topTests: buildTopList(data.testRows.map((row) => row.testName)),
-      topMedications: buildTopList(data.prescriptionItemRows.map((row) => row.drugName))
+  return applyOwnerOperationMode(
+    {
+      roleContext: buildBaseRoleContext(input),
+      generatedAt: input.generatedAt.toISOString(),
+      range: buildBaseRange(input),
+      summary,
+      charts,
+      insights,
+      tables: {
+        doctorPerformance,
+        assistantPerformance,
+        topDiagnoses: buildTopList(data.diagnosisRows.map((row) => row.diagnosisName)),
+        topTests: buildTopList(data.testRows.map((row) => row.testName)),
+        topMedications: buildTopList(data.prescriptionItemRows.map((row) => row.drugName))
+      },
+      alerts
     },
-    alerts
-  };
+    input.operationMode
+  );
 };
 
 export const buildAnalyticsDashboard = async (input: DashboardInput) => {
