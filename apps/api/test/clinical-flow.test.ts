@@ -74,22 +74,32 @@ const getUserIdByEmail = async (
 const assertValidationEnvelope = (
   body: {
     error: string;
+    message: string;
     code: string;
+    details: {
+      issues: Array<{ field: string; message: string; code: string }>;
+    };
     severity: string;
     userMessage: string;
     requestId: string;
     statusCode: number;
-    issues: Array<{ field: string; message: string }>;
+    issues: Array<{ field: string; message: string; code: string }>;
   },
   issues: Array<{ field: string; message: string }>
 ) => {
   assert.equal(body.error, "Validation failed.");
+  assert.equal(body.message, "Validation failed.");
   assert.equal(body.code, "VALIDATION_ERROR");
   assert.equal(body.severity, "warning");
   assert.equal(body.userMessage, "Please check the highlighted fields and try again.");
   assert.equal(body.statusCode, 400);
   assert.equal(typeof body.requestId, "string");
-  assert.deepEqual(body.issues, issues);
+  assert.deepEqual(
+    body.issues.map((issue) => ({ field: issue.field, message: issue.message })),
+    issues
+  );
+  assert.equal(body.issues.every((issue) => typeof issue.code === "string" && issue.code.length > 0), true);
+  assert.deepEqual(body.details.issues, body.issues);
 };
 
 test("health endpoint", async () => {
@@ -122,6 +132,47 @@ test("auth status endpoint returns bootstrap metadata", async () => {
   const body = response.json() as { bootstrapping: unknown; users: unknown };
   assert.equal(typeof body.bootstrapping, "boolean");
   assert.equal(typeof body.users, "number");
+  await app.close();
+});
+
+test("system health endpoint exposes dependency status contract", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/system/health"
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    status: "up" | "degraded" | "down";
+    service: string;
+    timestamp: string;
+    uptimeSeconds: number;
+    dependencies: {
+      database: { status: string; configured: boolean };
+      cache: { status: string; configured: boolean };
+      search: { status: string; configured: boolean };
+    };
+  };
+  assert.equal(typeof body.service, "string");
+  assert.equal(body.service, "medsys-api");
+  assert.equal(typeof body.timestamp, "string");
+  assert.equal(typeof body.uptimeSeconds, "number");
+  assert.equal(body.status === "up" || body.status === "degraded" || body.status === "down", true);
+  assert.equal(typeof body.dependencies.database.status, "string");
+  assert.equal(typeof body.dependencies.cache.status, "string");
+  assert.equal(typeof body.dependencies.search.status, "string");
+
+  const aliasResponse = await app.inject({
+    method: "GET",
+    url: "/v1/health"
+  });
+  assert.equal(aliasResponse.statusCode, response.statusCode);
+  assert.equal((aliasResponse.json() as { status: string }).status, body.status);
   await app.close();
 });
 
@@ -366,6 +417,11 @@ test("analytics dashboard returns owner role-aware sections", async () => {
     insights: unknown[];
     tables: Record<string, unknown>;
     alerts: unknown[];
+    modePolicy: {
+      operationMode: string;
+      showAppointmentMetrics: boolean;
+      showWalkInMetrics: boolean;
+    };
   };
   assert.equal(body.roleContext.resolvedRole, "owner");
   assert.equal(typeof body.generatedAt, "string");
@@ -375,6 +431,9 @@ test("analytics dashboard returns owner role-aware sections", async () => {
   assert.equal(Array.isArray(body.insights), true);
   assert.equal(typeof body.tables, "object");
   assert.equal(Array.isArray(body.alerts), true);
+  assert.equal(body.modePolicy.operationMode, "hybrid");
+  assert.equal(body.modePolicy.showAppointmentMetrics, true);
+  assert.equal(body.modePolicy.showWalkInMetrics, true);
   await app.close();
 });
 
@@ -851,9 +910,15 @@ test("daily summary endpoints generate role-aware snapshots and expose history",
   assert.equal(doctorHistory.statusCode, 200);
   const doctorHistoryBody = doctorHistory.json() as {
     roleContext: string;
+    limit: number;
+    offset: number;
+    total: number;
     items: Array<{ id: number; roleContext: string; payload: { roleContext: string; filterContext: { doctorWorkflowMode: string | null } } }>;
   };
   assert.equal(doctorHistoryBody.roleContext, "doctor");
+  assert.equal(doctorHistoryBody.limit, 5);
+  assert.equal(doctorHistoryBody.offset, 0);
+  assert.equal(doctorHistoryBody.total >= doctorHistoryBody.items.length, true);
   assert.equal(doctorHistoryBody.items.length >= 1, true);
   assert.equal(doctorHistoryBody.items[0]?.roleContext, "doctor");
   assert.equal(doctorHistoryBody.items[0]?.payload.roleContext, "doctor");
@@ -888,9 +953,15 @@ test("daily summary endpoints generate role-aware snapshots and expose history",
   assert.equal(ownerDoctorHistory.statusCode, 200);
   const ownerDoctorHistoryBody = ownerDoctorHistory.json() as {
     roleContext: string;
+    limit: number;
+    offset: number;
+    total: number;
     items: Array<{ payload: { roleContext: string } }>;
   };
   assert.equal(ownerDoctorHistoryBody.roleContext, "doctor");
+  assert.equal(ownerDoctorHistoryBody.limit, 5);
+  assert.equal(ownerDoctorHistoryBody.offset, 0);
+  assert.equal(ownerDoctorHistoryBody.total >= ownerDoctorHistoryBody.items.length, true);
   assert.equal(Array.isArray(ownerDoctorHistoryBody.items), true);
 
   await app.close();
@@ -947,8 +1018,14 @@ test("task engine creates, lists, updates, and completes role-aware tasks", asyn
 
   assert.equal(doctorTasksResponse.statusCode, 200);
   const doctorTasks = doctorTasksResponse.json() as {
+    limit: number;
+    offset: number;
+    total: number;
     items: Array<{ id: number; assignedUserId: number | null; assignedRole: string; status: string }>;
   };
+  assert.equal(doctorTasks.limit, 50);
+  assert.equal(doctorTasks.offset, 0);
+  assert.equal(doctorTasks.total >= doctorTasks.items.length, true);
   assert.equal(doctorTasks.items.some((item) => item.id === createdTask.task.id), true);
 
   const updateTaskResponse = await app.inject({
@@ -1063,8 +1140,14 @@ test("follow-up module creates, lists, and updates doctor-scoped follow-up recor
 
   assert.equal(doctorList.statusCode, 200);
   const doctorListBody = doctorList.json() as {
+    limit: number;
+    offset: number;
+    total: number;
     items: Array<{ id: number; doctorId: number | null; followupType: string }>;
   };
+  assert.equal(doctorListBody.limit, 10);
+  assert.equal(doctorListBody.offset, 0);
+  assert.equal(doctorListBody.total >= doctorListBody.items.length, true);
   assert.equal(doctorListBody.items.some((item) => item.id === createdBody.followup.id), true);
   assert.equal(doctorListBody.items.every((item) => item.doctorId === doctorId), true);
 
@@ -2658,6 +2741,112 @@ test("multi-role user can switch active role and see updated role context", asyn
   await app.close();
 });
 
+test("tasks and reports enforce role scope using activeRole context", async () => {
+  if (!process.env.DATABASE_URL) {
+    return;
+  }
+
+  const app = await buildApp();
+  const ownerLogin = await loginAs(app, "owner@medsys.local");
+  const assistantId = await getUserIdByEmail(app, ownerLogin.accessToken, "assistant", "assistant@medsys.local");
+  const uniqueSuffix = Date.now().toString();
+  const email = `matrix-role-${uniqueSuffix}@medsys.local`;
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/users",
+    headers: {
+      authorization: `Bearer ${ownerLogin.accessToken}`
+    },
+    payload: {
+      firstName: "Role",
+      lastName: "Matrix",
+      email,
+      password: "ChangeMe123!",
+      roles: ["owner", "doctor"],
+      activeRole: "doctor",
+      doctorWorkflowMode: "self_service"
+    }
+  });
+
+  assert.equal(createResponse.statusCode, 201);
+
+  const multiRoleLogin = await loginAs(app, email);
+
+  const scopedTaskDenied = await app.inject({
+    method: "GET",
+    url: `/v1/tasks?assignedUserId=${assistantId}`,
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+  assert.equal(scopedTaskDenied.statusCode, 400);
+  const scopedTaskDeniedBody = scopedTaskDenied.json() as {
+    code: string;
+    issues: Array<{ field: string; message: string; code: string }>;
+  };
+  assert.equal(scopedTaskDeniedBody.code, "VALIDATION_ERROR");
+  assert.equal(scopedTaskDeniedBody.issues[0]?.field, "assignedUserId");
+
+  const scopedReportDenied = await app.inject({
+    method: "GET",
+    url: `/v1/reports/daily-summary?role=assistant&assistantId=${assistantId}`,
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+  assert.equal(scopedReportDenied.statusCode, 400);
+  const scopedReportDeniedBody = scopedReportDenied.json() as {
+    code: string;
+    issues: Array<{ field: string; message: string; code: string }>;
+  };
+  assert.equal(scopedReportDeniedBody.code, "VALIDATION_ERROR");
+  assert.equal(scopedReportDeniedBody.issues[0]?.field, "role");
+
+  const switchRoleResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/active-role",
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    },
+    payload: {
+      activeRole: "owner"
+    }
+  });
+  assert.equal(switchRoleResponse.statusCode, 200);
+
+  const scopedTaskAllowed = await app.inject({
+    method: "GET",
+    url: `/v1/tasks?assignedUserId=${assistantId}&limit=5&offset=0`,
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+  assert.equal(scopedTaskAllowed.statusCode, 200);
+  const scopedTaskAllowedBody = scopedTaskAllowed.json() as {
+    items: unknown[];
+    limit: number;
+    offset: number;
+    total: number;
+  };
+  assert.equal(scopedTaskAllowedBody.limit, 5);
+  assert.equal(scopedTaskAllowedBody.offset, 0);
+  assert.equal(scopedTaskAllowedBody.total >= scopedTaskAllowedBody.items.length, true);
+
+  const scopedReportAllowed = await app.inject({
+    method: "GET",
+    url: `/v1/reports/daily-summary?role=assistant&assistantId=${assistantId}`,
+    headers: {
+      authorization: `Bearer ${multiRoleLogin.accessToken}`
+    }
+  });
+  assert.equal(scopedReportAllowed.statusCode, 200);
+  const scopedReportAllowedBody = scopedReportAllowed.json() as { roleContext: string };
+  assert.equal(scopedReportAllowedBody.roleContext, "assistant");
+
+  await app.close();
+});
+
 test("family create and member read flow returns the linked patient", async () => {
   if (!process.env.DATABASE_URL) {
     return;
@@ -3867,16 +4056,24 @@ test("audit logs endpoint returns filtered audit rows for authorized users", asy
   });
 
   assert.equal(response.statusCode, 200);
-  const rows = response.json() as Array<{
-    entityType: string;
-    action: string;
-    entityId: number | null;
-    createdAt: string;
-  }>;
-  assert.equal(Array.isArray(rows), true);
-  assert.equal(rows.length > 0, true);
-  assert.equal(rows.some((row) => row.entityType === "patient" && row.action === "create"), true);
-  assert.equal(typeof rows[0]?.createdAt, "string");
+  const body = response.json() as {
+    items: Array<{
+      entityType: string;
+      action: string;
+      entityId: number | null;
+      createdAt: string;
+    }>;
+    limit: number;
+    offset: number;
+    total: number;
+  };
+  assert.equal(Array.isArray(body.items), true);
+  assert.equal(body.limit, 10);
+  assert.equal(body.offset, 0);
+  assert.equal(body.total >= body.items.length, true);
+  assert.equal(body.items.length > 0, true);
+  assert.equal(body.items.some((row) => row.entityType === "patient" && row.action === "create"), true);
+  assert.equal(typeof body.items[0]?.createdAt, "string");
 });
 
 test("users create accepts frontend-compatible name payload", async () => {
@@ -4252,10 +4449,21 @@ test("clinical icd10 rejects oversized terms with validation envelope", async ()
     });
 
     assert.equal(response.statusCode, 400);
-    assert.deepEqual(response.json(), {
-      error: "Validation failed.",
-      issues: [{ field: "terms", message: "String must contain at most 100 character(s)." }]
-    });
+    const body = response.json() as {
+      error: string;
+      code: string;
+      details: {
+        issues: Array<{ field: string; message: string; code: string }>;
+      };
+      issues: Array<{ field: string; message: string; code: string }>;
+    };
+    assert.equal(body.error, "Validation failed.");
+    assert.equal(body.code, "VALIDATION_ERROR");
+    assert.deepEqual(body.issues.map((issue) => ({ field: issue.field, message: issue.message })), [
+      { field: "terms", message: "String must contain at most 100 character(s)." }
+    ]);
+    assert.deepEqual(body.details.issues, body.issues);
+    assert.equal(body.issues[0]?.code, "OUT_OF_RANGE");
   } finally {
     await app.close();
   }
@@ -7001,7 +7209,7 @@ test("assistant cannot create encounters without encounter.write permission", as
   await app.close();
 });
 
-test("assistant cannot access audit logs without audit.read permission", async () => {
+test("assistant can access audit logs", async () => {
   if (!process.env.DATABASE_URL) {
     return;
   }
@@ -7017,6 +7225,20 @@ test("assistant cannot access audit logs without audit.read permission", async (
     }
   });
 
-  assert.equal(response.statusCode, 403);
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    items: Array<{
+      entityType: string;
+      action: string;
+      createdAt: string;
+    }>;
+    limit: number;
+    offset: number;
+    total: number;
+  };
+  assert.equal(Array.isArray(body.items), true);
+  assert.equal(body.limit, 100);
+  assert.equal(body.offset, 0);
+  assert.equal(body.total >= body.items.length, true);
   await app.close();
 });
