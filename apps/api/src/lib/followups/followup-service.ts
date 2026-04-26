@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { appointments, encounters, patientFollowups, patients, users } from "@medsys/db";
 
 type FollowupFilters = {
@@ -10,6 +10,7 @@ type FollowupFilters = {
   visitMode?: "appointment" | "walk_in" | null;
   doctorWorkflowMode?: "self_service" | "clinic_supported" | null;
   limit: number;
+  offset: number;
 };
 
 const serializeFollowup = (row: {
@@ -60,7 +61,7 @@ export const listFollowups = async ({
   organizationId: string;
   filters: FollowupFilters;
 }) => {
-  const conditions = [eq(patientFollowups.organizationId, organizationId)];
+  const conditions: SQL<unknown>[] = [eq(patientFollowups.organizationId, organizationId)];
 
   if (filters.patientId) conditions.push(eq(patientFollowups.patientId, filters.patientId));
   if (filters.doctorId) conditions.push(eq(patientFollowups.doctorId, filters.doctorId));
@@ -72,35 +73,44 @@ export const listFollowups = async ({
   if (filters.dueFrom) conditions.push(gte(patientFollowups.dueDate, filters.dueFrom));
   if (filters.dueTo) conditions.push(lte(patientFollowups.dueDate, filters.dueTo));
 
-  const rows = await db
-    .select({
-      id: patientFollowups.id,
-      patientId: patientFollowups.patientId,
-      encounterId: patientFollowups.encounterId,
-      doctorId: patientFollowups.doctorId,
-      followupType: patientFollowups.followupType,
-      dueDate: patientFollowups.dueDate,
-      status: patientFollowups.status,
-      visitMode: patientFollowups.visitMode,
-      doctorWorkflowMode: patientFollowups.doctorWorkflowMode,
-      note: patientFollowups.note,
-      createdByUserId: patientFollowups.createdByUserId,
-      createdAt: patientFollowups.createdAt,
-      updatedAt: patientFollowups.updatedAt,
-      completedAt: patientFollowups.completedAt,
-      patientFirstName: patients.firstName,
-      patientLastName: patients.lastName,
-      doctorFirstName: users.firstName,
-      doctorLastName: users.lastName
-    })
-    .from(patientFollowups)
-    .innerJoin(patients, eq(patients.id, patientFollowups.patientId))
-    .leftJoin(users, eq(users.id, patientFollowups.doctorId))
-    .where(and(...conditions))
-    .orderBy(patientFollowups.dueDate, desc(patientFollowups.createdAt))
-    .limit(filters.limit);
+  const whereClause = and(...conditions);
 
-  return rows.map(serializeFollowup);
+  const [rows, totalRows] = await Promise.all([
+    db
+      .select({
+        id: patientFollowups.id,
+        patientId: patientFollowups.patientId,
+        encounterId: patientFollowups.encounterId,
+        doctorId: patientFollowups.doctorId,
+        followupType: patientFollowups.followupType,
+        dueDate: patientFollowups.dueDate,
+        status: patientFollowups.status,
+        visitMode: patientFollowups.visitMode,
+        doctorWorkflowMode: patientFollowups.doctorWorkflowMode,
+        note: patientFollowups.note,
+        createdByUserId: patientFollowups.createdByUserId,
+        createdAt: patientFollowups.createdAt,
+        updatedAt: patientFollowups.updatedAt,
+        completedAt: patientFollowups.completedAt,
+        patientFirstName: patients.firstName,
+        patientLastName: patients.lastName,
+        doctorFirstName: users.firstName,
+        doctorLastName: users.lastName
+      })
+      .from(patientFollowups)
+      .innerJoin(patients, eq(patients.id, patientFollowups.patientId))
+      .leftJoin(users, eq(users.id, patientFollowups.doctorId))
+      .where(whereClause)
+      .orderBy(patientFollowups.dueDate, desc(patientFollowups.createdAt))
+      .limit(filters.limit)
+      .offset(filters.offset),
+    db.select({ count: sql<number>`count(*)` }).from(patientFollowups).where(whereClause)
+  ]);
+
+  return {
+    items: rows.map(serializeFollowup),
+    total: Number(totalRows[0]?.count ?? 0)
+  };
 };
 
 export const getFollowupById = async ({
