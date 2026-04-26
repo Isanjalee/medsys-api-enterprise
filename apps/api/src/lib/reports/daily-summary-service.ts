@@ -695,13 +695,15 @@ export const listDailySummaryHistory = async ({
   organizationId,
   scope,
   summaryDate,
-  limit
+  limit,
+  offset
 }: {
   db: DbClient;
   organizationId: string;
   scope: DailySummaryScope;
   summaryDate?: string | null;
   limit: number;
+  offset: number;
 }) => {
   const conditions = [eq(dailySummarySnapshots.organizationId, organizationId), eq(dailySummarySnapshots.roleContext, scope.role)];
 
@@ -720,28 +722,37 @@ export const listDailySummaryHistory = async ({
     );
   }
 
-  const rows = await db
-    .select({
-      id: dailySummarySnapshots.id,
-      roleContext: dailySummarySnapshots.roleContext,
-      actorUserId: dailySummarySnapshots.actorUserId,
-      summaryDate: dailySummarySnapshots.summaryDate,
-      summaryType: dailySummarySnapshots.summaryType,
-      payload: dailySummarySnapshots.payload,
-      createdAt: dailySummarySnapshots.createdAt
-    })
-    .from(dailySummarySnapshots)
-    .where(and(...conditions))
-    .orderBy(desc(dailySummarySnapshots.summaryDate), desc(dailySummarySnapshots.createdAt))
-    .limit(limit);
+  const whereClause = and(...conditions);
 
-  return rows.map((row: any) => ({
-    id: row.id,
-    roleContext: row.roleContext,
-    actorUserId: row.actorUserId,
-    summaryDate: row.summaryDate,
-    summaryType: row.summaryType,
-    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
-    payload: row.payload
-  }));
+  const [rows, totalRows] = await Promise.all([
+    db
+      .select({
+        id: dailySummarySnapshots.id,
+        roleContext: dailySummarySnapshots.roleContext,
+        actorUserId: dailySummarySnapshots.actorUserId,
+        summaryDate: dailySummarySnapshots.summaryDate,
+        summaryType: dailySummarySnapshots.summaryType,
+        payload: dailySummarySnapshots.payload,
+        createdAt: dailySummarySnapshots.createdAt
+      })
+      .from(dailySummarySnapshots)
+      .where(whereClause)
+      .orderBy(desc(dailySummarySnapshots.summaryDate), desc(dailySummarySnapshots.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db.select({ count: sql<number>`count(*)` }).from(dailySummarySnapshots).where(whereClause)
+  ]);
+
+  return {
+    items: rows.map((row: any) => ({
+      id: row.id,
+      roleContext: row.roleContext,
+      actorUserId: row.actorUserId,
+      summaryDate: row.summaryDate,
+      summaryType: row.summaryType,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+      payload: row.payload
+    })),
+    total: Number(totalRows[0]?.count ?? 0)
+  };
 };
