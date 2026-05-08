@@ -185,6 +185,34 @@ export const buildApp = async () => {
         details: error.details
       }));
     }
+
+    const errorWithStatus = error as Error & { statusCode?: unknown; code?: unknown };
+    if (typeof errorWithStatus.statusCode === "number" && errorWithStatus.statusCode >= 400 && errorWithStatus.statusCode < 600) {
+      const statusCode = errorWithStatus.statusCode;
+      const message = error instanceof Error ? error.message : "Request failed";
+      const code =
+        typeof errorWithStatus.code === "string"
+          ? errorWithStatus.code
+          : statusCode === 429
+            ? "RATE_LIMIT_EXCEEDED"
+            : "REQUEST_FAILED";
+
+      return reply.status(statusCode).send(
+        buildErrorEnvelope({
+          requestId: request.id,
+          statusCode,
+          code,
+          message,
+          severity: statusCode >= 500 ? "error" : "warning",
+          userMessage:
+            statusCode === 429
+              ? "Too many requests. Please wait and try again."
+              : "Request could not be completed. Please try again.",
+          details: null
+        })
+      );
+    }
+
     request.log.error(
       {
         request: createSafeRequestLog(request),

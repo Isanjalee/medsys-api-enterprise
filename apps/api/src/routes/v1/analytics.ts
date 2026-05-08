@@ -7,6 +7,34 @@ import { parseOrThrowValidation, validationError } from "../../lib/http-error.js
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { resolveActiveWorkflowProfile } from "../../lib/user-permissions.js";
 
+const ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS = 20;
+
+const dashboardCacheKey = (input: {
+  organizationId: string;
+  userId: number;
+  role: "owner" | "doctor" | "assistant";
+  activeRole: "owner" | "doctor" | "assistant";
+  roles: Array<"owner" | "doctor" | "assistant">;
+  query: {
+    range: "1d" | "7d" | "30d" | "custom";
+    operationMode: "walk_in" | "appointment" | "hybrid";
+    role: "owner" | "doctor" | "assistant";
+    doctorId: number | null;
+    assistantId: number | null;
+    dateFrom: string | null;
+    dateTo: string | null;
+  };
+}): string =>
+  JSON.stringify({
+    route: "analytics.dashboard",
+    organizationId: input.organizationId,
+    userId: input.userId,
+    role: input.role,
+    activeRole: input.activeRole,
+    roles: [...input.roles].sort(),
+    query: input.query
+  });
+
 const analyticsRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Analytics", "AnalyticsController", {
     "GET /overview": {
@@ -72,6 +100,27 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
       ]);
     }
 
+    const cacheKey = dashboardCacheKey({
+      organizationId: actor.organizationId,
+      userId: actor.userId,
+      role: actor.role,
+      activeRole: actor.activeRole,
+      roles: actor.roles,
+      query: {
+        range: rangePreset,
+        operationMode: query.operationMode ?? "hybrid",
+        role: requestedRole,
+        doctorId: resolvedDoctorId,
+        assistantId: resolvedAssistantId,
+        dateFrom: query.dateFrom ?? null,
+        dateTo: query.dateTo ?? null
+      }
+    });
+    const cached = await app.cacheService.getJson<Record<string, unknown>>("readResponse", cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+
     const now = new Date();
     const start =
       rangePreset === "custom"
@@ -83,7 +132,7 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
             : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const end = rangePreset === "custom" ? new Date(`${query.dateTo!}T23:59:59.999Z`) : now;
 
-    return buildAnalyticsDashboard({
+    const payload = await buildAnalyticsDashboard({
       db: app.analyticsDb,
       organizationId: actor.organizationId,
       actor: {
@@ -108,6 +157,8 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
         resolveActiveWorkflowProfile(actor.roles, actor.activeRole, actor.workflowProfiles.doctor?.mode ?? null) ??
         ({ mode: "standard" } as const)
     });
+    await app.cacheService.setJson("readResponse", cacheKey, payload, ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS);
+    return payload;
   });
 
   app.get("/overview", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {

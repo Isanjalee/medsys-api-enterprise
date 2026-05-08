@@ -468,8 +468,8 @@ export const buildDoctorPerformanceReport = async ({ db, organizationId, range, 
             from encounters report_encounters
             where report_encounters.id = ${prescriptions.encounterId}
               and report_encounters.organization_id = ${prescriptions.organizationId}
-              and report_encounters.checked_at >= ${range.start}
-              and report_encounters.checked_at <= ${range.end}
+              and report_encounters.checked_at >= ${range.start.toISOString()}
+              and report_encounters.checked_at <= ${range.end.toISOString()}
               and report_encounters.deleted_at is null
               ${filters.doctorId ? sql`and report_encounters.doctor_id = ${filters.doctorId}` : sql``}
               ${filters.assistantId ? sql`and exists (

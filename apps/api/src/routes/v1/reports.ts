@@ -22,6 +22,23 @@ type AuthenticatedActor = {
   extraPermissions: string[];
 };
 
+const REPORT_READ_CACHE_TTL_SECONDS = 20;
+
+const buildReportCacheKey = (input: {
+  endpoint: string;
+  actor: AuthenticatedActor;
+  query: Record<string, unknown>;
+}): string =>
+  JSON.stringify({
+    endpoint: input.endpoint,
+    organizationId: input.actor.organizationId,
+    userId: input.actor.userId,
+    role: input.actor.role,
+    activeRole: input.actor.activeRole,
+    roles: [...input.actor.roles].sort(),
+    query: input.query
+  });
+
 const reportsRoutes: FastifyPluginAsync = async (app) => {
   applyRouteDocs(app, "Reports", "ReportsController", {
     "GET /clinic-overview": {
@@ -158,6 +175,17 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
+  const getCachedReportResponse = async <T>(cacheKey: string, loader: () => Promise<T>): Promise<T> => {
+    const cached = await app.cacheService.getJson<T>("readResponse", cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+
+    const payload = await loader();
+    await app.cacheService.setJson("readResponse", cacheKey, payload, REPORT_READ_CACHE_TTL_SECONDS);
+    return payload;
+  };
+
   app.get("/daily-summary", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(dailySummaryQuerySchema, request.query ?? {});
@@ -192,35 +220,69 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     const query = parseOrThrowValidation(dailySummaryHistoryQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
     const scope = resolveDailySummaryScope(actor, query);
-    const history = await listDailySummaryHistory({
-      db: app.analyticsDb,
-      organizationId: actor.organizationId,
-      scope,
-      summaryDate: query.date ?? null,
-      limit: query.limit ?? 10,
-      offset: query.offset ?? 0
+    const cacheKey = buildReportCacheKey({
+      endpoint: "reports.daily-summary.history",
+      actor,
+      query: {
+        role: scope.role,
+        doctorId: scope.doctorId,
+        assistantId: scope.assistantId,
+        actorUserId: scope.actorUserId,
+        visitMode: scope.visitMode,
+        doctorWorkflowMode: scope.doctorWorkflowMode,
+        date: query.date ?? null,
+        limit: query.limit ?? 10,
+        offset: query.offset ?? 0
+      }
     });
 
-    return {
-      roleContext: scope.role,
-      items: history.items,
-      limit: query.limit ?? 10,
-      offset: query.offset ?? 0,
-      total: history.total
-    };
+    return getCachedReportResponse(cacheKey, async () => {
+      const history = await listDailySummaryHistory({
+        db: app.analyticsDb,
+        organizationId: actor.organizationId,
+        scope,
+        summaryDate: query.date ?? null,
+        limit: query.limit ?? 10,
+        offset: query.offset ?? 0
+      });
+
+      return {
+        roleContext: scope.role,
+        items: history.items,
+        limit: query.limit ?? 10,
+        offset: query.offset ?? 0,
+        total: history.total
+      };
+    });
   });
 
   app.get("/clinic-overview", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
-    const now = new Date();
-    return buildClinicOverviewReport({
-      db: app.analyticsDb,
-      organizationId: actor.organizationId,
-      range: parseRange(query),
-      filters: query,
-      generatedAt: now
+    const cacheKey = buildReportCacheKey({
+      endpoint: "reports.clinic-overview",
+      actor,
+      query: {
+        range: query.range ?? "7d",
+        dateFrom: query.dateFrom ?? null,
+        dateTo: query.dateTo ?? null,
+        doctorId: query.doctorId ?? null,
+        assistantId: query.assistantId ?? null,
+        visitMode: query.visitMode ?? null,
+        doctorWorkflowMode: query.doctorWorkflowMode ?? null
+      }
+    });
+
+    return getCachedReportResponse(cacheKey, async () => {
+      const now = new Date();
+      return buildClinicOverviewReport({
+        db: app.analyticsDb,
+        organizationId: actor.organizationId,
+        range: parseRange(query),
+        filters: query,
+        generatedAt: now
+      });
     });
   });
 
@@ -228,18 +290,34 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
-    const now = new Date();
-    return buildDoctorPerformanceReport({
-      db: app.analyticsDb,
-      organizationId: actor.organizationId,
-      range: parseRange(query),
-      filters: {
-        doctorId: actor.role === "doctor" ? actor.userId : (query.doctorId ?? null),
-        assistantId: null,
-        visitMode: query.visitMode,
+    const resolvedDoctorId = actor.role === "doctor" ? actor.userId : (query.doctorId ?? null);
+    const cacheKey = buildReportCacheKey({
+      endpoint: "reports.doctor-performance",
+      actor,
+      query: {
+        range: query.range ?? "7d",
+        dateFrom: query.dateFrom ?? null,
+        dateTo: query.dateTo ?? null,
+        doctorId: resolvedDoctorId,
+        visitMode: query.visitMode ?? null,
         doctorWorkflowMode: query.doctorWorkflowMode ?? null
-      },
-      generatedAt: now
+      }
+    });
+
+    return getCachedReportResponse(cacheKey, async () => {
+      const now = new Date();
+      return buildDoctorPerformanceReport({
+        db: app.analyticsDb,
+        organizationId: actor.organizationId,
+        range: parseRange(query),
+        filters: {
+          doctorId: resolvedDoctorId,
+          assistantId: null,
+          visitMode: query.visitMode,
+          doctorWorkflowMode: query.doctorWorkflowMode ?? null
+        },
+        generatedAt: now
+      });
     });
   });
 
@@ -247,18 +325,34 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
-    const now = new Date();
-    return buildAssistantPerformanceReport({
-      db: app.analyticsDb,
-      organizationId: actor.organizationId,
-      range: parseRange(query),
-      filters: {
-        doctorId: null,
-        assistantId: actor.role === "assistant" ? actor.userId : (query.assistantId ?? null),
-        visitMode: query.visitMode,
+    const resolvedAssistantId = actor.role === "assistant" ? actor.userId : (query.assistantId ?? null);
+    const cacheKey = buildReportCacheKey({
+      endpoint: "reports.assistant-performance",
+      actor,
+      query: {
+        range: query.range ?? "7d",
+        dateFrom: query.dateFrom ?? null,
+        dateTo: query.dateTo ?? null,
+        assistantId: resolvedAssistantId,
+        visitMode: query.visitMode ?? null,
         doctorWorkflowMode: query.doctorWorkflowMode ?? null
-      },
-      generatedAt: now
+      }
+    });
+
+    return getCachedReportResponse(cacheKey, async () => {
+      const now = new Date();
+      return buildAssistantPerformanceReport({
+        db: app.analyticsDb,
+        organizationId: actor.organizationId,
+        range: parseRange(query),
+        filters: {
+          doctorId: null,
+          assistantId: resolvedAssistantId,
+          visitMode: query.visitMode,
+          doctorWorkflowMode: query.doctorWorkflowMode ?? null
+        },
+        generatedAt: now
+      });
     });
   });
 
@@ -266,13 +360,29 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
-    const now = new Date();
-    return buildInventoryUsageReport({
-      db: app.analyticsDb,
-      organizationId: actor.organizationId,
-      range: parseRange(query),
-      filters: query,
-      generatedAt: now
+    const cacheKey = buildReportCacheKey({
+      endpoint: "reports.inventory-usage",
+      actor,
+      query: {
+        range: query.range ?? "7d",
+        dateFrom: query.dateFrom ?? null,
+        dateTo: query.dateTo ?? null,
+        doctorId: query.doctorId ?? null,
+        assistantId: query.assistantId ?? null,
+        visitMode: query.visitMode ?? null,
+        doctorWorkflowMode: query.doctorWorkflowMode ?? null
+      }
+    });
+
+    return getCachedReportResponse(cacheKey, async () => {
+      const now = new Date();
+      return buildInventoryUsageReport({
+        db: app.analyticsDb,
+        organizationId: actor.organizationId,
+        range: parseRange(query),
+        filters: query,
+        generatedAt: now
+      });
     });
   });
 
@@ -280,18 +390,34 @@ const reportsRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(reportsQuerySchema, request.query ?? {});
     validateScopedFilters(actor, query);
-    const now = new Date();
-    return buildPatientFollowupReport({
-      db: app.analyticsDb,
-      organizationId: actor.organizationId,
-      range: parseRange(query),
-      filters: {
-        doctorId: actor.role === "doctor" ? actor.userId : (query.doctorId ?? null),
-        assistantId: null,
-        visitMode: query.visitMode,
+    const resolvedDoctorId = actor.role === "doctor" ? actor.userId : (query.doctorId ?? null);
+    const cacheKey = buildReportCacheKey({
+      endpoint: "reports.patient-followup",
+      actor,
+      query: {
+        range: query.range ?? "7d",
+        dateFrom: query.dateFrom ?? null,
+        dateTo: query.dateTo ?? null,
+        doctorId: resolvedDoctorId,
+        visitMode: query.visitMode ?? null,
         doctorWorkflowMode: query.doctorWorkflowMode ?? null
-      },
-      generatedAt: now
+      }
+    });
+
+    return getCachedReportResponse(cacheKey, async () => {
+      const now = new Date();
+      return buildPatientFollowupReport({
+        db: app.analyticsDb,
+        organizationId: actor.organizationId,
+        range: parseRange(query),
+        filters: {
+          doctorId: resolvedDoctorId,
+          assistantId: null,
+          visitMode: query.visitMode,
+          doctorWorkflowMode: query.doctorWorkflowMode ?? null
+        },
+        generatedAt: now
+      });
     });
   });
 };
