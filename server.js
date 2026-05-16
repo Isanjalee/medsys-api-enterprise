@@ -2,25 +2,25 @@ const http = require('http');
 const net = require('net');
 const backendPath = './apps/api/dist/apps/api/src/index.js';
 
-// TEST IF THE DATABASE PORT IS ACCESSIBLE
+// CATCH ALL CRASHES
+process.on('uncaughtException', (err) => {
+    console.error("🔥 CRASH DETECTED:", err.message);
+    console.error(err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error("🔥 REJECTION DETECTED:", reason);
+});
+
 function testPort() {
-    console.log("--- CHECKING DATABASE PORT ---");
     const client = new net.Socket();
     client.setTimeout(5000);
     client.connect(5432, 'ep-autumn-moon-aqy6mguf.c-8.us-east-1.aws.neon.tech', () => {
-        console.log("✅ DATABASE PORT 5432 IS OPEN AND REACHABLE!");
+        console.log("✅ DB PORT OPEN");
         client.destroy();
     });
-    client.on('error', (err) => {
-        console.error("❌ DATABASE CONNECTION BLOCKED:", err.message);
-    });
-    client.on('timeout', () => {
-        console.error("❌ DATABASE CONNECTION TIMED OUT (FIREWALL?)");
-        client.destroy();
-    });
+    client.on('error', (err) => console.error("❌ DB PORT CLOSED:", err.message));
 }
 
-// TRAFFIC MONITOR
 const oldCreateServer = http.createServer;
 http.createServer = function(handler) {
     return oldCreateServer.call(this, (req, res) => {
@@ -29,7 +29,7 @@ http.createServer = function(handler) {
     });
 };
 
-// PEM FIX
+// PEM FIX (Keep this)
 function fixPem(key) {
     if (!key || key.includes('\n')) return key;
     return key.replace(/-----BEGIN [A-Z ]+-----/, "$&\n")
