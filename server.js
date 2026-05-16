@@ -1,16 +1,23 @@
+const fs = require('fs');
 const path = require('path');
-console.log("--- PROXY STARTING ---");
-console.log("Current Directory:", __dirname);
 
-// This goes up one level and then into public_html where the build is
-const backendPath = path.join(__dirname, '..', 'public_html', 'apps', 'api', 'dist', 'index.js');
+console.log("--- DIRECTORY SEARCH ---");
+console.log("Current Dir (__dirname):", __dirname);
 
 try {
-    console.log("Attempting to load backend from:", backendPath);
-    require(backendPath);
-    console.log("--- BACKEND LOADED SUCCESSFULLY ---");
+    const root = path.join(__dirname, '..');
+    console.log("Root Folders:", fs.readdirSync(root));
+    
+    // Check if there is a .builds folder or similar
+    if (fs.existsSync(path.join(root, 'public_html'))) {
+        console.log("Inside public_html:", fs.readdirSync(path.join(root, 'public_html')));
+    }
 } catch (err) {
-    console.error("!!! CRITICAL ERROR STARTING BACKEND !!!");
-    console.error(err);
-    process.exit(1);
+    console.error("Search failed:", err);
 }
+
+// Keep the old try-catch here so it still tries to run
+try {
+    const backendPath = path.join(__dirname, '..', 'public_html', 'apps', 'api', 'dist', 'index.js');
+    require(backendPath);
+} catch (e) {}
