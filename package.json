@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm install && npx turbo run build --filter=@medsys/api",
+    "build": "npm install typescript --save-dev && npx turbo run build --filter=@medsys/api",
     "dev": "npx turbo run dev --parallel",
     "lint": "npx turbo run lint",
     "typecheck": "npx turbo run typecheck",
