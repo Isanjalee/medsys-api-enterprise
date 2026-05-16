@@ -1,28 +1,31 @@
-console.log("--- PROXY STARTING ---");
 const path = require('path');
 const backendPath = './apps/api/dist/apps/api/src/index.js';
 
+process.on('uncaughtException', (err) => {
+    console.error('!!! UNCAUGHT EXCEPTION !!!');
+    console.error(err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('!!! UNHANDLED REJECTION !!!');
+    console.error(reason);
+});
+
+console.log("--- PROXY STARTING ---");
+
 async function start() {
-    console.log("Loading backend...");
     try {
-        const backend = require(backendPath);
-        console.log("Backend loaded. Export keys:", Object.keys(backend));
-        
-        if (typeof backend === 'function') {
-            await backend();
-        } else if (backend.default) {
-            await backend.default();
-        }
-        
-        console.log("--- BACKEND START COMMAND ISSUED ---");
+        console.log("Requiring backend...");
+        require(backendPath);
+        console.log("Backend required.");
     } catch (e) {
-        console.error("LOAD ERROR:", e);
+        console.error("REQUIRE ERROR:", e);
     }
 }
 
-// THIS KEEPS THE PROCESS ALIVE NO MATTER WHAT
+// Keep-alive loop
 setInterval(() => {
-    console.log("Keeping process alive... " + new Date().toISOString());
-}, 30000);
+    console.log("Process heartbeat: " + new Date().toISOString());
+}, 10000);
 
 start();
