@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npx turbo run build",
+    "build": "npm install && npx turbo run build --filter=api",
     "dev": "npx turbo run dev --parallel",
     "lint": "npx turbo run lint",
     "typecheck": "npx turbo run typecheck",
