@@ -7,18 +7,17 @@
     "apps/*",
     "packages/*"
   ],
-"scripts": {
-  "build": "npx turbo run build",
-  "dev": "npx turbo run dev --parallel",
-  "lint": "npx turbo run lint",
-  "typecheck": "npx turbo run typecheck",
-  "test": "npx turbo run test",
-  "export:docs-pdf": "powershell -ExecutionPolicy Bypass -File scripts/export-docs-pdfs.ps1",
-  "export:handover-docx": "python scripts/export-handover-docx.py",
-  "db:migrate": "node scripts/flyway-docker.cjs migrate",
-  "db:validate": "node scripts/flyway-docker.cjs validate",
-  "db:info": "node scripts/flyway-docker.cjs info"
-}
+  "scripts": {
+    "build": "npx turbo run build",
+    "dev": "npx turbo run dev --parallel",
+    "lint": "npx turbo run lint",
+    "typecheck": "npx turbo run typecheck",
+    "test": "npx turbo run test",
+    "export:docs-pdf": "powershell -ExecutionPolicy Bypass -File scripts/export-docs-pdfs.ps1",
+    "export:handover-docx": "python scripts/export-handover-docx.py",
+    "db:migrate": "node scripts/flyway-docker.cjs migrate",
+    "db:validate": "node scripts/flyway-docker.cjs validate",
+    "db:info": "node scripts/flyway-docker.cjs info"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
