@@ -10,8 +10,8 @@
     "dev": "tsc -w -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"No lint configured\""
-  }
+  },
   "devDependencies": {
-  "typescript": "^5.8.2"
-}
+    "typescript": "^5.8.2"
+  }
 }
