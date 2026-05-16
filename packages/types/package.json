@@ -11,4 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"No lint configured\""
   }
+  "devDependencies": {
+  "typescript": "^5.8.2"
+}
 }
