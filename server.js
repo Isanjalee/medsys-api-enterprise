@@ -1,20 +1,26 @@
 const http = require('http');
-const { Client } = require('pg');
+const net = require('net');
 const backendPath = './apps/api/dist/apps/api/src/index.js';
 
-async function testDb() {
-    console.log("--- TESTING DATABASE CONNECTION ---");
-    const client = new Client({ connectionString: process.env.DATABASE_URL });
-    try {
-        await client.connect();
-        console.log("✅ DATABASE CONNECTION SUCCESSFUL!");
-        await client.end();
-    } catch (err) {
-        console.error("❌ DATABASE CONNECTION FAILED:", err.message);
-    }
+// TEST IF THE DATABASE PORT IS ACCESSIBLE
+function testPort() {
+    console.log("--- CHECKING DATABASE PORT ---");
+    const client = new net.Socket();
+    client.setTimeout(5000);
+    client.connect(5432, 'ep-autumn-moon-aqy6mguf.c-8.us-east-1.aws.neon.tech', () => {
+        console.log("✅ DATABASE PORT 5432 IS OPEN AND REACHABLE!");
+        client.destroy();
+    });
+    client.on('error', (err) => {
+        console.error("❌ DATABASE CONNECTION BLOCKED:", err.message);
+    });
+    client.on('timeout', () => {
+        console.error("❌ DATABASE CONNECTION TIMED OUT (FIREWALL?)");
+        client.destroy();
+    });
 }
 
-// ... (Keep the PEM fix and Traffic Monitor logic from before) ...
+// TRAFFIC MONITOR
 const oldCreateServer = http.createServer;
 http.createServer = function(handler) {
     return oldCreateServer.call(this, (req, res) => {
@@ -23,6 +29,7 @@ http.createServer = function(handler) {
     });
 };
 
+// PEM FIX
 function fixPem(key) {
     if (!key || key.includes('\n')) return key;
     return key.replace(/-----BEGIN [A-Z ]+-----/, "$&\n")
@@ -35,9 +42,9 @@ process.env.JWT_REFRESH_PRIVATE_KEY = fixPem(process.env.JWT_REFRESH_PRIVATE_KEY
 process.env.JWT_REFRESH_PUBLIC_KEY = fixPem(process.env.JWT_REFRESH_PUBLIC_KEY);
 
 console.log("--- PROXY STARTING ---");
+testPort();
 
 async function start() {
-    await testDb();
     try {
         require(backendPath);
         console.log("Backend required.");
