@@ -1,0 +1,23 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+  pre_build:
+    commands:
+      - node -v && npm -v
+      - npm ci
+  build:
+    commands:
+      - npx turbo run build --filter=@medsys/api
+  post_build:
+    commands:
+      - chmod +x scripts/deploy/*.sh
+      - rm -rf node_modules
+      - find . -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
+
+artifacts:
+  files:
+    - '**/*'
+  name: medlink-api-build

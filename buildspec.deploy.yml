@@ -1,0 +1,47 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - test -n "$INSTANCE_ID" && test -n "$DEPLOY_BUCKET" && test -n "$REGION"
+      - KEY="deploy/medlink-api-${CODEBUILD_BUILD_NUMBER}-$(date +%s).tar.gz"
+      - tar czf /tmp/app.tar.gz -C "$CODEBUILD_SRC_DIR" .
+      - aws s3 cp /tmp/app.tar.gz "s3://${DEPLOY_BUCKET}/${KEY}"
+      - URL=$(aws s3 presign "s3://${DEPLOY_BUCKET}/${KEY}" --expires-in 1800 --region "$REGION")
+      - |
+        cat > /tmp/params.json <<JSON
+        {"commands":[
+          "set -e",
+          "wget -q -O /tmp/app.tar.gz '${URL}'",
+          "rm -rf /tmp/medlink-release && mkdir -p /tmp/medlink-release",
+          "tar xzf /tmp/app.tar.gz -C /tmp/medlink-release",
+          "bash /tmp/medlink-release/scripts/deploy/remote_deploy.sh /tmp/medlink-release"
+        ]}
+        JSON
+      - |
+        CMD_ID=$(aws ssm send-command \
+          --region "$REGION" \
+          --instance-ids "$INSTANCE_ID" \
+          --document-name AWS-RunShellScript \
+          --comment "Medlink pipeline deploy" \
+          --timeout-seconds 1800 \
+          --parameters file:///tmp/params.json \
+          --query "Command.CommandId" --output text)
+        echo "SSM CommandId: $CMD_ID"
+      - |
+        STATUS=Pending
+        for i in $(seq 1 90); do
+          STATUS=$(aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+          echo "poll $i: $STATUS"
+          case "$STATUS" in
+            Success) break ;;
+            Failed|Cancelled|TimedOut) break ;;
+          esac
+          sleep 10
+        done
+      - echo "===== remote deploy output ====="
+      - aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text || true
+      - echo "===== remote deploy errors ====="
+      - aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text || true
+      - echo "Final deploy status: $STATUS"
+      - test "$STATUS" = "Success"
