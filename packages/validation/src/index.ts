@@ -619,6 +619,8 @@ export const createUserFrontendSchema = z
 
 export const updateUserSchema = z
   .object({
+    email: z.string().email().max(160).optional(),
+    password: z.string().min(8).max(128).optional(),
     roles: z.array(userRoleSchema).min(1).optional().nullable(),
     activeRole: userRoleSchema.optional().nullable(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
@@ -628,6 +630,8 @@ export const updateUserSchema = z
   .strict()
   .refine(
     (value) =>
+      value.email !== undefined ||
+      value.password !== undefined ||
       value.roles !== undefined ||
       value.activeRole !== undefined ||
       value.doctorWorkflowMode !== undefined ||
@@ -979,6 +983,7 @@ export const dispensePrescriptionSchema = z
     dispensedAt: z.string().datetime(),
     status: z.enum(["completed", "partially_completed", "cancelled"]).default("completed"),
     notes: z.string().max(10000).optional().nullable(),
+    priceLkr: z.number().nonnegative().max(99999999.99).optional().nullable(),
     items: z
       .array(
         z

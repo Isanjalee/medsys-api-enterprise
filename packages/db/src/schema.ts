@@ -63,6 +63,7 @@ export const organizations = pgTable(
     slug: varchar("slug", { length: 80 }).notNull(),
     name: varchar("name", { length: 160 }).notNull(),
     isActive: boolean("is_active").notNull().default(true),
+    operatingMode: varchar("operating_mode", { length: 20 }).notNull().default("standard"),
     ...auditTimestamps
   },
   (table) => [uniqueIndex("organizations_slug_idx").on(table.slug)]
@@ -387,6 +388,7 @@ export const dispenseRecords = pgTable(
     dispensedAt: timestamp("dispensed_at", { withTimezone: true }).notNull(),
     status: varchar("status", { length: 20 }).notNull().default("completed"),
     notes: text("notes"),
+    priceLkr: numeric("price_lkr", { precision: 12, scale: 2 }),
     ...auditTimestamps
   },
   (table) => [index("dispense_records_prescription_idx").on(table.prescriptionId)]

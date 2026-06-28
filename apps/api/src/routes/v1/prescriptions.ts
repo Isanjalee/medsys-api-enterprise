@@ -7,6 +7,7 @@ import {
   encounters,
   inventoryItems,
   inventoryMovements,
+  organizations,
   patients,
   prescriptionItems,
   prescriptions
@@ -28,6 +29,7 @@ const dispenseRequestBodySchema = {
       enum: ["completed", "partially_completed", "cancelled"]
     },
     notes: { type: "string", nullable: true },
+    priceLkr: { type: "number", minimum: 0, nullable: true },
     items: {
       type: "array",
       minItems: 1,
@@ -408,6 +410,18 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
         prescriptionId: params.id
       });
 
+      const orgRows = await app.readDb
+        .select({ operatingMode: organizations.operatingMode })
+        .from(organizations)
+        .where(eq(organizations.id, actor.organizationId))
+        .limit(1);
+      const isStepUpMode = orgRows[0]?.operatingMode === "step_up";
+      assertOrThrow(
+        !isStepUpMode || (payload.priceLkr !== null && payload.priceLkr !== undefined),
+        400,
+        "Price (LKR) is required to complete dispense in Step Up mode."
+      );
+
       const result = await app.db.transaction(async (tx) => {
         const prescriptionRows = await tx
           .select({ id: prescriptions.id })
@@ -436,7 +450,11 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
             assistantId: payload.assistantId,
             dispensedAt: new Date(payload.dispensedAt),
             status: payload.status,
-            notes: payload.notes ?? null
+            notes: payload.notes ?? null,
+            priceLkr:
+              payload.priceLkr !== null && payload.priceLkr !== undefined
+                ? payload.priceLkr.toFixed(2)
+                : null
           })
           .returning();
 
