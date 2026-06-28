@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq, sql } from "drizzle-orm";
-import { appointments, inventoryItems, patients, prescriptions } from "@medsys/db";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { appointments, dispenseRecords, inventoryItems, patients, prescriptions } from "@medsys/db";
 import { analyticsDashboardQuerySchema } from "@medsys/validation";
 import { buildAnalyticsDashboard } from "../../lib/analytics-dashboard.js";
 import { parseOrThrowValidation, validationError } from "../../lib/http-error.js";
@@ -159,6 +159,44 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
     });
     await app.cacheService.setJson("readResponse", cacheKey, payload, ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS);
     return payload;
+  });
+
+  app.get("/earnings", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
+    const actor = request.actor!;
+    const query = parseOrThrowValidation(analyticsDashboardQuerySchema, request.query ?? {});
+    const rangePreset = query.range ?? "7d";
+    const now = new Date();
+    const start =
+      rangePreset === "custom"
+        ? new Date(`${query.dateFrom!}T00:00:00.000Z`)
+        : rangePreset === "1d"
+          ? new Date(now.getTime() - 24 * 60 * 60 * 1000)
+          : rangePreset === "30d"
+            ? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+            : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const end = rangePreset === "custom" ? new Date(`${query.dateTo!}T23:59:59.999Z`) : now;
+
+    const rows = await app.analyticsDb
+      .select({
+        total: sql<string>`COALESCE(SUM(${dispenseRecords.priceLkr}), 0)`,
+        dispenseCount: sql<string>`COUNT(${dispenseRecords.priceLkr})`
+      })
+      .from(dispenseRecords)
+      .where(
+        and(
+          eq(dispenseRecords.organizationId, actor.organizationId),
+          gte(dispenseRecords.dispensedAt, start),
+          lte(dispenseRecords.dispensedAt, end)
+        )
+      );
+
+    return {
+      currency: "LKR",
+      totalEarnings: Number(rows[0]?.total ?? 0),
+      dispenseCount: Number(rows[0]?.dispenseCount ?? 0),
+      range: rangePreset,
+      generatedAt: now.toISOString()
+    };
   });
 
   app.get("/overview", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {

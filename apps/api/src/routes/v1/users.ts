@@ -92,6 +92,8 @@ const updateUserBodySchema = {
   type: "object",
   additionalProperties: false,
   properties: {
+    email: { type: "string", format: "email", maxLength: 160 },
+    password: { type: "string", minLength: 8, maxLength: 128 },
     roles: { type: "array", items: { type: "string", enum: ["owner", "doctor", "assistant"] }, nullable: true },
     activeRole: { type: "string", enum: ["owner", "doctor", "assistant"], nullable: true },
     doctorWorkflowMode: { type: "string", enum: ["self_service", "clinic_supported"], nullable: true },
@@ -503,6 +505,23 @@ const userRoutes: FastifyPluginAsync = async (app) => {
       const patch: Record<string, unknown> = {
         updatedAt: new Date()
       };
+      if (payload.email !== undefined) {
+        const normalizedEmail = payload.email.trim();
+        const emailConflictRows = await app.readDb
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.organizationId, actor.organizationId), eq(users.email, normalizedEmail)))
+          .limit(1);
+        assertOrThrow(
+          emailConflictRows.length === 0 || emailConflictRows[0].id === id,
+          409,
+          "Another account in this clinic already uses that email."
+        );
+        patch.email = normalizedEmail;
+      }
+      if (payload.password !== undefined) {
+        patch.passwordHash = hashPassword(payload.password);
+      }
       if (payload.roles !== undefined || payload.activeRole !== undefined) {
         patch.role = nextActiveRole;
         patch.activeRole = nextActiveRole;
