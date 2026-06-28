@@ -26,8 +26,8 @@ rsync -a --delete \
 
 chown -R ubuntu:ubuntu "$APP_DIR"
 
-echo "[remote_deploy] npm ci --omit=dev"
-sudo -u ubuntu bash -lc "cd '$APP_DIR' && npm ci --omit=dev"
+echo "[remote_deploy] npm install --omit=dev"
+sudo -u ubuntu bash -lc "cd '$APP_DIR' && npm install --omit=dev"
 
 echo "[remote_deploy] pm2 reload $APP_NAME"
 sudo -u ubuntu bash -lc "cd '$APP_DIR' && (pm2 reload '$APP_NAME' --update-env || pm2 restart '$APP_NAME')"
