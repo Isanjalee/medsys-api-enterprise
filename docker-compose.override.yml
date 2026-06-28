@@ -1,0 +1,13 @@
+# Local-only overrides (auto-merged by Docker Compose; not a replacement for docker-compose.yml).
+# Fix: OpenSearch 2.12+ requires DISABLE_SECURITY_PLUGIN=true to actually skip the
+# security demo installer. The base compose sets plugins.security.disabled, which this
+# image tag ignores, causing a crash loop demanding OPENSEARCH_INITIAL_ADMIN_PASSWORD.
+services:
+  opensearch:
+    environment:
+      # Base compose already sets plugins.security.disabled=true to disable security at
+      # runtime. We only need to stop the entrypoint's demo-config installer, which runs
+      # regardless of that setting and quits demanding OPENSEARCH_INITIAL_ADMIN_PASSWORD.
+      # Do NOT also set DISABLE_SECURITY_PLUGIN here: it re-sets plugins.security.disabled
+      # and OpenSearch aborts with "setting already set, saw [true] and [true]".
+      DISABLE_INSTALL_DEMO_CONFIG: "true"

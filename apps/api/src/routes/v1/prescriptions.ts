@@ -28,6 +28,7 @@ const dispenseRequestBodySchema = {
       enum: ["completed", "partially_completed", "cancelled"]
     },
     notes: { type: "string", nullable: true },
+    priceLkr: { type: "number", minimum: 0, nullable: true },
     items: {
       type: "array",
       minItems: 1,
@@ -105,6 +106,7 @@ const pendingDispenseQueueResponseSchema = {
           }
         }
       },
+      price_lkr: { type: "number", nullable: true },
       createdAt: { type: "string", format: "date-time" }
     }
   },
@@ -203,6 +205,7 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
           nic: patients.nic,
           appointmentStatus: appointments.status,
           createdAt: prescriptions.createdAt,
+          priceLkr: encounters.priceLkr,
           dispenseId: dispenseRecords.id
         })
         .from(prescriptions)
@@ -309,6 +312,7 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
           nic: row.nic,
           diagnosis: (diagnosesByPrescription.get(row.id) ?? []).join(", ") || null,
           items: itemsByPrescription.get(row.id) ?? [],
+          price_lkr: row.priceLkr === null || row.priceLkr === undefined ? null : Number(row.priceLkr),
           createdAt: row.createdAt
         }))
         .filter((row) => row.items.length > 0);
@@ -408,6 +412,9 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
         prescriptionId: params.id
       });
 
+      // Price (LKR) is now captured by the doctor on the encounter, not the
+      // assistant at dispense time, so no price gate is enforced here.
+
       const result = await app.db.transaction(async (tx) => {
         const prescriptionRows = await tx
           .select({ id: prescriptions.id })
@@ -436,7 +443,11 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
             assistantId: payload.assistantId,
             dispensedAt: new Date(payload.dispensedAt),
             status: payload.status,
-            notes: payload.notes ?? null
+            notes: payload.notes ?? null,
+            priceLkr:
+              payload.priceLkr !== null && payload.priceLkr !== undefined
+                ? payload.priceLkr.toFixed(2)
+                : null
           })
           .returning();
 

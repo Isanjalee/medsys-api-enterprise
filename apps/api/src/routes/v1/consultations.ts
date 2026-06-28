@@ -23,6 +23,7 @@ import { hasAllResolvedPermissions } from "@medsys/types";
 import { createGuardianFrontendSchema, createPatientFrontendSchema, saveConsultationWorkflowSchema } from "@medsys/validation";
 import { serializePatientSummary, serializePatientVital } from "../../lib/api-serializers.js";
 import { writeAuditLog } from "../../lib/audit.js";
+import { recordClinicalTerms } from "../../lib/clinical-terms.js";
 import { calculateAgeFromDob } from "../../lib/date.js";
 import { assertOrThrow, parseOrThrowValidation, validationError } from "../../lib/http-error.js";
 import { splitFullName } from "../../lib/names.js";
@@ -125,6 +126,7 @@ const saveConsultationBodySchema = {
     workflowType: { type: "string", enum: ["appointment", "walk_in"] },
     appointmentId: { type: "integer", minimum: 1, nullable: true },
     patientId: { type: "integer", minimum: 1, nullable: true },
+    priceLkr: { type: "integer", minimum: 0, nullable: true },
     patientDraft: {
       type: "object",
       nullable: true,
@@ -1193,6 +1195,9 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                       payload.nextVisitDate !== undefined
                         ? payload.nextVisitDate ?? null
                         : existingEncounterRows[0].nextVisitDate,
+                    ...(payload.priceLkr !== undefined
+                      ? { priceLkr: payload.priceLkr === null ? null : payload.priceLkr.toFixed(2) }
+                      : {}),
                     updatedAt: new Date()
                   })
                   .where(eq(encounters.id, existingEncounterRows[0].id))
@@ -1211,6 +1216,7 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
                     closedAt: checkedAt,
                     notes: payload.notes ?? null,
                     nextVisitDate: payload.nextVisitDate ?? null,
+                    priceLkr: payload.priceLkr === null || payload.priceLkr === undefined ? null : payload.priceLkr.toFixed(2),
                     status: "completed"
                   })
                   .returning()
@@ -1498,6 +1504,27 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           conditionCount: diagnosesToPersistAsConditions.length,
           wroteClinicalSummary: Boolean(payload.clinicalSummary)
         }
+      });
+
+      // Build the doctor's local term dictionary from what they typed (replaces the
+      // old external diagnosis/test suggestion APIs).
+      await recordClinicalTerms(app, {
+        organizationId: actor.organizationId,
+        doctorUserId: doctorId,
+        termType: "diagnosis",
+        names: diagnoses.map((diagnosis) => diagnosis.diagnosisName)
+      });
+      await recordClinicalTerms(app, {
+        organizationId: actor.organizationId,
+        doctorUserId: doctorId,
+        termType: "test",
+        names: tests.map((test) => test.testName)
+      });
+      await recordClinicalTerms(app, {
+        organizationId: actor.organizationId,
+        doctorUserId: doctorId,
+        termType: "drug",
+        names: outsidePrescriptionItems.map((item) => item.drugName)
       });
 
       await Promise.all([

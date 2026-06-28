@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import { and, eq } from "drizzle-orm";
 import fastifyJwt from "@fastify/jwt";
-import { userRoles, users } from "@medsys/db";
+import { platformAdmins, userRoles, users } from "@medsys/db";
 import { hasAllResolvedPermissions, resolveWorkflowProfiles, type Permission } from "@medsys/types";
 import { assertOrThrow } from "../lib/http-error.js";
 import {
@@ -78,6 +78,33 @@ const authPlugin = fp(async (app) => {
     return async (request: any) => {
       assertOrThrow(request.actor, 401, "Unauthorized");
       assertOrThrow(hasAllResolvedPermissions(request.actor.permissions, permissions), 403, "Forbidden");
+    };
+  });
+
+  app.decorate("authenticatePlatformAdmin", async (request: any) => {
+    await request.jwtVerify();
+    assertOrThrow(request.user?.scope === "platform_admin", 403, "Platform admin access required");
+    const adminId = Number(request.user.sub);
+    assertOrThrow(Number.isInteger(adminId), 401, "Invalid token subject");
+
+    const rows = await app.db
+      .select({
+        id: platformAdmins.id,
+        username: platformAdmins.username,
+        displayName: platformAdmins.displayName,
+        isActive: platformAdmins.isActive
+      })
+      .from(platformAdmins)
+      .where(eq(platformAdmins.id, adminId))
+      .limit(1);
+
+    assertOrThrow(rows.length === 1, 401, "Unauthorized");
+    assertOrThrow(rows[0].isActive, 403, "Inactive platform admin");
+
+    request.platformAdmin = {
+      id: rows[0].id,
+      username: rows[0].username,
+      displayName: rows[0].displayName
     };
   });
 });

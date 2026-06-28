@@ -85,12 +85,14 @@ const serializeOrganization = (row: {
   slug: string;
   name: string;
   isActive: boolean;
+  operatingMode?: string | null;
   createdAt?: Date;
 }) => ({
   id: row.id,
   slug: row.slug,
   name: row.name,
   is_active: row.isActive,
+  operating_mode: row.operatingMode ?? "standard",
   ...(row.createdAt ? { created_at: row.createdAt } : {})
 });
 
@@ -522,6 +524,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           slug: organizations.slug,
           name: organizations.name,
           isActive: organizations.isActive,
+          operatingMode: organizations.operatingMode,
           createdAt: organizations.createdAt
         })
         .from(organizations)
@@ -562,6 +565,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           slug: organizations.slug,
           name: organizations.name,
           isActive: organizations.isActive,
+          operatingMode: organizations.operatingMode,
           createdAt: organizations.createdAt
         })
         .from(organizations)
@@ -982,10 +986,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     assertOrThrow(rows[0].isActive, 403, "Inactive account");
     const meRoleMap = await loadRolesByUserIds(app, [rows[0].id]);
 
-    return toSerializedUser({
-      ...rows[0],
-      roles: meRoleMap.get(rows[0].id) ?? [rows[0].role]
-    });
+    const orgRows = await app.readDb
+      .select({ operatingMode: organizations.operatingMode })
+      .from(organizations)
+      .where(eq(organizations.id, actor.organizationId))
+      .limit(1);
+
+    return {
+      ...toSerializedUser({
+        ...rows[0],
+        roles: meRoleMap.get(rows[0].id) ?? [rows[0].role]
+      }),
+      organization: {
+        id: actor.organizationId,
+        operating_mode: orgRows[0]?.operatingMode ?? "standard"
+      }
+    };
   });
 
   app.post("/active-role", { preHandler: app.authenticate }, async (request) => {

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
-import { appointments, patients, userRoles, users } from "@medsys/db";
+import { appointments, organizations, patients, userRoles, users } from "@medsys/db";
 import { createAppointmentSchema, idParamSchema, listAppointmentsQuerySchema, updateAppointmentSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
@@ -190,6 +190,16 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request, reply) => {
       const actor = request.actor!;
+      const appointmentOrgRows = await app.readDb
+        .select({ operatingMode: organizations.operatingMode })
+        .from(organizations)
+        .where(eq(organizations.id, actor.organizationId))
+        .limit(1);
+      assertOrThrow(
+        appointmentOrgRows[0]?.operatingMode !== "step_up",
+        409,
+        "Appointments are disabled in Step Up mode. This clinic operates on first-come, first-served walk-ins."
+      );
       const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
       const payload = parseOrThrowValidation(createAppointmentSchema.strict(), request.body);
     const now = new Date();

@@ -619,6 +619,8 @@ export const createUserFrontendSchema = z
 
 export const updateUserSchema = z
   .object({
+    email: z.string().email().max(160).optional(),
+    password: z.string().min(8).max(128).optional(),
     roles: z.array(userRoleSchema).min(1).optional().nullable(),
     activeRole: userRoleSchema.optional().nullable(),
     doctorWorkflowMode: doctorWorkflowModeSchema.optional().nullable(),
@@ -628,6 +630,8 @@ export const updateUserSchema = z
   .strict()
   .refine(
     (value) =>
+      value.email !== undefined ||
+      value.password !== undefined ||
       value.roles !== undefined ||
       value.activeRole !== undefined ||
       value.doctorWorkflowMode !== undefined ||
@@ -854,6 +858,7 @@ export const saveConsultationWorkflowSchema = z
     scheduledAt: z.string().datetime().optional(),
     reason: z.string().max(5000).optional().nullable(),
     priority: prioritySchema.default("normal"),
+    priceLkr: z.number().int().nonnegative().max(999999999).optional().nullable(),
     notes: z.string().max(10000).optional().nullable(),
     clinicalSummary: z.string().max(4000).optional().nullable(),
     nextVisitDate: optionalDateString,
@@ -979,6 +984,7 @@ export const dispensePrescriptionSchema = z
     dispensedAt: z.string().datetime(),
     status: z.enum(["completed", "partially_completed", "cancelled"]).default("completed"),
     notes: z.string().max(10000).optional().nullable(),
+    priceLkr: z.number().nonnegative().max(99999999.99).optional().nullable(),
     items: z
       .array(
         z
@@ -1018,6 +1024,9 @@ export const createInventoryItemSchema = z.object({
   minStockLevel: z.number().nonnegative().optional().nullable(),
   maxStockLevel: z.number().nonnegative().optional().nullable(),
   expiryDate: optionalDateString,
+  remindBefore3m: z.boolean().optional().default(true),
+  remindBefore2m: z.boolean().optional().default(true),
+  remindBefore1m: z.boolean().optional().default(true),
   batchNo: z.string().min(1).max(80).optional().nullable(),
   storageLocation: z.string().min(1).max(120).optional().nullable(),
   directDispenseAllowed: z.boolean().optional().default(false),
@@ -1056,6 +1065,9 @@ export const updateInventoryItemSchema = z
     minStockLevel: z.number().nonnegative().optional().nullable(),
     maxStockLevel: z.number().nonnegative().optional().nullable(),
     expiryDate: optionalDateString,
+    remindBefore3m: z.boolean().optional(),
+    remindBefore2m: z.boolean().optional(),
+    remindBefore1m: z.boolean().optional(),
     batchNo: z.string().min(1).max(80).optional().nullable(),
     storageLocation: z.string().min(1).max(120).optional().nullable(),
     directDispenseAllowed: z.boolean().optional(),

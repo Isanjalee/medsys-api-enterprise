@@ -17,12 +17,18 @@ import clinicalRoutes from "./v1/clinical.js";
 import searchRoutes from "./v1/search.js";
 import visitsRoutes from "./v1/visits.js";
 import consultationRoutes from "./v1/consultations.js";
+import organizationRoutes from "./v1/organizations.js";
+import adminRoutes from "./v1/admin.js";
+import dictionaryRoutes from "./v1/dictionary.js";
 
 const routesPlugin: FastifyPluginAsync = async (app) => {
   await app.register(systemRoutes);
   await app.register(authRoutes, { prefix: "/auth" });
+  await app.register(adminRoutes, { prefix: "/admin" });
+  await app.register(organizationRoutes, { prefix: "/organizations" });
   await app.register(userRoutes, { prefix: "/users" });
   await app.register(clinicalRoutes, { prefix: "/clinical" });
+  await app.register(dictionaryRoutes, { prefix: "/dictionary" });
   await app.register(searchRoutes, { prefix: "/search" });
   await app.register(consultationRoutes, { prefix: "/consultations" });
   await app.register(patientRoutes, { prefix: "/patients" });

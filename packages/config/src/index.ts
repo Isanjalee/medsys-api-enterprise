@@ -90,7 +90,7 @@ const envSchema = z.object({
   JWT_ACCESS_PRIVATE_KEY: z.string().min(1),
   JWT_REFRESH_PUBLIC_KEY: z.string().min(1),
   JWT_REFRESH_PRIVATE_KEY: z.string().min(1),
-  ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
   REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(604800),
   REQUEST_ID_HEADER: z.string().default("x-request-id"),
   ORGANIZATION_ID: z.string().uuid()
