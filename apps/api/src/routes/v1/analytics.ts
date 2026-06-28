@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
-import { appointments, dispenseRecords, inventoryItems, patients, prescriptions } from "@medsys/db";
+import { appointments, dispenseRecords, encounters, inventoryItems, patients, prescriptions } from "@medsys/db";
 import { analyticsDashboardQuerySchema } from "@medsys/validation";
 import { buildAnalyticsDashboard } from "../../lib/analytics-dashboard.js";
 import { parseOrThrowValidation, validationError } from "../../lib/http-error.js";
@@ -178,15 +178,15 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     const rows = await app.analyticsDb
       .select({
-        total: sql<string>`COALESCE(SUM(${dispenseRecords.priceLkr}), 0)`,
-        dispenseCount: sql<string>`COUNT(${dispenseRecords.priceLkr})`
+        total: sql<string>`COALESCE(SUM(${encounters.priceLkr}), 0)`,
+        dispenseCount: sql<string>`COUNT(${encounters.priceLkr})`
       })
-      .from(dispenseRecords)
+      .from(encounters)
       .where(
         and(
-          eq(dispenseRecords.organizationId, actor.organizationId),
-          gte(dispenseRecords.dispensedAt, start),
-          lte(dispenseRecords.dispensedAt, end)
+          eq(encounters.organizationId, actor.organizationId),
+          gte(encounters.checkedAt, start),
+          lte(encounters.checkedAt, end)
         )
       );
 

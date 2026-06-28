@@ -8,6 +8,7 @@ import {
   foreignKey,
   index,
   inet,
+  integer,
   jsonb,
   numeric,
   pgEnum,
@@ -67,6 +68,40 @@ export const organizations = pgTable(
     ...auditTimestamps
   },
   (table) => [uniqueIndex("organizations_slug_idx").on(table.slug)]
+);
+
+export const platformAdmins = pgTable(
+  "platform_admins",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    username: varchar("username", { length: 120 }).notNull().unique(),
+    passwordHash: text("password_hash").notNull(),
+    displayName: varchar("display_name", { length: 120 }).notNull().default("Super Admin"),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps
+  }
+);
+
+export const clinicalTerms = pgTable(
+  "clinical_terms",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    doctorUserId: bigint("doctor_user_id", { mode: "number" }).notNull(),
+    termType: varchar("term_type", { length: 20 }).notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    usageCount: integer("usage_count").notNull().default(1),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditTimestamps
+  },
+  (table) => [
+    index("clinical_terms_lookup_idx").on(
+      table.organizationId,
+      table.doctorUserId,
+      table.termType,
+      table.name
+    )
+  ]
 );
 
 export const users = pgTable(
@@ -284,6 +319,7 @@ export const encounters = pgTable(
     closedAt: timestamp("closed_at", { withTimezone: true }),
     notes: text("notes"),
     nextVisitDate: date("next_visit_date"),
+    priceLkr: numeric("price_lkr", { precision: 12, scale: 2 }),
     status: varchar("status", { length: 20 }).notNull().default("completed"),
     ...auditTimestamps,
     deletedAt: timestamp("deleted_at", { withTimezone: true })
@@ -424,6 +460,9 @@ export const inventoryItems = pgTable(
     minStockLevel: numeric("min_stock_level", { precision: 12, scale: 2 }),
     maxStockLevel: numeric("max_stock_level", { precision: 12, scale: 2 }),
     expiryDate: date("expiry_date"),
+    remindBefore3m: boolean("remind_before_3m").notNull().default(true),
+    remindBefore2m: boolean("remind_before_2m").notNull().default(true),
+    remindBefore1m: boolean("remind_before_1m").notNull().default(true),
     batchNo: varchar("batch_no", { length: 80 }),
     storageLocation: varchar("storage_location", { length: 120 }),
     directDispenseAllowed: boolean("direct_dispense_allowed").notNull().default(false),

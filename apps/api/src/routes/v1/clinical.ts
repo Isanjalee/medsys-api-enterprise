@@ -1,4 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
+import { and, desc, eq, ilike } from "drizzle-orm";
+import { clinicalTerms } from "@medsys/db";
 import { clinicalCodeParamSchema, clinicalIcd10QuerySchema, clinicalTerminologyQuerySchema } from "@medsys/validation";
 import { getRecommendedTestsForDiagnosis, searchFallbackDiagnoses, searchFallbackTests } from "../../lib/clinical-terminology.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
@@ -336,6 +338,30 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook("preHandler", app.authenticate);
 
+  // Local, per-doctor dictionary search (replaces the external ICD-10/LOINC providers).
+  const searchLocalTerms = async (
+    request: FastifyRequest,
+    termType: "diagnosis" | "test" | "drug",
+    terms: string,
+    limit: number
+  ): Promise<string[]> => {
+    const actor = request.actor!;
+    const rows = await app.readDb
+      .select({ name: clinicalTerms.name })
+      .from(clinicalTerms)
+      .where(
+        and(
+          eq(clinicalTerms.organizationId, actor.organizationId),
+          eq(clinicalTerms.doctorUserId, actor.userId),
+          eq(clinicalTerms.termType, termType),
+          terms ? ilike(clinicalTerms.name, `%${terms}%`) : undefined
+        )
+      )
+      .orderBy(desc(clinicalTerms.usageCount), clinicalTerms.name)
+      .limit(limit);
+    return rows.map((row) => row.name);
+  };
+
   app.get(
     "/icd10",
     {
@@ -349,31 +375,8 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
     async (request) => {
       const query = parseOrThrowValidation(clinicalIcd10QuerySchema, request.query ?? {});
       const terms = query.terms ?? "";
-      if (terms.length < 2) {
-        return { suggestions: [] };
-      }
-
-      return getOrCreateTerminologyResult(request, terminologyCacheKey("icd10", terms, 10), async () => {
-        const url = new URL(app.env.ICD10_API_BASE_URL);
-        url.searchParams.set("sf", "code,name");
-        url.searchParams.set("df", "code,name");
-        url.searchParams.set("terms", terms);
-        url.searchParams.set("count", "10");
-
-        let suggestions: string[];
-        try {
-          const payload = await fetchJson(request, url, "ICD10");
-          suggestions = normalizeIcd10Payload(payload).map((item) => `${item.code} - ${item.display}`);
-        } catch (error) {
-          if (!isProviderUnavailableError(error)) {
-            throw error;
-          }
-
-          request.log.warn({ providerName: "ICD10", terms }, "Falling back to curated ICD10 suggestions");
-          suggestions = searchFallbackDiagnoses(terms, 10).map((item) => `${item.code} - ${item.display}`);
-        }
-        return { suggestions };
-      });
+      const suggestions = await searchLocalTerms(request, "diagnosis", terms, 10);
+      return { suggestions };
     }
   );
 
@@ -431,33 +434,10 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
       const query = parseOrThrowValidation(clinicalTerminologyQuerySchema, request.query ?? {});
       const terms = query.terms ?? "";
       const limit = query.limit ?? 10;
-      if (terms.length < 2) {
-        return { diagnoses: [] };
-      }
-
-      return getOrCreateTerminologyResult(request, terminologyCacheKey("diagnoses", terms, limit), async () => {
-        const url = new URL(app.env.ICD10_API_BASE_URL);
-        url.searchParams.set("sf", "code,name");
-        url.searchParams.set("df", "code,name");
-        url.searchParams.set("terms", terms);
-        url.searchParams.set("count", String(limit));
-
-        try {
-          const payload = await fetchJson(request, url, "ICD10");
-          return {
-            diagnoses: normalizeIcd10Payload(payload)
-          };
-        } catch (error) {
-          if (!isProviderUnavailableError(error)) {
-            throw error;
-          }
-
-          request.log.warn({ providerName: "ICD10", terms, limit: query.limit }, "Falling back to curated ICD10 diagnoses");
-          return {
-            diagnoses: searchFallbackDiagnoses(terms, limit)
-          };
-        }
-      });
+      const names = await searchLocalTerms(request, "diagnosis", terms, limit);
+      return {
+        diagnoses: names.map((display) => ({ code: "", codeSystem: "local", display }))
+      };
     }
   );
 
@@ -517,38 +497,10 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
       const query = parseOrThrowValidation(clinicalTerminologyQuerySchema, request.query ?? {});
       const terms = query.terms ?? "";
       const limit = query.limit ?? 10;
-      if (terms.length < 2) {
-        return { tests: [] };
-      }
-
-      return getOrCreateTerminologyResult(request, terminologyCacheKey("tests", terms, limit), async () => {
-        const url = new URL(app.env.LOINC_API_BASE_URL);
-        const lowerBaseUrl = app.env.LOINC_API_BASE_URL.toLowerCase();
-        if (lowerBaseUrl.includes("clinicaltables.nlm.nih.gov")) {
-          url.searchParams.set("terms", terms);
-          url.searchParams.set("count", String(limit));
-          url.searchParams.set("df", "LOINC_NUM,LONG_COMMON_NAME");
-        } else {
-          url.searchParams.set("filter", terms);
-          url.searchParams.set("count", String(limit));
-        }
-
-        try {
-          const payload = await fetchJson(request, url, "LOINC");
-          return {
-            tests: normalizeAndFilterLoincPayload(payload, limit)
-          };
-        } catch (error) {
-          if (!isProviderUnavailableError(error)) {
-            throw error;
-          }
-
-          request.log.warn({ providerName: "LOINC", terms, limit: query.limit }, "Falling back to curated LOINC tests");
-          return {
-            tests: searchFallbackTests(terms, limit)
-          };
-        }
-      });
+      const names = await searchLocalTerms(request, "test", terms, limit);
+      return {
+        tests: names.map((display) => ({ code: "", codeSystem: "local", display, category: null }))
+      };
     }
   );
 
@@ -616,13 +568,15 @@ const clinicalRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request) => {
       const params = parseOrThrowValidation(clinicalCodeParamSchema, request.params);
+      // Recommended tests were derived from ICD-10 codes; with the local free-text
+      // dictionary there are no codes, so this returns no recommendations.
       return {
         diagnosis: {
           code: params.code,
-          codeSystem: "ICD-10-CM"
+          codeSystem: "local"
         },
-        source: "curated",
-        tests: getRecommendedTestsForDiagnosis(params.code)
+        source: "local",
+        tests: [] as Array<{ code: string; codeSystem: string; display: string; category: string | null }>
       };
     }
   );

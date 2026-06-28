@@ -7,7 +7,6 @@ import {
   encounters,
   inventoryItems,
   inventoryMovements,
-  organizations,
   patients,
   prescriptionItems,
   prescriptions
@@ -107,6 +106,7 @@ const pendingDispenseQueueResponseSchema = {
           }
         }
       },
+      price_lkr: { type: "number", nullable: true },
       createdAt: { type: "string", format: "date-time" }
     }
   },
@@ -205,6 +205,7 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
           nic: patients.nic,
           appointmentStatus: appointments.status,
           createdAt: prescriptions.createdAt,
+          priceLkr: encounters.priceLkr,
           dispenseId: dispenseRecords.id
         })
         .from(prescriptions)
@@ -311,6 +312,7 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
           nic: row.nic,
           diagnosis: (diagnosesByPrescription.get(row.id) ?? []).join(", ") || null,
           items: itemsByPrescription.get(row.id) ?? [],
+          price_lkr: row.priceLkr === null || row.priceLkr === undefined ? null : Number(row.priceLkr),
           createdAt: row.createdAt
         }))
         .filter((row) => row.items.length > 0);
@@ -410,17 +412,8 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
         prescriptionId: params.id
       });
 
-      const orgRows = await app.readDb
-        .select({ operatingMode: organizations.operatingMode })
-        .from(organizations)
-        .where(eq(organizations.id, actor.organizationId))
-        .limit(1);
-      const isStepUpMode = orgRows[0]?.operatingMode === "step_up";
-      assertOrThrow(
-        !isStepUpMode || (payload.priceLkr !== null && payload.priceLkr !== undefined),
-        400,
-        "Price (LKR) is required to complete dispense in Step Up mode."
-      );
+      // Price (LKR) is now captured by the doctor on the encounter, not the
+      // assistant at dispense time, so no price gate is enforced here.
 
       const result = await app.db.transaction(async (tx) => {
         const prescriptionRows = await tx
