@@ -53,6 +53,9 @@ const createInventoryItemBodySchema = {
     minStockLevel: { type: "number", minimum: 0, nullable: true },
     maxStockLevel: { type: "number", minimum: 0, nullable: true },
     expiryDate: { type: "string", format: "date", nullable: true },
+    remindBefore3m: { type: "boolean" },
+    remindBefore2m: { type: "boolean" },
+    remindBefore1m: { type: "boolean" },
     batchNo: { type: "string", nullable: true },
     storageLocation: { type: "string", nullable: true },
     directDispenseAllowed: { type: "boolean" },
@@ -148,6 +151,9 @@ const inventorySearchResponseSchema = {
       minStockLevel: { type: "string", nullable: true },
       maxStockLevel: { type: "string", nullable: true },
       expiryDate: { type: "string", nullable: true },
+      remindBefore3m: { type: "boolean" },
+      remindBefore2m: { type: "boolean" },
+      remindBefore1m: { type: "boolean" },
       batchNo: { type: "string", nullable: true },
       storageLocation: { type: "string", nullable: true },
       directDispenseAllowed: { type: "boolean" },
@@ -380,6 +386,9 @@ const inventoryItemSelect = {
   minStockLevel: inventoryItems.minStockLevel,
   maxStockLevel: inventoryItems.maxStockLevel,
   expiryDate: inventoryItems.expiryDate,
+  remindBefore3m: inventoryItems.remindBefore3m,
+  remindBefore2m: inventoryItems.remindBefore2m,
+  remindBefore1m: inventoryItems.remindBefore1m,
   batchNo: inventoryItems.batchNo,
   storageLocation: inventoryItems.storageLocation,
   directDispenseAllowed: inventoryItems.directDispenseAllowed,
@@ -1088,6 +1097,9 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
         minStockLevel: payload.minStockLevel?.toString() ?? null,
         maxStockLevel: payload.maxStockLevel?.toString() ?? null,
         expiryDate: payload.expiryDate ?? null,
+        remindBefore3m: payload.remindBefore3m ?? true,
+        remindBefore2m: payload.remindBefore2m ?? true,
+        remindBefore1m: payload.remindBefore1m ?? true,
         batchNo: payload.batchNo ?? null,
         storageLocation: payload.storageLocation ?? null,
         directDispenseAllowed: payload.directDispenseAllowed ?? false,
@@ -1140,6 +1152,9 @@ const inventoryRoutes: FastifyPluginAsync = async (app) => {
     if (body.minStockLevel !== undefined) patch.minStockLevel = body.minStockLevel?.toString() ?? null;
     if (body.maxStockLevel !== undefined) patch.maxStockLevel = body.maxStockLevel?.toString() ?? null;
     if (body.expiryDate !== undefined) patch.expiryDate = body.expiryDate;
+    if (body.remindBefore3m !== undefined) patch.remindBefore3m = body.remindBefore3m;
+    if (body.remindBefore2m !== undefined) patch.remindBefore2m = body.remindBefore2m;
+    if (body.remindBefore1m !== undefined) patch.remindBefore1m = body.remindBefore1m;
     if (body.batchNo !== undefined) patch.batchNo = body.batchNo;
     if (body.storageLocation !== undefined) patch.storageLocation = body.storageLocation;
     if (body.directDispenseAllowed !== undefined) patch.directDispenseAllowed = body.directDispenseAllowed;

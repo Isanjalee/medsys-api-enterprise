@@ -21,6 +21,7 @@ declare module "fastify" {
     searchService: SearchService;
     securityService: SecurityService;
     authenticate: (request: FastifyRequest) => Promise<void>;
+    authenticatePlatformAdmin: (request: FastifyRequest) => Promise<void>;
     authorize: (roles: UserRole[]) => preHandlerHookHandler;
     authorizePermissions: (permissions: Permission[]) => preHandlerHookHandler;
     enforceSensitiveRateLimit: (
@@ -38,6 +39,11 @@ declare module "fastify" {
       permissions: Permission[];
       workflowProfiles: WorkflowProfiles;
       extraPermissions: Permission[];
+    };
+    platformAdmin?: {
+      id: number;
+      username: string;
+      displayName: string;
     };
     traceId?: string;
   }
