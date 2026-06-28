@@ -43,5 +43,5 @@ phases:
       - aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text || true
       - echo "===== remote deploy errors ====="
       - aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text || true
-      - echo "Final deploy status: $STATUS"
+      - echo "Final deploy status $STATUS"
       - test "$STATUS" = "Success"
