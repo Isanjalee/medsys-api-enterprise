@@ -201,30 +201,68 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/overview", { preHandler: app.authorizePermissions(["analytics.read"]) }, async (request) => {
     const actor = request.actor!;
-    const [patientCount, waitingCount, prescriptionCount, lowStockCount] = await Promise.all([
-      app.analyticsDb
-        .select({ count: sql<number>`count(*)` })
-        .from(patients)
-        .where(eq(patients.organizationId, actor.organizationId)),
-      app.analyticsDb
-        .select({ count: sql<number>`count(*)` })
-        .from(appointments)
-        .where(and(eq(appointments.organizationId, actor.organizationId), eq(appointments.status, "waiting"))),
-      app.analyticsDb
-        .select({ count: sql<number>`count(*)` })
-        .from(prescriptions)
-        .where(eq(prescriptions.organizationId, actor.organizationId)),
-      app.analyticsDb
-        .select({ count: sql<number>`count(*)` })
-        .from(inventoryItems)
-        .where(and(eq(inventoryItems.organizationId, actor.organizationId), sql`${inventoryItems.stock} <= ${inventoryItems.reorderLevel}`))
-    ]);
+    const [patientCount, waitingCount, prescriptionCount, lowStockCount, genderRows, encounterCount, statusRows] =
+      await Promise.all([
+        app.analyticsDb
+          .select({ count: sql<number>`count(*)` })
+          .from(patients)
+          .where(eq(patients.organizationId, actor.organizationId)),
+        app.analyticsDb
+          .select({ count: sql<number>`count(*)` })
+          .from(appointments)
+          .where(and(eq(appointments.organizationId, actor.organizationId), eq(appointments.status, "waiting"))),
+        app.analyticsDb
+          .select({ count: sql<number>`count(*)` })
+          .from(prescriptions)
+          .where(eq(prescriptions.organizationId, actor.organizationId)),
+        app.analyticsDb
+          .select({ count: sql<number>`count(*)` })
+          .from(inventoryItems)
+          .where(and(eq(inventoryItems.organizationId, actor.organizationId), sql`${inventoryItems.stock} <= ${inventoryItems.reorderLevel}`)),
+        // gender breakdown, encounter total, and appointment status distribution are
+        // aggregated server-side so the dashboard never needs to pull raw rows.
+        app.analyticsDb
+          .select({ gender: patients.gender, count: sql<number>`count(*)` })
+          .from(patients)
+          .where(eq(patients.organizationId, actor.organizationId))
+          .groupBy(patients.gender),
+        app.analyticsDb
+          .select({ count: sql<number>`count(*)` })
+          .from(encounters)
+          .where(eq(encounters.organizationId, actor.organizationId)),
+        app.analyticsDb
+          .select({ status: appointments.status, count: sql<number>`count(*)` })
+          .from(appointments)
+          .where(eq(appointments.organizationId, actor.organizationId))
+          .groupBy(appointments.status)
+      ]);
+
+    const genderOf = (g: string) => Number(genderRows.find((row) => row.gender === g)?.count ?? 0);
+    const appointmentStatusCounts = {
+      waiting: 0,
+      in_consultation: 0,
+      completed: 0,
+      cancelled: 0
+    };
+    for (const row of statusRows) {
+      if (row.status in appointmentStatusCounts) {
+        appointmentStatusCounts[row.status as keyof typeof appointmentStatusCounts] = Number(row.count ?? 0);
+      }
+    }
+    const totalAppointments = Object.values(appointmentStatusCounts).reduce((sum, n) => sum + n, 0);
+    const totalPatients = Number(patientCount[0]?.count ?? 0);
 
     return {
-      patients: Number(patientCount[0]?.count ?? 0),
+      patients: totalPatients,
       waitingAppointments: Number(waitingCount[0]?.count ?? 0),
       prescriptions: Number(prescriptionCount[0]?.count ?? 0),
       lowStockItems: Number(lowStockCount[0]?.count ?? 0),
+      totalPatients,
+      totalMale: genderOf("male"),
+      totalFemale: genderOf("female"),
+      totalEncounters: Number(encounterCount[0]?.count ?? 0),
+      totalAppointments,
+      appointmentStatusCounts,
       role_context: {
         role: actor.role,
         active_role: actor.activeRole,

@@ -678,9 +678,40 @@ export const startVisitSchema = z
   })
   .strict();
 
+const paginationFields = {
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional()
+};
+const dateRangeFields = {
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional()
+};
+
 export const listAppointmentsQuerySchema = z
   .object({
-    status: appointmentStatusSchema.optional()
+    status: appointmentStatusSchema.optional(),
+    ...dateRangeFields,
+    ...paginationFields
+  })
+  .strict();
+
+export const listEncountersQuerySchema = z
+  .object({
+    ...dateRangeFields,
+    ...paginationFields
+  })
+  .strict();
+
+export const listPrescriptionsQuerySchema = z
+  .object({
+    ...paginationFields
+  })
+  .strict();
+
+export const pendingDispenseQuerySchema = z
+  .object({
+    ...dateRangeFields,
+    ...paginationFields
   })
   .strict();
 
