@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import {
   appointments,
   dispenseRecords,
@@ -11,10 +11,11 @@ import {
   prescriptionItems,
   prescriptions
 } from "@medsys/db";
-import { dispensePrescriptionSchema, idParamSchema } from "@medsys/validation";
+import { dispensePrescriptionSchema, idParamSchema, listPrescriptionsQuerySchema, pendingDispenseQuerySchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
+import { resolvePagination, startOfClinicDay } from "../../lib/pagination.js";
 
 const dispenseRequestBodySchema = {
   type: "object",
@@ -163,11 +164,15 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/", { preHandler: app.authorizePermissions(["prescription.read"]) }, async (request) => {
     const actor = request.actor!;
+    const query = parseOrThrowValidation(listPrescriptionsQuerySchema, request.query ?? {});
+    const { limit, offset } = resolvePagination(query);
     return app.readDb
       .select()
       .from(prescriptions)
       .where(and(eq(prescriptions.organizationId, actor.organizationId), isNull(prescriptions.deletedAt)))
-      .orderBy(desc(prescriptions.createdAt));
+      .orderBy(desc(prescriptions.createdAt))
+      .limit(limit)
+      .offset(offset);
   });
 
   app.get(
@@ -193,6 +198,23 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (request) => {
       const actor = request.actor!;
+      const query = parseOrThrowValidation(pendingDispenseQuerySchema, request.query ?? {});
+      const { limit, offset } = resolvePagination(query);
+      // The dispense queue is a same-day operation: default to prescriptions whose
+      // visit was checked on/after the current clinic day. This keeps imported
+      // historical visits (old checkedAt) out of the live queue.
+      const fromDate = query.from ? new Date(query.from) : startOfClinicDay();
+      const toDate = query.to ? new Date(query.to) : null;
+
+      const queueConditions = [
+        eq(prescriptions.organizationId, actor.organizationId),
+        inArray(appointments.status, ["in_consultation", "completed"]),
+        isNull(dispenseRecords.id),
+        gte(encounters.checkedAt, fromDate)
+      ];
+      if (toDate) {
+        queueConditions.push(lte(encounters.checkedAt, toDate));
+      }
 
       const rows = await app.readDb
         .select({
@@ -213,14 +235,10 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
         .innerJoin(appointments, eq(appointments.id, encounters.appointmentId))
         .innerJoin(patients, eq(patients.id, prescriptions.patientId))
         .leftJoin(dispenseRecords, eq(dispenseRecords.prescriptionId, prescriptions.id))
-        .where(
-          and(
-            eq(prescriptions.organizationId, actor.organizationId),
-            inArray(appointments.status, ["in_consultation", "completed"]),
-            isNull(dispenseRecords.id)
-          )
-        )
-        .orderBy(desc(prescriptions.createdAt));
+        .where(and(...queueConditions))
+        .orderBy(desc(prescriptions.createdAt))
+        .limit(limit)
+        .offset(offset);
 
       const prescriptionIds = rows.map((row) => row.id);
       const [diagnosisRows, itemRows] =

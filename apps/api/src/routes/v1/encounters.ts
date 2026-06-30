@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import {
   appointments,
   encounterDiagnoses,
@@ -9,9 +9,10 @@ import {
   prescriptions,
   testOrders
 } from "@medsys/db";
-import { createEncounterBundleSchema, idParamSchema } from "@medsys/validation";
+import { createEncounterBundleSchema, idParamSchema, listEncountersQuerySchema } from "@medsys/validation";
 import { serializePatientVital } from "../../lib/api-serializers.js";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
+import { resolvePagination } from "../../lib/pagination.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { syncEncounterFollowup } from "../../lib/followups/followup-service.js";
@@ -156,11 +157,24 @@ const encounterRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/", { preHandler: app.authorizePermissions(["encounter.read"]) }, async (request) => {
     const actor = request.actor!;
+    const query = parseOrThrowValidation(listEncountersQuerySchema, request.query ?? {});
+    const { limit, offset } = resolvePagination(query);
+
+    const conditions = [eq(encounters.organizationId, actor.organizationId), isNull(encounters.deletedAt)];
+    if (query.from) {
+      conditions.push(gte(encounters.checkedAt, new Date(query.from)));
+    }
+    if (query.to) {
+      conditions.push(lte(encounters.checkedAt, new Date(query.to)));
+    }
+
     return app.readDb
       .select()
       .from(encounters)
-      .where(and(eq(encounters.organizationId, actor.organizationId), isNull(encounters.deletedAt)))
-      .orderBy(desc(encounters.checkedAt));
+      .where(and(...conditions))
+      .orderBy(desc(encounters.checkedAt))
+      .limit(limit)
+      .offset(offset);
   });
 
   app.post(

@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { appointments, organizations, patients, userRoles, users } from "@medsys/db";
 import { createAppointmentSchema, idParamSchema, listAppointmentsQuerySchema, updateAppointmentSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
+import { resolvePagination, startOfClinicDay } from "../../lib/pagination.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { applyRouteDocs } from "../../lib/route-docs.js";
 import { buildDisplayName } from "../../lib/names.js";
@@ -124,6 +125,7 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
     const actor = request.actor!;
     const query = parseOrThrowValidation(listAppointmentsQuerySchema, request.query ?? {});
     const validatedStatus = query.status ?? null;
+    const { limit, offset } = resolvePagination(query);
     const queueCacheKey = appointmentQueueCacheKey(actor.organizationId);
 
     const baseCondition = and(
@@ -167,14 +169,38 @@ const appointmentRoutes: FastifyPluginAsync = async (app) => {
       return queueRows;
     }
 
-    const queryBuilder = app.readDb
+    // Date scope: an explicit from/to range always wins. Otherwise the operational
+    // statuses (today's checked / in-progress queues) default to the current
+    // clinic-day so years of imported history never flood the live dashboard.
+    // "completed" is scoped by when the visit was actually checked (completedAt),
+    // so a same-day visit shows even if its appointment was booked earlier.
+    const scopeColumn = validatedStatus === "completed" ? appointments.completedAt : appointments.scheduledAt;
+    const fromDate = query.from
+      ? new Date(query.from)
+      : validatedStatus === "completed" || validatedStatus === "in_consultation"
+        ? startOfClinicDay()
+        : null;
+    const toDate = query.to ? new Date(query.to) : null;
+
+    const conditions = [baseCondition];
+    if (validatedStatus) {
+      conditions.push(eq(appointments.status, validatedStatus));
+    }
+    if (fromDate) {
+      conditions.push(gte(scopeColumn, fromDate));
+    }
+    if (toDate) {
+      conditions.push(lte(scopeColumn, toDate));
+    }
+
+    return app.readDb
       .select(selectFields)
       .from(appointments)
       .innerJoin(patients, eq(appointments.patientId, patients.id))
-      .where(validatedStatus ? and(baseCondition, eq(appointments.status, validatedStatus)) : baseCondition)
-      .orderBy(desc(appointments.scheduledAt));
-
-    return queryBuilder;
+      .where(and(...conditions))
+      .orderBy(desc(appointments.scheduledAt))
+      .limit(limit)
+      .offset(offset);
   });
 
   app.post(

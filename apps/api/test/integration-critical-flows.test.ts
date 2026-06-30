@@ -174,6 +174,9 @@ test("critical flow: prescription dispense creates inventory movement and closes
     const assistant = await loginAs(app, "assistant@medsys.local");
     const doctor = await loginAs(app, "doctor@medsys.local");
     const uniqueSuffix = Date.now().toString();
+    // The pending-dispense queue is a same-day operation, so this flow uses the
+    // current timestamp rather than a fixed date.
+    const nowIso = new Date().toISOString();
     const patientId = await createPatient(app, owner.accessToken, `Dispense Flow ${uniqueSuffix}`);
 
     const doctorUsersResponse = await app.inject({
@@ -210,7 +213,7 @@ test("critical flow: prescription dispense creates inventory movement and closes
       },
       payload: {
         patientId,
-        scheduledAt: "2026-03-21T09:00:00Z"
+        scheduledAt: nowIso
       }
     });
     assert.equal(appointmentResponse.statusCode, 201);
@@ -226,7 +229,7 @@ test("critical flow: prescription dispense creates inventory movement and closes
         appointmentId,
         patientId,
         doctorId,
-        checkedAt: "2026-03-21T09:15:00Z",
+        checkedAt: nowIso,
         prescription: {
           items: [
             {
