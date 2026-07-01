@@ -1,33 +1,34 @@
 # AWS CodeBuild build spec for the Medlink API.
-# Heavy build (tsc / turbo) runs here in the cloud, NOT on the t3.micro prod box.
-# The output artifact ships compiled dist + source (no node_modules) to CodeDeploy,
-# which then runs `npm ci --omit=dev` and `pm2 reload` on the instance.
+# Heavy build runs in CodeBuild, not on the t3.micro production EC2 instance.
+# The output artifact ships compiled dist + source, without node_modules, to CodeDeploy.
+
 version: 0.2
 
 phases:
   install:
     runtime-versions:
       nodejs: 22
+
   pre_build:
     commands:
-      - node -v && npm -v
-      - echo "Installing all dependencies (incl dev, needed to build)..."
+      - node -v
+      - npm -v
+      - echo "Installing all dependencies including dev dependencies needed to build..."
       - npm ci
+
   build:
     commands:
-      - echo "Building @medsys/api (and its workspace deps) ..."
+      - echo "Building @medsys/api and its workspace dependencies..."
       - npx turbo run build --filter=@medsys/api
+
   post_build:
     commands:
       - echo "Making deploy hook scripts executable..."
-      - chmod +x scripts/deploy/*.sh
-      - echo "Removing node_modules from the artifact (rebuilt on the instance)..."
+      - if [ -d scripts/deploy ]; then chmod +x scripts/deploy/*.sh; fi
+      - echo "Removing node_modules from the artifact because dependencies are rebuilt on the EC2 instance..."
       - rm -rf node_modules
       - find . -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
 
-# Ship everything that remains (source + compiled dist + appspec + deploy scripts).
-# node_modules was stripped above; .env / .env.* are gitignored so they are never
-# in the source artifact and the live .env on the box is left untouched.
 artifacts:
   files:
     - '**/*'
