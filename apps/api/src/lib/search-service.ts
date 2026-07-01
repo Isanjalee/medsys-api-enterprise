@@ -1,5 +1,5 @@
 import { and, desc, eq, exists, ilike, isNull, or, sql } from "drizzle-orm";
-import { encounters, patients, type buildDbClient } from "@medsys/db";
+import { encounters, patientDoctorLinks, patients, type buildDbClient } from "@medsys/db";
 import type { FastifyBaseLogger } from "fastify";
 
 type DbClient = ReturnType<typeof buildDbClient>["db"];
@@ -105,18 +105,35 @@ const createDbFallbackSearchService = (db: DbClient): SearchService => ({
       isNull(patients.deletedAt),
       ...(doctorId
         ? [
-            exists(
-              db
-                .select({ id: encounters.id })
-                .from(encounters)
-                .where(
-                  and(
-                    eq(encounters.organizationId, organizationId),
-                    eq(encounters.patientId, patients.id),
-                    eq(encounters.doctorId, doctorId),
-                    isNull(encounters.deletedAt)
+            // A doctor's patients = anyone they have an encounter with OR a
+            // self-registered patient who linked to them from the portal (a fresh
+            // link has zero encounters, so it must be matched here too).
+            or(
+              exists(
+                db
+                  .select({ id: encounters.id })
+                  .from(encounters)
+                  .where(
+                    and(
+                      eq(encounters.organizationId, organizationId),
+                      eq(encounters.patientId, patients.id),
+                      eq(encounters.doctorId, doctorId),
+                      isNull(encounters.deletedAt)
+                    )
                   )
-                )
+              ),
+              exists(
+                db
+                  .select({ id: patientDoctorLinks.id })
+                  .from(patientDoctorLinks)
+                  .where(
+                    and(
+                      eq(patientDoctorLinks.organizationId, organizationId),
+                      eq(patientDoctorLinks.patientId, patients.id),
+                      eq(patientDoctorLinks.doctorUserId, doctorId)
+                    )
+                  )
+              )
             )
           ]
         : []),

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, count, desc, eq, exists, inArray, isNull, max } from "drizzle-orm";
+import { and, count, desc, eq, exists, inArray, isNull, max, or } from "drizzle-orm";
 import { z } from "zod";
 import {
   appointments,
@@ -9,6 +9,7 @@ import {
   familyMembers,
   patientAllergies,
   patientConditions,
+  patientDoctorLinks,
   patientHistoryEntries,
   patientTimelineEvents,
   patientVitals,
@@ -942,6 +943,7 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
           address: patients.address,
           familyId: patients.familyId,
           guardianPatientId: patients.guardianPatientId,
+          selfRegistered: patients.selfRegistered,
           createdAt: patients.createdAt
         })
         .from(patients)
@@ -951,18 +953,35 @@ const patientRoutes: FastifyPluginAsync = async (app) => {
             isNull(patients.deletedAt),
             ...(scopedDoctorId
               ? [
-                  exists(
-                    app.readDb
-                      .select({ id: encounters.id })
-                      .from(encounters)
-                      .where(
-                        and(
-                          eq(encounters.organizationId, actor.organizationId),
-                          eq(encounters.patientId, patients.id),
-                          eq(encounters.doctorId, scopedDoctorId),
-                          isNull(encounters.deletedAt)
+                  // A doctor's patients = anyone they have an encounter with OR a
+                  // self-registered patient who linked to them from the portal
+                  // (a fresh link has zero encounters, so it must be matched here too).
+                  or(
+                    exists(
+                      app.readDb
+                        .select({ id: encounters.id })
+                        .from(encounters)
+                        .where(
+                          and(
+                            eq(encounters.organizationId, actor.organizationId),
+                            eq(encounters.patientId, patients.id),
+                            eq(encounters.doctorId, scopedDoctorId),
+                            isNull(encounters.deletedAt)
+                          )
                         )
-                      )
+                    ),
+                    exists(
+                      app.readDb
+                        .select({ id: patientDoctorLinks.id })
+                        .from(patientDoctorLinks)
+                        .where(
+                          and(
+                            eq(patientDoctorLinks.organizationId, actor.organizationId),
+                            eq(patientDoctorLinks.patientId, patients.id),
+                            eq(patientDoctorLinks.doctorUserId, scopedDoctorId)
+                          )
+                        )
+                    )
                   )
                 ]
               : [])

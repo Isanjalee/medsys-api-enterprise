@@ -12,3 +12,5 @@ README.private.md
 docs/private/
 .chrome-headless-profile-client/
 .edge-pdf/
+# Local-filesystem document storage fallback (dev only; real files/PHI never committed)
+.data/

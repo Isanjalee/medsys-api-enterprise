@@ -67,6 +67,9 @@ const envSchema = z.object({
   OPENSEARCH_DIAGNOSIS_INDEX: z.string().default("medsys_diagnoses"),
   AWS_REGION: z.string().default("ap-southeast-1"),
   S3_DOCUMENTS_BUCKET: z.string().min(1).optional(),
+  // Local filesystem fallback for document storage when no S3 bucket is configured
+  // (local dev). Ignored when S3_DOCUMENTS_BUCKET is set.
+  DOCUMENTS_LOCAL_DIR: z.string().min(1).default(".data/documents"),
   PATIENT_DOCUMENT_MAX_BYTES: z.coerce.number().int().positive().default(10485760),
   ICD10_API_BASE_URL: z
     .string()
