@@ -715,6 +715,59 @@ export const pendingDispenseQuerySchema = z
   })
   .strict();
 
+// ---- Patient portal ---------------------------------------------------------
+
+const portalGenderSchema = z.enum(["male", "female", "other"]);
+
+export const portalSignupSchema = z
+  .object({
+    email: z.string().email().max(255),
+    phone: z.string().trim().min(5).max(30).optional(),
+    password: z.string().min(8).max(200)
+  })
+  .strict();
+
+export const portalLoginSchema = z
+  .object({
+    email: z.string().email().max(255),
+    password: z.string().min(1).max(200)
+  })
+  .strict();
+
+export const portalProfileSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(80),
+    lastName: z.string().trim().min(1).max(80),
+    dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    gender: portalGenderSchema,
+    nic: z.string().trim().max(20).optional().nullable(),
+    phone: z.string().trim().max(30).optional().nullable(),
+    address: z.string().trim().max(2000).optional().nullable(),
+    bloodGroup: z.string().trim().max(5).optional().nullable(),
+    allergies: z
+      .array(
+        z.object({
+          name: z.string().trim().min(1).max(120),
+          severity: z.enum(["low", "moderate", "high"]).optional()
+        })
+      )
+      .max(50)
+      .optional()
+  })
+  .strict();
+
+export const portalLinkDoctorSchema = z
+  .object({
+    doctorUserId: z.coerce.number().int().positive()
+  })
+  .strict();
+
+export const portalDocumentCreateSchema = z
+  .object({
+    doctorUserId: z.coerce.number().int().positive()
+  })
+  .strict();
+
 export const patientVisibilityScopeSchema = z.enum(["organization", "my_patients"]);
 
 export const listPatientsQuerySchema = z
