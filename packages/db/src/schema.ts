@@ -203,6 +203,7 @@ export const patients = pgTable(
     guardianPhone: varchar("guardian_phone", { length: 30 }),
     guardianRelationship: varchar("guardian_relationship", { length: 40 }),
     isActive: boolean("is_active").notNull().default(true),
+    selfRegistered: boolean("self_registered").notNull().default(false),
     ...auditTimestamps,
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
@@ -706,5 +707,106 @@ export const auditLogs = pgTable(
   (table) => [
     index("audit_logs_created_idx").on(table.createdAt),
     index("audit_logs_entity_idx").on(table.entityType, table.entityId)
+  ]
+);
+
+// ---- Patient self-service portal (global identity, links into clinics) ------
+
+export const patientAccounts = pgTable("patient_accounts", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  uuid: uuid("uuid").notNull().defaultRandom().unique(),
+  email: varchar("email", { length: 255 }).notNull(),
+  passwordHash: text("password_hash").notNull(),
+  phone: varchar("phone", { length: 30 }),
+  firstName: varchar("first_name", { length: 80 }),
+  lastName: varchar("last_name", { length: 80 }),
+  dob: date("dob"),
+  gender: varchar("gender", { length: 10 }),
+  nic: varchar("nic", { length: 20 }),
+  address: text("address"),
+  bloodGroup: varchar("blood_group", { length: 5 }),
+  allergies: jsonb("allergies")
+    .$type<Array<{ name: string; severity?: "low" | "moderate" | "high" }>>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  profileCompleted: boolean("profile_completed").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  ...auditTimestamps
+});
+
+export const patientRefreshTokens = pgTable(
+  "patient_refresh_tokens",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    patientAccountId: bigint("patient_account_id", { mode: "number" })
+      .notNull()
+      .references(() => patientAccounts.id),
+    tokenId: uuid("token_id").notNull().defaultRandom().unique(),
+    familyId: uuid("family_id").notNull().defaultRandom(),
+    parentTokenId: uuid("parent_token_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    replayDetectedAt: timestamp("replay_detected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("patient_refresh_tokens_account_idx").on(table.patientAccountId),
+    index("patient_refresh_tokens_family_idx").on(table.familyId)
+  ]
+);
+
+export const patientDoctorLinks = pgTable(
+  "patient_doctor_links",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    patientAccountId: bigint("patient_account_id", { mode: "number" })
+      .notNull()
+      .references(() => patientAccounts.id),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    doctorUserId: bigint("doctor_user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    status: varchar("status", { length: 20 }).notNull().default("self_registered"),
+    ...auditTimestamps
+  },
+  (table) => [
+    unique("patient_doctor_links_unique").on(table.patientAccountId, table.doctorUserId),
+    index("patient_doctor_links_account_idx").on(table.patientAccountId),
+    index("patient_doctor_links_patient_idx").on(table.patientId),
+    index("patient_doctor_links_doctor_idx").on(table.doctorUserId)
+  ]
+);
+
+export const patientDocuments = pgTable(
+  "patient_documents",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    uuid: uuid("uuid").notNull().defaultRandom().unique(),
+    patientAccountId: bigint("patient_account_id", { mode: "number" })
+      .notNull()
+      .references(() => patientAccounts.id),
+    organizationId: uuid("organization_id").notNull(),
+    patientId: bigint("patient_id", { mode: "number" })
+      .notNull()
+      .references(() => patients.id),
+    doctorUserId: bigint("doctor_user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    fileName: varchar("file_name", { length: 255 }).notNull(),
+    contentType: varchar("content_type", { length: 100 }).notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    s3Key: text("s3_key").notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("shared"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditTimestamps
+  },
+  (table) => [
+    index("patient_documents_patient_idx").on(table.organizationId, table.patientId),
+    index("patient_documents_account_idx").on(table.patientAccountId),
+    index("patient_documents_doctor_idx").on(table.doctorUserId)
   ]
 );

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import fastifyMultipart from "@fastify/multipart";
 import environmentPlugin from "./plugins/environment.js";
 import observabilityPlugin from "./plugins/observability.js";
 import databasePlugin from "./plugins/database.js";
@@ -150,6 +151,9 @@ export const buildApp = async () => {
   await app.register(cachePlugin);
   await app.register(searchPlugin);
   await app.register(authPlugin);
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: app.env.PATIENT_DOCUMENT_MAX_BYTES, files: 1 }
+  });
   await app.register(rateLimitPlugin);
   await app.register(docsPlugin);
   await app.register(routesPlugin, { prefix: "/v1" });

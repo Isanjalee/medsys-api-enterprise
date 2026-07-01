@@ -65,6 +65,9 @@ const envSchema = z.object({
   OPENSEARCH_URL: z.string().url().optional(),
   OPENSEARCH_PATIENT_INDEX: z.string().default("medsys_patients"),
   OPENSEARCH_DIAGNOSIS_INDEX: z.string().default("medsys_diagnoses"),
+  AWS_REGION: z.string().default("ap-southeast-1"),
+  S3_DOCUMENTS_BUCKET: z.string().min(1).optional(),
+  PATIENT_DOCUMENT_MAX_BYTES: z.coerce.number().int().positive().default(10485760),
   ICD10_API_BASE_URL: z
     .string()
     .url()
