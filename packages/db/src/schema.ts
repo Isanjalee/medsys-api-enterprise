@@ -804,6 +804,9 @@ export const patientDocuments = pgTable(
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     s3Key: text("s3_key").notNull(),
     status: varchar("status", { length: 20 }).notNull().default("shared"),
+    // Set when a doctor marks the document reviewed (report-review workflow).
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedByUserId: bigint("reviewed_by_user_id", { mode: "number" }).references(() => users.id),
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
     ...auditTimestamps
   },
@@ -811,6 +814,7 @@ export const patientDocuments = pgTable(
     index("patient_documents_patient_idx").on(table.organizationId, table.patientId),
     index("patient_documents_account_idx").on(table.patientAccountId),
     index("patient_documents_doctor_idx").on(table.doctorUserId),
-    index("patient_documents_review_idx").on(table.organizationId, table.uploadedAt)
+    index("patient_documents_review_idx").on(table.organizationId, table.uploadedAt),
+    index("patient_documents_pending_review_idx").on(table.organizationId, table.reviewedAt)
   ]
 );

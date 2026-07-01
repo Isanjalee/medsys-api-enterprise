@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { patientAccounts, patientDoctorLinks, patients } from "@medsys/db";
 import { portalProfileSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
@@ -24,6 +24,40 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
       .limit(1);
     assertOrThrow(rows.length === 1, 404, "Account not found");
     return rows[0];
+  });
+
+  // Onboarding pre-fill: if the NIC (preferred) or phone matches an existing clinic
+  // chart, return its profile fields so the wizard can fill the blanks. Clinical history
+  // is only exposed after the patient links a doctor (which auto-merges to the chart).
+  app.get("/match", async (request) => {
+    const query = request.query as { nic?: string; phone?: string };
+    const nic = query.nic?.trim() || null;
+    const phone = query.phone?.trim() || null;
+    if (!nic && !phone) return { matched: false };
+
+    const fields = {
+      firstName: patients.firstName,
+      lastName: patients.lastName,
+      dob: patients.dob,
+      gender: patients.gender,
+      phone: patients.phone,
+      address: patients.address,
+      bloodGroup: patients.bloodGroup
+    };
+    const find = async (column: typeof patients.nic | typeof patients.phone, value: string) => {
+      const rows = await app.readDb
+        .select(fields)
+        .from(patients)
+        .where(and(eq(patients.selfRegistered, false), isNull(patients.deletedAt), eq(column, value)))
+        .limit(1);
+      return rows[0] ?? null;
+    };
+
+    let row = nic ? await find(patients.nic, nic) : null;
+    if (!row && phone) row = await find(patients.phone, phone);
+    if (!row) return { matched: false };
+
+    return { matched: true, profile: row };
   });
 
   app.put("/", async (request) => {

@@ -31,8 +31,42 @@ export const supportsPresignedUrls = (env: AppEnv): boolean => useS3(env);
 export const ALLOWED_DOCUMENT_TYPES = new Set([
   "application/pdf",
   "image/jpeg",
-  "image/png"
+  "image/png",
+  // Phone camera captures (iPhone HEIC/HEIF, some Android WebP) — accept so uploads
+  // from a phone photo don't 415. HEIC may not preview inline but downloads fine.
+  "image/heic",
+  "image/heif",
+  "image/webp",
+  "image/gif"
 ]);
+
+const EXTENSION_CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  heic: "image/heic",
+  heif: "image/heif",
+  webp: "image/webp",
+  gif: "image/gif"
+};
+
+// Phones sometimes send an empty or generic mime type (e.g. application/octet-stream)
+// for a camera capture. Fall back to the file extension so the upload still works and
+// we store a sensible content type for inline viewing later. Returns null if we can't
+// confidently classify it as an allowed document.
+export const resolveDocumentContentType = (mimetype: string | undefined, fileName: string): string | null => {
+  const mime = (mimetype ?? "").toLowerCase().split(";")[0].trim();
+  if (ALLOWED_DOCUMENT_TYPES.has(mime)) {
+    return mime;
+  }
+  const ext = fileName.toLowerCase().split(".").pop() ?? "";
+  const byExt = EXTENSION_CONTENT_TYPES[ext];
+  // Only trust the extension when the mime type was missing/generic, not when the phone
+  // sent a real (but disallowed) type.
+  const genericMime = !mime || mime === "application/octet-stream" || mime === "binary/octet-stream";
+  return byExt && genericMime ? byExt : null;
+};
 
 export const buildDocumentKey = (
   organizationId: string,
