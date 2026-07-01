@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import { and, eq } from "drizzle-orm";
 import fastifyJwt from "@fastify/jwt";
-import { platformAdmins, userRoles, users } from "@medsys/db";
+import { patientAccounts, platformAdmins, userRoles, users } from "@medsys/db";
 import { hasAllResolvedPermissions, resolveWorkflowProfiles, type Permission } from "@medsys/types";
 import { assertOrThrow } from "../lib/http-error.js";
 import {
@@ -78,6 +78,33 @@ const authPlugin = fp(async (app) => {
     return async (request: any) => {
       assertOrThrow(request.actor, 401, "Unauthorized");
       assertOrThrow(hasAllResolvedPermissions(request.actor.permissions, permissions), 403, "Forbidden");
+    };
+  });
+
+  app.decorate("authenticatePatient", async (request: any) => {
+    await request.jwtVerify();
+    assertOrThrow(request.user?.scope === "patient", 403, "Patient access required");
+    const patientAccountId = Number(request.user.sub);
+    assertOrThrow(Number.isInteger(patientAccountId), 401, "Invalid token subject");
+
+    const rows = await app.db
+      .select({
+        id: patientAccounts.id,
+        email: patientAccounts.email,
+        profileCompleted: patientAccounts.profileCompleted,
+        isActive: patientAccounts.isActive
+      })
+      .from(patientAccounts)
+      .where(eq(patientAccounts.id, patientAccountId))
+      .limit(1);
+
+    assertOrThrow(rows.length === 1, 401, "Unauthorized");
+    assertOrThrow(rows[0].isActive, 403, "Inactive account");
+
+    request.patientActor = {
+      patientAccountId: rows[0].id,
+      email: rows[0].email,
+      profileCompleted: rows[0].profileCompleted
     };
   });
 

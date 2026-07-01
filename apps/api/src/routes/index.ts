@@ -20,6 +20,8 @@ import consultationRoutes from "./v1/consultations.js";
 import organizationRoutes from "./v1/organizations.js";
 import adminRoutes from "./v1/admin.js";
 import dictionaryRoutes from "./v1/dictionary.js";
+import documentsRoutes from "./v1/documents.js";
+import portalRoutes from "./v1/portal/index.js";
 
 const routesPlugin: FastifyPluginAsync = async (app) => {
   await app.register(systemRoutes);
@@ -43,6 +45,8 @@ const routesPlugin: FastifyPluginAsync = async (app) => {
   await app.register(taskRoutes, { prefix: "/tasks" });
   await app.register(followupRoutes, { prefix: "/followups" });
   await app.register(auditRoutes, { prefix: "/audit" });
+  await app.register(documentsRoutes, { prefix: "/documents" });
+  await app.register(portalRoutes, { prefix: "/portal" });
 };
 
 export default routesPlugin;

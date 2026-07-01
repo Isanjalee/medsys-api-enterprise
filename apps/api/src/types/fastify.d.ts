@@ -22,6 +22,7 @@ declare module "fastify" {
     securityService: SecurityService;
     authenticate: (request: FastifyRequest) => Promise<void>;
     authenticatePlatformAdmin: (request: FastifyRequest) => Promise<void>;
+    authenticatePatient: (request: FastifyRequest) => Promise<void>;
     authorize: (roles: UserRole[]) => preHandlerHookHandler;
     authorizePermissions: (permissions: Permission[]) => preHandlerHookHandler;
     enforceSensitiveRateLimit: (
@@ -44,6 +45,11 @@ declare module "fastify" {
       id: number;
       username: string;
       displayName: string;
+    };
+    patientActor?: {
+      patientAccountId: number;
+      email: string;
+      profileCompleted: boolean;
     };
     traceId?: string;
   }
