@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { organizations, patientAccounts, patientDoctorLinks, patients, userRoles, users } from "@medsys/db";
 import { portalLinkDoctorSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
@@ -112,49 +112,95 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
     const patientCode = `SR-${accountId}-${doctorUserId}`.slice(0, 24);
     const age = ageFromDob(account.dob!);
 
+    const nic = account.nic?.trim() || null;
+    const phone = account.phone?.trim() || null;
+
     const result = await app.db.transaction(async (tx) => {
-      // Reuse a record from a prior link/unlink to avoid patient_code collisions.
-      const existingPatient = await tx
-        .select({ id: patients.id })
-        .from(patients)
-        .where(and(eq(patients.organizationId, organizationId), eq(patients.patientCode, patientCode)))
-        .limit(1);
+      // 1) Auto-merge: if this account's NIC (preferred) or phone matches an existing
+      //    real clinic chart in this org, link straight to it so the patient sees their
+      //    full existing history + documents. Product decision: auto-merge with no
+      //    verification step (see below audit log — PHI-sensitive).
+      let matchedPatientId: number | null = null;
+      const findMatch = async (column: typeof patients.nic | typeof patients.phone, value: string) => {
+        const rows = await tx
+          .select({ id: patients.id })
+          .from(patients)
+          .where(
+            and(
+              eq(patients.organizationId, organizationId),
+              eq(patients.selfRegistered, false),
+              isNull(patients.deletedAt),
+              eq(column, value)
+            )
+          )
+          .limit(1);
+        return rows.length === 1 ? rows[0].id : null;
+      };
+      if (nic) matchedPatientId = await findMatch(patients.nic, nic);
+      if (matchedPatientId === null && phone) matchedPatientId = await findMatch(patients.phone, phone);
 
       let patientId: number;
-      if (existingPatient.length === 1) {
-        patientId = existingPatient[0].id;
-        await tx
-          .update(patients)
-          .set({ isActive: true, deletedAt: null, updatedAt: new Date() })
-          .where(eq(patients.id, patientId));
+      if (matchedPatientId !== null) {
+        // Link to the existing chart; never overwrite the clinician-owned record.
+        patientId = matchedPatientId;
       } else {
-        const inserted = await tx
-          .insert(patients)
-          .values({
-            organizationId,
-            patientCode,
-            nic: account.nic ?? null,
-            firstName: account.firstName!,
-            lastName: account.lastName!,
-            dob: account.dob!,
-            age,
-            gender: account.gender as "male" | "female" | "other",
-            phone: account.phone ?? null,
-            address: account.address ?? null,
-            bloodGroup: account.bloodGroup ?? null,
-            selfRegistered: true
-          })
-          .returning({ id: patients.id });
-        patientId = inserted[0].id;
+        // 2) No match — create (or reuse) a self-registered clinic record as before.
+        const existingPatient = await tx
+          .select({ id: patients.id })
+          .from(patients)
+          .where(and(eq(patients.organizationId, organizationId), eq(patients.patientCode, patientCode)))
+          .limit(1);
+
+        if (existingPatient.length === 1) {
+          patientId = existingPatient[0].id;
+          await tx
+            .update(patients)
+            .set({ isActive: true, deletedAt: null, updatedAt: new Date() })
+            .where(eq(patients.id, patientId));
+        } else {
+          const inserted = await tx
+            .insert(patients)
+            .values({
+              organizationId,
+              patientCode,
+              nic,
+              firstName: account.firstName!,
+              lastName: account.lastName!,
+              dob: account.dob!,
+              age,
+              gender: account.gender as "male" | "female" | "other",
+              phone,
+              address: account.address ?? null,
+              bloodGroup: account.bloodGroup ?? null,
+              selfRegistered: true
+            })
+            .returning({ id: patients.id });
+          patientId = inserted[0].id;
+        }
       }
 
       const link = await tx
         .insert(patientDoctorLinks)
-        .values({ patientAccountId: accountId, organizationId, patientId, doctorUserId, status: "self_registered" })
+        .values({
+          patientAccountId: accountId,
+          organizationId,
+          patientId,
+          doctorUserId,
+          // A match links to a real existing chart -> "verified"; otherwise self-registered.
+          status: matchedPatientId !== null ? "verified" : "self_registered"
+        })
         .returning();
 
-      return { linkId: link[0].id, patientId };
+      return { linkId: link[0].id, patientId, merged: matchedPatientId !== null };
     });
+
+    if (result.merged) {
+      // PHI-safe audit trail (ids only; no NIC/phone values) of the auto-merge.
+      request.log.info(
+        { event: "portal.auto_merge", accountId, patientId: result.patientId, doctorUserId, organizationId },
+        "Portal account auto-merged to an existing clinic chart by NIC/phone match"
+      );
+    }
 
     return reply.code(201).send(result);
   });

@@ -3,24 +3,19 @@
 // staff (assistant/doctor) uploads, unified in patient_documents.
 import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
-import { aliasedTable, and, desc, eq } from "drizzle-orm";
+import { aliasedTable, and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { patientDocuments, patients, users } from "@medsys/db";
 import { assertOrThrow } from "../../lib/http-error.js";
 import { buildDisplayName } from "../../lib/names.js";
 import { resolvePagination } from "../../lib/pagination.js";
-import {
-  ALLOWED_DOCUMENT_TYPES,
-  buildDocumentKey,
-  getDocument,
-  putDocument
-} from "../../lib/s3.js";
+import { buildDocumentKey, getDocument, putDocument, resolveDocumentContentType } from "../../lib/s3.js";
 
 const STAFF_ROLES = ["owner", "doctor", "assistant"] as const;
 
 const documentsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.authenticate);
 
-  // Documents for one patient (both portal self-uploads and staff uploads).
+  // Documents for one patient (portal self-uploads + staff uploads), newest first.
   app.get(
     "/patient/:patientId",
     { preHandler: app.authorize([...STAFF_ROLES]) },
@@ -41,6 +36,7 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
           status: patientDocuments.status,
           source: patientDocuments.source,
           note: patientDocuments.note,
+          reviewedAt: patientDocuments.reviewedAt,
           uploadedByFirst: uploader.firstName,
           uploadedByLast: uploader.lastName
         })
@@ -65,6 +61,7 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
         status: row.status,
         source: row.source,
         note: row.note,
+        reviewedAt: row.reviewedAt,
         uploadedByName:
           row.uploadedByFirst || row.uploadedByLast
             ? buildDisplayName(row.uploadedByFirst ?? "", row.uploadedByLast ?? "")
@@ -98,16 +95,17 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
 
       const file = await (request as unknown as { file: () => Promise<any> }).file();
       assertOrThrow(file, 400, "No file uploaded");
-      assertOrThrow(ALLOWED_DOCUMENT_TYPES.has(file.mimetype), 415, "Only PDF, JPG and PNG files are allowed");
+      const fileName = String(file.filename ?? "document").slice(0, 255);
+      const contentType = resolveDocumentContentType(file.mimetype, fileName);
+      assertOrThrow(contentType, 415, "Only PDF and image files (PDF, JPG, PNG, HEIC) are allowed");
 
       const buffer: Buffer = await file.toBuffer();
       assertOrThrow(buffer.length > 0, 400, "Empty file");
       assertOrThrow(buffer.length <= app.env.PATIENT_DOCUMENT_MAX_BYTES, 413, "File is too large");
 
       const uuid = randomUUID();
-      const fileName = String(file.filename ?? "document").slice(0, 255);
       const key = buildDocumentKey(actor.organizationId, patientId, uuid, fileName);
-      await putDocument(app.env, key, buffer, file.mimetype);
+      await putDocument(app.env, key, buffer, contentType!);
 
       const inserted = await app.db
         .insert(patientDocuments)
@@ -119,7 +117,7 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
           source: "assistant",
           note,
           fileName,
-          contentType: file.mimetype,
+          contentType: contentType!,
           sizeBytes: buffer.length,
           s3Key: key,
           status: "shared"
@@ -130,18 +128,21 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
-  // Org-wide review queue: recent documents with the patient + uploader details the
-  // doctor needs to triage them. Defaults to staff uploads (the report-review inbox).
+  // Org-wide review inbox: documents (assistant + patient-portal uploads) with the
+  // patient + uploader details the doctor needs to triage them. Unreviewed by default;
+  // pass ?reviewed=true for the reviewed (past) list, and ?source= to narrow.
   app.get(
     "/review",
     { preHandler: app.authorize([...STAFF_ROLES]) },
     async (request) => {
       const actor = request.actor!;
-      const query = request.query as { limit?: number; offset?: number; source?: string };
+      const query = request.query as { limit?: number; offset?: number; source?: string; reviewed?: string };
       const { limit, offset } = resolvePagination(query);
-      const sourceFilter = query.source === "patient" || query.source === "assistant" ? query.source : "assistant";
+      const wantReviewed = query.reviewed === "true" || query.reviewed === "1";
+      const sourceFilter = query.source === "patient" || query.source === "assistant" ? query.source : null;
 
       const uploader = aliasedTable(users, "uploader");
+      const reviewer = aliasedTable(users, "reviewer");
       const rows = await app.readDb
         .select({
           id: patientDocuments.id,
@@ -151,6 +152,7 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
           uploadedAt: patientDocuments.uploadedAt,
           source: patientDocuments.source,
           note: patientDocuments.note,
+          reviewedAt: patientDocuments.reviewedAt,
           patientId: patientDocuments.patientId,
           patientFirst: patients.firstName,
           patientLast: patients.lastName,
@@ -161,15 +163,19 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
           patientDob: patients.dob,
           patientGender: patients.gender,
           uploadedByFirst: uploader.firstName,
-          uploadedByLast: uploader.lastName
+          uploadedByLast: uploader.lastName,
+          reviewedByFirst: reviewer.firstName,
+          reviewedByLast: reviewer.lastName
         })
         .from(patientDocuments)
         .innerJoin(patients, eq(patients.id, patientDocuments.patientId))
         .leftJoin(uploader, eq(uploader.id, patientDocuments.uploadedByUserId))
+        .leftJoin(reviewer, eq(reviewer.id, patientDocuments.reviewedByUserId))
         .where(
           and(
             eq(patientDocuments.organizationId, actor.organizationId),
-            eq(patientDocuments.source, sourceFilter)
+            wantReviewed ? isNotNull(patientDocuments.reviewedAt) : isNull(patientDocuments.reviewedAt),
+            ...(sourceFilter ? [eq(patientDocuments.source, sourceFilter)] : [])
           )
         )
         .orderBy(desc(patientDocuments.uploadedAt))
@@ -184,6 +190,11 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
         uploadedAt: row.uploadedAt,
         source: row.source,
         note: row.note,
+        reviewedAt: row.reviewedAt,
+        reviewedByName:
+          row.reviewedByFirst || row.reviewedByLast
+            ? buildDisplayName(row.reviewedByFirst ?? "", row.reviewedByLast ?? "")
+            : null,
         patientId: row.patientId,
         patientName: buildDisplayName(row.patientFirst, row.patientLast),
         patientCode: row.patientCode,
@@ -195,8 +206,34 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
         uploadedByName:
           row.uploadedByFirst || row.uploadedByLast
             ? buildDisplayName(row.uploadedByFirst ?? "", row.uploadedByLast ?? "")
-            : null
+            : row.source === "patient"
+              ? "Patient"
+              : null
       }));
+    }
+  );
+
+  // Mark a document reviewed (or undo with ?reviewed=false). Org-scoped.
+  app.post(
+    "/:id/review",
+    { preHandler: app.authorize(["owner", "doctor"]) },
+    async (request) => {
+      const actor = request.actor!;
+      const id = Number((request.params as { id: string }).id);
+      assertOrThrow(Number.isInteger(id), 400, "Invalid document id");
+      const undo = (request.query as { reviewed?: string }).reviewed === "false";
+
+      const updated = await app.db
+        .update(patientDocuments)
+        .set({
+          reviewedAt: undo ? null : new Date(),
+          reviewedByUserId: undo ? null : actor.userId
+        })
+        .where(and(eq(patientDocuments.id, id), eq(patientDocuments.organizationId, actor.organizationId)))
+        .returning({ id: patientDocuments.id, reviewedAt: patientDocuments.reviewedAt });
+      assertOrThrow(updated.length === 1, 404, "Document not found");
+
+      return { ok: true, reviewedAt: updated[0].reviewedAt };
     }
   );
 
