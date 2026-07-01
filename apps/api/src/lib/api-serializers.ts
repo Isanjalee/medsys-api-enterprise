@@ -44,6 +44,7 @@ export type PatientSummaryRow = {
   } | null;
   allergyHighlights?: string[] | null;
   majorActiveCondition?: string | null;
+  selfRegistered?: boolean | null;
   createdAt: Date;
 };
 
@@ -121,6 +122,7 @@ export const serializePatientSummary = (patient: PatientSummaryRow) => {
       : null,
     allergy_highlights: patient.allergyHighlights ?? [],
     major_active_condition: patient.majorActiveCondition ?? null,
+    self_registered: patient.selfRegistered ?? false,
     created_at: patient.createdAt
   };
 };

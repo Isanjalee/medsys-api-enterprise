@@ -786,16 +786,19 @@ export const patientDocuments = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     uuid: uuid("uuid").notNull().defaultRandom().unique(),
-    patientAccountId: bigint("patient_account_id", { mode: "number" })
-      .notNull()
-      .references(() => patientAccounts.id),
+    // Null for staff (assistant/doctor) uploads — those patients may have no portal account.
+    patientAccountId: bigint("patient_account_id", { mode: "number" }).references(() => patientAccounts.id),
     organizationId: uuid("organization_id").notNull(),
     patientId: bigint("patient_id", { mode: "number" })
       .notNull()
       .references(() => patients.id),
-    doctorUserId: bigint("doctor_user_id", { mode: "number" })
-      .notNull()
-      .references(() => users.id),
+    // Null for staff uploads that aren't targeted at one doctor (org-wide review).
+    doctorUserId: bigint("doctor_user_id", { mode: "number" }).references(() => users.id),
+    // The staff user who uploaded it (null for portal self-uploads).
+    uploadedByUserId: bigint("uploaded_by_user_id", { mode: "number" }).references(() => users.id),
+    // 'patient' (portal self-upload) | 'assistant' (uploaded by clinic staff).
+    source: varchar("source", { length: 20 }).notNull().default("patient"),
+    note: text("note"),
     fileName: varchar("file_name", { length: 255 }).notNull(),
     contentType: varchar("content_type", { length: 100 }).notNull(),
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
@@ -807,6 +810,7 @@ export const patientDocuments = pgTable(
   (table) => [
     index("patient_documents_patient_idx").on(table.organizationId, table.patientId),
     index("patient_documents_account_idx").on(table.patientAccountId),
-    index("patient_documents_doctor_idx").on(table.doctorUserId)
+    index("patient_documents_doctor_idx").on(table.doctorUserId),
+    index("patient_documents_review_idx").on(table.organizationId, table.uploadedAt)
   ]
 );
