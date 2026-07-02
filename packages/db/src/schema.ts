@@ -170,13 +170,18 @@ export const families = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     organizationId: uuid("organization_id").notNull(),
-    familyCode: varchar("family_code", { length: 30 }).notNull().unique(),
+    // Unique PER ORGANIZATION (not globally): the same portal account uses the code
+    // SRF-{accountId} in every clinic it links to, so a global unique broke second-clinic links.
+    familyCode: varchar("family_code", { length: 30 }).notNull(),
     familyName: varchar("family_name", { length: 120 }).notNull(),
     assigned: boolean("assigned").notNull().default(false),
     ...auditTimestamps,
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
-  (table) => [index("families_org_assigned_idx").on(table.organizationId, table.assigned)]
+  (table) => [
+    unique("families_org_family_code_unique").on(table.organizationId, table.familyCode),
+    index("families_org_assigned_idx").on(table.organizationId, table.assigned)
+  ]
 );
 
 export const patients = pgTable(
