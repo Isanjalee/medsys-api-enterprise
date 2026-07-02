@@ -798,14 +798,19 @@ export const patientDoctorLinks = pgTable(
     doctorUserId: bigint("doctor_user_id", { mode: "number" })
       .notNull()
       .references(() => users.id),
+    // Null for the account holder's own links; set for a family member's link.
+    memberId: bigint("member_id", { mode: "number" }).references(() => patientAccountMembers.id),
+    // Custom tag for the doctor, e.g. "Family doctor", "Dental".
+    label: varchar("label", { length: 60 }),
     status: varchar("status", { length: 20 }).notNull().default("self_registered"),
     ...auditTimestamps
   },
   (table) => [
-    unique("patient_doctor_links_unique").on(table.patientAccountId, table.doctorUserId),
+    unique("patient_doctor_links_unique").on(table.patientAccountId, table.doctorUserId, table.patientId),
     index("patient_doctor_links_account_idx").on(table.patientAccountId),
     index("patient_doctor_links_patient_idx").on(table.patientId),
-    index("patient_doctor_links_doctor_idx").on(table.doctorUserId)
+    index("patient_doctor_links_doctor_idx").on(table.doctorUserId),
+    index("patient_doctor_links_member_idx").on(table.memberId)
   ]
 );
 
