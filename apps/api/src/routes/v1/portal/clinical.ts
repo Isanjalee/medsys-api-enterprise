@@ -230,7 +230,13 @@ const portalClinicalRoutes: FastifyPluginAsync = async (app) => {
 
   // History: prescription summary cards.
   app.get("/history", async (request) => {
-    const ctx = await loadLinks(request.patientActor!.patientAccountId);
+    const accountId = request.patientActor!.patientAccountId;
+    // Optional ?memberId=self|<id> scopes prescriptions to one profile (the Home/History drill-in).
+    const rawMember = (request.query as { memberId?: string }).memberId;
+    const ctx =
+      rawMember === undefined
+        ? await loadLinks(accountId)
+        : await loadProfileLinks(accountId, rawMember === "self" ? null : Number(rawMember));
     if (ctx.patientIds.length === 0) return [];
     const { limit, offset } = resolvePagination(request.query as { limit?: number; offset?: number });
 
