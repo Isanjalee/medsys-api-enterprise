@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq, isNull } from "drizzle-orm";
-import { patientAccounts, patientDoctorLinks, patients } from "@medsys/db";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { encounters, patientAccounts, patientDoctorLinks, patients, userRoles, users } from "@medsys/db";
 import { portalProfileSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
 
@@ -112,6 +112,68 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
               eq(patients.selfRegistered, true)
             )
           );
+      }
+
+      // Cross-account identity sync: adopt any existing clinic chart that matches this profile
+      // on BOTH nic and dob (exact) — e.g. a chart another family member's account already
+      // created for this same person, or a chart the clinic made from a walk-in — and inherit
+      // its doctors. This account then sees its own history/reports/doctors without anyone
+      // re-sharing. Requiring nic+dob (dob isn't public) stops a bare NIC from unlocking
+      // someone else's records.
+      const nic = body.nic?.trim() || null;
+      if (nic) {
+        const linkedPatientIds = new Set(links.map((l) => l.patientId));
+        const matches = await tx
+          .select({ id: patients.id, organizationId: patients.organizationId })
+          .from(patients)
+          .where(and(eq(patients.nic, nic), eq(patients.dob, body.dob), isNull(patients.deletedAt)));
+
+        for (const chart of matches) {
+          if (linkedPatientIds.has(chart.id)) continue;
+
+          // Doctors this person is associated with: any existing portal link to the chart plus
+          // the doctors who have actually treated them (encounters).
+          const [linkDoctorRows, encDoctorRows] = await Promise.all([
+            tx.select({ doctorUserId: patientDoctorLinks.doctorUserId }).from(patientDoctorLinks).where(eq(patientDoctorLinks.patientId, chart.id)),
+            tx.select({ doctorId: encounters.doctorId }).from(encounters).where(eq(encounters.patientId, chart.id))
+          ]);
+          const candidateIds = new Set<number>();
+          for (const r of linkDoctorRows) candidateIds.add(r.doctorUserId);
+          for (const r of encDoctorRows) if (r.doctorId != null) candidateIds.add(r.doctorId);
+          if (candidateIds.size === 0) continue;
+
+          // Only link real, active doctors in that chart's clinic.
+          const validDoctors = await tx
+            .select({ id: users.id })
+            .from(users)
+            .innerJoin(userRoles, and(eq(userRoles.userId, users.id), eq(userRoles.role, "doctor")))
+            .where(and(inArray(users.id, [...candidateIds]), eq(users.isActive, true), eq(users.organizationId, chart.organizationId)));
+
+          for (const doctor of validDoctors) {
+            const exists = await tx
+              .select({ id: patientDoctorLinks.id })
+              .from(patientDoctorLinks)
+              .where(
+                and(
+                  eq(patientDoctorLinks.patientAccountId, accountId),
+                  eq(patientDoctorLinks.doctorUserId, doctor.id),
+                  eq(patientDoctorLinks.patientId, chart.id)
+                )
+              )
+              .limit(1);
+            if (exists.length === 0) {
+              await tx.insert(patientDoctorLinks).values({
+                patientAccountId: accountId,
+                organizationId: chart.organizationId,
+                patientId: chart.id,
+                doctorUserId: doctor.id,
+                memberId: null,
+                status: "verified"
+              });
+            }
+          }
+          linkedPatientIds.add(chart.id);
+        }
       }
 
       return rows[0];

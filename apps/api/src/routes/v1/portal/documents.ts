@@ -17,28 +17,15 @@ import {
 const portalDocumentsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.authenticatePatient);
 
-  // The clinic patient ids this account can read — its own linked records plus every
-  // family member sharing a clinic family with them.
+  // The clinic patient ids this account can read — only the charts it has explicitly linked
+  // or claimed (owner + members it added + NIC/DOB-matched). Not expanded to the whole clinic
+  // family, so a separate individual account sees only its own person's documents.
   const linkedPatientIds = async (accountId: number): Promise<number[]> => {
     const rows = await app.readDb
       .select({ patientId: patientDoctorLinks.patientId })
       .from(patientDoctorLinks)
       .where(eq(patientDoctorLinks.patientAccountId, accountId));
-    const ownerIds = [...new Set(rows.map((row) => row.patientId))];
-    if (ownerIds.length === 0) return [];
-
-    const ownerRows = await app.readDb
-      .select({ familyId: patients.familyId })
-      .from(patients)
-      .where(inArray(patients.id, ownerIds));
-    const familyIds = [...new Set(ownerRows.map((r) => r.familyId).filter((v): v is number => v !== null))];
-    if (familyIds.length === 0) return ownerIds;
-
-    const memberRows = await app.readDb
-      .select({ id: patients.id })
-      .from(patients)
-      .where(and(inArray(patients.familyId, familyIds), isNull(patients.deletedAt)));
-    return [...new Set([...ownerIds, ...memberRows.map((r) => r.id)])];
+    return [...new Set(rows.map((row) => row.patientId))];
   };
 
   // Upload a document and share it to a linked doctor. doctorUserId is a query param
