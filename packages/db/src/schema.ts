@@ -731,10 +731,36 @@ export const patientAccounts = pgTable("patient_accounts", {
     .$type<Array<{ name: string; severity?: "low" | "moderate" | "high" }>>()
     .notNull()
     .default(sql`'[]'::jsonb`),
+  familyName: varchar("family_name", { length: 120 }),
   profileCompleted: boolean("profile_completed").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   ...auditTimestamps
 });
+
+export const patientAccountMembers = pgTable(
+  "patient_account_members",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    patientAccountId: bigint("patient_account_id", { mode: "number" })
+      .notNull()
+      .references(() => patientAccounts.id),
+    firstName: varchar("first_name", { length: 120 }).notNull(),
+    lastName: varchar("last_name", { length: 120 }).notNull(),
+    dob: date("dob"),
+    gender: varchar("gender", { length: 10 }),
+    nic: varchar("nic", { length: 30 }),
+    phone: varchar("phone", { length: 30 }),
+    bloodGroup: varchar("blood_group", { length: 8 }),
+    // Family role: father, mother, son, daughter, sister, brother, grandfather, etc.
+    relationship: varchar("relationship", { length: 40 }).notNull(),
+    allergies: jsonb("allergies")
+      .$type<Array<{ name: string; severity?: "low" | "moderate" | "high" }>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    ...auditTimestamps
+  },
+  (table) => [index("patient_account_members_account_idx").on(table.patientAccountId)]
+);
 
 export const patientRefreshTokens = pgTable(
   "patient_refresh_tokens",

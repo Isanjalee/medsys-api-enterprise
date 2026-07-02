@@ -1,6 +1,16 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, asc, eq, isNull } from "drizzle-orm";
-import { organizations, patientAccounts, patientDoctorLinks, patients, userRoles, users } from "@medsys/db";
+import {
+  families,
+  familyMembers,
+  organizations,
+  patientAccountMembers,
+  patientAccounts,
+  patientDoctorLinks,
+  patients,
+  userRoles,
+  users
+} from "@medsys/db";
 import { portalLinkDoctorSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
 import { buildDisplayName } from "../../../lib/names.js";
@@ -191,7 +201,102 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
         })
         .returning();
 
-      return { linkId: link[0].id, patientId, merged: matchedPatientId !== null };
+      // --- Sync the portal family into this clinic: group the owner + members under one
+      // clinic family so the doctor sees them together and portal history aggregates. ---
+      const memberRows = await tx
+        .select()
+        .from(patientAccountMembers)
+        .where(eq(patientAccountMembers.patientAccountId, accountId));
+
+      const familyCode = `SRF-${accountId}`.slice(0, 30);
+      const familyLabel = account.familyName?.trim() || `${account.lastName ?? "Patient"} Family`;
+      let familyId: number;
+      const existingFamily = await tx
+        .select({ id: families.id })
+        .from(families)
+        .where(and(eq(families.organizationId, organizationId), eq(families.familyCode, familyCode)))
+        .limit(1);
+      if (existingFamily.length === 1) {
+        familyId = existingFamily[0].id;
+        await tx.update(families).set({ familyName: familyLabel, updatedAt: new Date() }).where(eq(families.id, familyId));
+      } else {
+        const fam = await tx
+          .insert(families)
+          .values({ organizationId, familyCode, familyName: familyLabel, assigned: true })
+          .returning({ id: families.id });
+        familyId = fam[0].id;
+      }
+
+      const linkToFamily = async (memberPatientId: number, relationship: string) => {
+        await tx.update(patients).set({ familyId, updatedAt: new Date() }).where(eq(patients.id, memberPatientId));
+        const existing = await tx
+          .select({ id: familyMembers.id })
+          .from(familyMembers)
+          .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.patientId, memberPatientId)))
+          .limit(1);
+        if (existing.length === 0) {
+          await tx.insert(familyMembers).values({ organizationId, familyId, patientId: memberPatientId, relationship });
+        } else {
+          await tx.update(familyMembers).set({ relationship }).where(eq(familyMembers.id, existing[0].id));
+        }
+      };
+
+      await linkToFamily(patientId, "self");
+
+      // Guardian NIC for minors without their own NIC: father -> mother -> account holder.
+      const parentNic =
+        memberRows.find((m) => m.relationship === "father" && m.nic)?.nic ??
+        memberRows.find((m) => m.relationship === "mother" && m.nic)?.nic ??
+        nic;
+
+      for (const member of memberRows) {
+        // A member can only become a clinic chart once they have a date of birth.
+        if (!member.dob) continue;
+        const memberOwnNic = member.nic?.trim() || null;
+        // Skip a member who is the account holder themselves (same NIC) — already a chart.
+        if (memberOwnNic && nic && memberOwnNic === nic) continue;
+        const memberCode = `SRM-${accountId}-${member.id}`.slice(0, 30);
+        const memberAge = ageFromDob(member.dob);
+        const isMinor = memberAge < 18;
+        const memberGender = (member.gender ?? "other") as "male" | "female" | "other";
+        // Minors without their own NIC carry the guardian's NIC in the guardian field
+        // (never in `nic` — that's unique per org and children share a parent's NIC).
+        const memberValues = {
+          firstName: member.firstName,
+          lastName: member.lastName,
+          dob: member.dob,
+          age: memberAge,
+          gender: memberGender,
+          nic: memberOwnNic,
+          guardianNic: isMinor && !memberOwnNic ? parentNic : null,
+          guardianRelationship: isMinor && !memberOwnNic && parentNic ? "Guardian" : null,
+          phone: member.phone ?? null,
+          bloodGroup: member.bloodGroup ?? null
+        };
+
+        let memberPatientId: number;
+        const existingMember = await tx
+          .select({ id: patients.id })
+          .from(patients)
+          .where(and(eq(patients.organizationId, organizationId), eq(patients.patientCode, memberCode)))
+          .limit(1);
+        if (existingMember.length === 1) {
+          memberPatientId = existingMember[0].id;
+          await tx
+            .update(patients)
+            .set({ ...memberValues, isActive: true, deletedAt: null, updatedAt: new Date() })
+            .where(eq(patients.id, memberPatientId));
+        } else {
+          const insertedMember = await tx
+            .insert(patients)
+            .values({ organizationId, patientCode: memberCode, selfRegistered: true, ...memberValues })
+            .returning({ id: patients.id });
+          memberPatientId = insertedMember[0].id;
+        }
+        await linkToFamily(memberPatientId, member.relationship);
+      }
+
+      return { linkId: link[0].id, patientId, merged: matchedPatientId !== null, familyId };
     });
 
     if (result.merged) {

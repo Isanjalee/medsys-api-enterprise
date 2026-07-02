@@ -1,10 +1,11 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   encounterDiagnoses,
   encounters,
   organizations,
   patientDoctorLinks,
+  patients,
   prescriptionItems,
   prescriptions,
   testOrders,
@@ -37,13 +38,39 @@ const portalClinicalRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(patientDoctorLinks.patientAccountId, accountId));
 
     const byPatientId = new Map<number, { clinicName: string; doctorName: string; organizationId: string }>();
+    const ctxByOrg = new Map<string, { clinicName: string; doctorName: string; organizationId: string }>();
     for (const row of rows) {
-      byPatientId.set(row.patientId, {
+      const ctx = {
         clinicName: row.clinicName,
         doctorName: buildDisplayName(row.firstName, row.lastName),
         organizationId: row.organizationId
-      });
+      };
+      byPatientId.set(row.patientId, ctx);
+      if (!ctxByOrg.has(row.organizationId)) ctxByOrg.set(row.organizationId, ctx);
     }
+
+    // Expand to the whole family: every clinic patient sharing a family with a linked
+    // record (so the account sees all family members' history and reports).
+    const ownerPatientIds = [...byPatientId.keys()];
+    if (ownerPatientIds.length > 0) {
+      const ownerRows = await app.readDb
+        .select({ familyId: patients.familyId })
+        .from(patients)
+        .where(inArray(patients.id, ownerPatientIds));
+      const familyIds = [...new Set(ownerRows.map((r) => r.familyId).filter((v): v is number => v !== null))];
+      if (familyIds.length > 0) {
+        const memberRows = await app.readDb
+          .select({ id: patients.id, organizationId: patients.organizationId })
+          .from(patients)
+          .where(and(inArray(patients.familyId, familyIds), isNull(patients.deletedAt)));
+        for (const member of memberRows) {
+          if (byPatientId.has(member.id)) continue;
+          const ctx = ctxByOrg.get(member.organizationId);
+          if (ctx) byPatientId.set(member.id, ctx);
+        }
+      }
+    }
+
     return { patientIds: [...byPatientId.keys()], byPatientId };
   };
 

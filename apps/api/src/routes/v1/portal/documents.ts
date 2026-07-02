@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
-import { aliasedTable, and, desc, eq, inArray } from "drizzle-orm";
-import { patientDoctorLinks, patientDocuments, organizations, users } from "@medsys/db";
+import { aliasedTable, and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { patientDoctorLinks, patientDocuments, organizations, patients, users } from "@medsys/db";
 import { portalDocumentCreateSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
 import { buildDisplayName } from "../../../lib/names.js";
@@ -17,13 +17,28 @@ import {
 const portalDocumentsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", app.authenticatePatient);
 
-  // The clinic patient ids this account is linked to (for reading records shared to them).
+  // The clinic patient ids this account can read — its own linked records plus every
+  // family member sharing a clinic family with them.
   const linkedPatientIds = async (accountId: number): Promise<number[]> => {
     const rows = await app.readDb
       .select({ patientId: patientDoctorLinks.patientId })
       .from(patientDoctorLinks)
       .where(eq(patientDoctorLinks.patientAccountId, accountId));
-    return [...new Set(rows.map((row) => row.patientId))];
+    const ownerIds = [...new Set(rows.map((row) => row.patientId))];
+    if (ownerIds.length === 0) return [];
+
+    const ownerRows = await app.readDb
+      .select({ familyId: patients.familyId })
+      .from(patients)
+      .where(inArray(patients.id, ownerIds));
+    const familyIds = [...new Set(ownerRows.map((r) => r.familyId).filter((v): v is number => v !== null))];
+    if (familyIds.length === 0) return ownerIds;
+
+    const memberRows = await app.readDb
+      .select({ id: patients.id })
+      .from(patients)
+      .where(and(inArray(patients.familyId, familyIds), isNull(patients.deletedAt)));
+    return [...new Set([...ownerIds, ...memberRows.map((r) => r.id)])];
   };
 
   // Upload a document and share it to a linked doctor. doctorUserId is a query param
