@@ -50,7 +50,8 @@ const portalAuthRoutes: FastifyPluginAsync = async (app) => {
       .values({
         email: body.email,
         passwordHash: hashPassword(body.password),
-        phone: body.phone ?? null
+        phone: body.phone ?? null,
+        nic: body.nic ?? null
       })
       .returning();
     return reply.code(201).send(await issueTokens(inserted[0]));

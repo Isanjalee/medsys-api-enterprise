@@ -723,6 +723,7 @@ export const portalSignupSchema = z
   .object({
     email: z.string().email().max(255),
     phone: z.string().trim().min(5).max(30).optional(),
+    nic: z.string().trim().min(4).max(20).optional(),
     password: z.string().min(8).max(200)
   })
   .strict();
