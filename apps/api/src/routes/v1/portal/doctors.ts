@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { aliasedTable, and, asc, eq, isNull } from "drizzle-orm";
+import { aliasedTable, and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   families,
   familyMembers,
@@ -217,29 +217,41 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
       // single shared chart per clinic and avoids the patients_org_nic_unique collision.
       let matchedPatientId: number | null = null;
       let matchedVerified = false;
-      const findMatch = async (
-        column: typeof patients.nic | typeof patients.phone,
-        value: string,
-        clinicChartsOnly: boolean
-      ) => {
-        const conditions = [
-          eq(patients.organizationId, organizationId),
-          isNull(patients.deletedAt),
-          eq(column, value)
-        ];
-        if (clinicChartsOnly) conditions.push(eq(patients.selfRegistered, false));
-        const rows = await tx.select({ id: patients.id }).from(patients).where(and(...conditions)).limit(1);
-        return rows.length === 1 ? rows[0].id : null;
-      };
-      // Prefer a real clinic chart (counts as a verified merge)…
-      if (subject.ownNic) matchedPatientId = await findMatch(patients.nic, subject.ownNic, true);
-      if (matchedPatientId === null && memberId == null && subject.phone) {
-        matchedPatientId = await findMatch(patients.phone, subject.phone, true);
+
+      // Find any chart in this clinic with this NIC — case-insensitive (Sri Lankan NICs vary
+      // in letter case) and INCLUDING soft-deleted charts, because patients_org_nic_unique
+      // counts deleted rows: skipping them would make the insert below collide (a 500). Prefer
+      // an active clinic chart, then active self-registered, then a deleted one.
+      if (subject.ownNic) {
+        const nicRows = await tx
+          .select({ id: patients.id, selfRegistered: patients.selfRegistered, deletedAt: patients.deletedAt })
+          .from(patients)
+          .where(and(eq(patients.organizationId, organizationId), sql`upper(${patients.nic}) = upper(${subject.ownNic})`))
+          .orderBy(sql`(${patients.deletedAt} is null) desc`, sql`(${patients.selfRegistered} = false) desc`)
+          .limit(1);
+        if (nicRows.length === 1) {
+          matchedPatientId = nicRows[0].id;
+          matchedVerified = !nicRows[0].selfRegistered && nicRows[0].deletedAt === null;
+        }
       }
-      if (matchedPatientId !== null) matchedVerified = true;
-      // …otherwise fall back to any existing chart with this NIC (shared self-registered person).
-      if (matchedPatientId === null && subject.ownNic) {
-        matchedPatientId = await findMatch(patients.nic, subject.ownNic, false);
+      // Owner-only phone fallback to an active clinic chart when there's no NIC match.
+      if (matchedPatientId === null && memberId == null && subject.phone) {
+        const phoneRows = await tx
+          .select({ id: patients.id })
+          .from(patients)
+          .where(
+            and(
+              eq(patients.organizationId, organizationId),
+              isNull(patients.deletedAt),
+              eq(patients.selfRegistered, false),
+              eq(patients.phone, subject.phone)
+            )
+          )
+          .limit(1);
+        if (phoneRows.length === 1) {
+          matchedPatientId = phoneRows[0].id;
+          matchedVerified = true;
+        }
       }
 
       const values = {
@@ -259,6 +271,12 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
       let patientId: number;
       if (matchedPatientId !== null) {
         patientId = matchedPatientId;
+        // Reactivate the chart if it was soft-deleted, so the reused NIC slot is live again
+        // and the record shows up in the patient's views.
+        await tx
+          .update(patients)
+          .set({ isActive: true, deletedAt: null, updatedAt: new Date() })
+          .where(and(eq(patients.id, patientId), isNotNull(patients.deletedAt)));
       } else {
         const existingPatient = await tx
           .select({ id: patients.id })

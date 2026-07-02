@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { encounters, patientAccounts, patientDoctorLinks, patients, userRoles, users } from "@medsys/db";
 import { portalProfileSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
@@ -48,7 +48,9 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
       const rows = await app.readDb
         .select(fields)
         .from(patients)
-        .where(and(eq(patients.selfRegistered, false), isNull(patients.deletedAt), eq(column, value)))
+        .where(
+          and(eq(patients.selfRegistered, false), isNull(patients.deletedAt), sql`upper(${column}) = upper(${value})`)
+        )
         .limit(1);
       return rows[0] ?? null;
     };
@@ -126,7 +128,9 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
         const matches = await tx
           .select({ id: patients.id, organizationId: patients.organizationId })
           .from(patients)
-          .where(and(eq(patients.nic, nic), eq(patients.dob, body.dob), isNull(patients.deletedAt)));
+          .where(
+            and(sql`upper(${patients.nic}) = upper(${nic})`, eq(patients.dob, body.dob), isNull(patients.deletedAt))
+          );
 
         for (const chart of matches) {
           if (linkedPatientIds.has(chart.id)) continue;
