@@ -65,6 +65,8 @@ export const organizations = pgTable(
     name: varchar("name", { length: 160 }).notNull(),
     isActive: boolean("is_active").notNull().default(true),
     operatingMode: varchar("operating_mode", { length: 20 }).notNull().default("standard"),
+    // Owner-controlled list of nav ids assistants may access (null = all pages).
+    assistantAccess: jsonb("assistant_access").$type<string[] | null>(),
     ...auditTimestamps
   },
   (table) => [uniqueIndex("organizations_slug_idx").on(table.slug)]

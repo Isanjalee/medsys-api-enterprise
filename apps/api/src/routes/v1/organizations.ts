@@ -22,16 +22,37 @@ const updateOperatingModeBodySchema = {
   example: { operatingMode: "step_up" }
 };
 
+// Pages the owner can grant/deny assistants. null on the org means "all pages".
+const ASSISTANT_TOGGLEABLE_PAGES = [
+  "assistant",
+  "patient",
+  "inventory",
+  "analytics",
+  "tasks",
+  "ai",
+  "documents"
+] as const;
+
+const updateAssistantAccessSchema = z
+  .object({
+    assistantAccess: z.array(z.enum(ASSISTANT_TOGGLEABLE_PAGES)).nullable()
+  })
+  .strict();
+
 const serializeOrganization = (row: {
   id: string;
   slug: string;
   name: string;
   operatingMode: string | null;
+  assistantAccess?: string[] | null;
 }) => ({
   id: row.id,
   slug: row.slug,
   name: row.name,
-  operating_mode: row.operatingMode ?? "standard"
+  operating_mode: row.operatingMode ?? "standard",
+  // null = all pages allowed for assistants.
+  assistant_access: row.assistantAccess ?? null,
+  assistant_toggleable_pages: [...ASSISTANT_TOGGLEABLE_PAGES]
 });
 
 const organizationRoutes: FastifyPluginAsync = async (app) => {
@@ -55,7 +76,8 @@ const organizationRoutes: FastifyPluginAsync = async (app) => {
         id: organizations.id,
         slug: organizations.slug,
         name: organizations.name,
-        operatingMode: organizations.operatingMode
+        operatingMode: organizations.operatingMode,
+        assistantAccess: organizations.assistantAccess
       })
       .from(organizations)
       .where(eq(organizations.id, actor.organizationId))
@@ -63,6 +85,38 @@ const organizationRoutes: FastifyPluginAsync = async (app) => {
     assertOrThrow(rows.length === 1, 404, "Organization not found");
     return { organization: serializeOrganization(rows[0]) };
   });
+
+  // Owner sets which pages this clinic's assistants can access (null = all pages).
+  app.patch(
+    "/current/assistant-access",
+    { preHandler: [app.authenticate, app.authorize(["owner"])] },
+    async (request) => {
+      const actor = request.actor!;
+      const payload = parseOrThrowValidation(updateAssistantAccessSchema, request.body);
+      const value = payload.assistantAccess ? [...new Set(payload.assistantAccess)] : null;
+
+      const updated = await app.db
+        .update(organizations)
+        .set({ assistantAccess: value, updatedAt: new Date() })
+        .where(eq(organizations.id, actor.organizationId))
+        .returning({
+          id: organizations.id,
+          slug: organizations.slug,
+          name: organizations.name,
+          operatingMode: organizations.operatingMode,
+          assistantAccess: organizations.assistantAccess
+        });
+      assertOrThrow(updated.length === 1, 404, "Organization not found");
+
+      await writeAuditLog(request, {
+        entityType: "organization",
+        action: "update_assistant_access",
+        payload: { assistantAccess: value }
+      });
+
+      return { organization: serializeOrganization(updated[0]) };
+    }
+  );
 
   app.patch(
     "/current",
