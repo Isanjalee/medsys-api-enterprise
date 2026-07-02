@@ -210,26 +210,36 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
     const familyLabel = account.familyName?.trim() || `${account.lastName ?? "Patient"} Family`;
 
     const result = await app.db.transaction(async (tx) => {
-      // Auto-merge on the subject's own NIC (or, for the account holder, phone).
+      // Resolve the clinic chart for this person. A NIC identifies one person per clinic, so
+      // we reuse any existing chart with that NIC — whether it's a clinic-created record
+      // (a true "verified" merge) or a self-registered one from another portal account
+      // (the same person, e.g. a spouse who also has their own account). Reusing it keeps a
+      // single shared chart per clinic and avoids the patients_org_nic_unique collision.
       let matchedPatientId: number | null = null;
-      const findMatch = async (column: typeof patients.nic | typeof patients.phone, value: string) => {
-        const rows = await tx
-          .select({ id: patients.id })
-          .from(patients)
-          .where(
-            and(
-              eq(patients.organizationId, organizationId),
-              eq(patients.selfRegistered, false),
-              isNull(patients.deletedAt),
-              eq(column, value)
-            )
-          )
-          .limit(1);
+      let matchedVerified = false;
+      const findMatch = async (
+        column: typeof patients.nic | typeof patients.phone,
+        value: string,
+        clinicChartsOnly: boolean
+      ) => {
+        const conditions = [
+          eq(patients.organizationId, organizationId),
+          isNull(patients.deletedAt),
+          eq(column, value)
+        ];
+        if (clinicChartsOnly) conditions.push(eq(patients.selfRegistered, false));
+        const rows = await tx.select({ id: patients.id }).from(patients).where(and(...conditions)).limit(1);
         return rows.length === 1 ? rows[0].id : null;
       };
-      if (subject.ownNic) matchedPatientId = await findMatch(patients.nic, subject.ownNic);
+      // Prefer a real clinic chart (counts as a verified merge)…
+      if (subject.ownNic) matchedPatientId = await findMatch(patients.nic, subject.ownNic, true);
       if (matchedPatientId === null && memberId == null && subject.phone) {
-        matchedPatientId = await findMatch(patients.phone, subject.phone);
+        matchedPatientId = await findMatch(patients.phone, subject.phone, true);
+      }
+      if (matchedPatientId !== null) matchedVerified = true;
+      // …otherwise fall back to any existing chart with this NIC (shared self-registered person).
+      if (matchedPatientId === null && subject.ownNic) {
+        matchedPatientId = await findMatch(patients.nic, subject.ownNic, false);
       }
 
       const values = {
@@ -299,6 +309,27 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
         await tx.update(familyMembers).set({ relationship: subject.relationship }).where(eq(familyMembers.id, existingFm[0].id));
       }
 
+      // Guard the (account, doctor, patient) uniqueness: if this same person is already linked
+      // to this doctor under another profile in this account (e.g. added as both "you" and a
+      // family member with the same NIC), reuse that link instead of hitting a 500.
+      const dupLink = await tx
+        .select({ id: patientDoctorLinks.id })
+        .from(patientDoctorLinks)
+        .where(
+          and(
+            eq(patientDoctorLinks.patientAccountId, accountId),
+            eq(patientDoctorLinks.doctorUserId, doctorUserId),
+            eq(patientDoctorLinks.patientId, patientId)
+          )
+        )
+        .limit(1);
+      if (dupLink.length === 1) {
+        if (label !== undefined) {
+          await tx.update(patientDoctorLinks).set({ label: label || null, updatedAt: new Date() }).where(eq(patientDoctorLinks.id, dupLink[0].id));
+        }
+        return { linkId: dupLink[0].id, patientId, merged: matchedVerified, alreadyLinked: true };
+      }
+
       const link = await tx
         .insert(patientDoctorLinks)
         .values({
@@ -308,11 +339,11 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
           doctorUserId,
           memberId: memberId ?? null,
           label: label || null,
-          status: matchedPatientId !== null ? "verified" : "self_registered"
+          status: matchedVerified ? "verified" : "self_registered"
         })
         .returning();
 
-      return { linkId: link[0].id, patientId, merged: matchedPatientId !== null };
+      return { linkId: link[0].id, patientId, merged: matchedVerified };
     });
 
     if (result.merged) {
