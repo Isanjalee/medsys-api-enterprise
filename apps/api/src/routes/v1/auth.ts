@@ -987,7 +987,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const meRoleMap = await loadRolesByUserIds(app, [rows[0].id]);
 
     const orgRows = await app.readDb
-      .select({ operatingMode: organizations.operatingMode })
+      .select({ operatingMode: organizations.operatingMode, assistantAccess: organizations.assistantAccess })
       .from(organizations)
       .where(eq(organizations.id, actor.organizationId))
       .limit(1);
@@ -999,7 +999,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }),
       organization: {
         id: actor.organizationId,
-        operating_mode: orgRows[0]?.operatingMode ?? "standard"
+        operating_mode: orgRows[0]?.operatingMode ?? "standard",
+        // null = all pages; drives assistant nav visibility on the frontend.
+        assistant_access: orgRows[0]?.assistantAccess ?? null
       }
     };
   });
