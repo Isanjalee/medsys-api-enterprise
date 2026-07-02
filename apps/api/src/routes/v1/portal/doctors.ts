@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { aliasedTable, and, asc, eq, isNull } from "drizzle-orm";
 import {
   families,
   familyMembers,
@@ -53,8 +53,9 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
     }));
   });
 
-  // The patient's currently linked doctors.
+  // The patient's linked doctors, with which profile (member) each link is for + its tag.
   app.get("/", async (request) => {
+    const member = aliasedTable(patientAccountMembers, "member");
     const rows = await app.readDb
       .select({
         linkId: patientDoctorLinks.id,
@@ -62,6 +63,11 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
         organizationId: patientDoctorLinks.organizationId,
         patientId: patientDoctorLinks.patientId,
         status: patientDoctorLinks.status,
+        label: patientDoctorLinks.label,
+        memberId: patientDoctorLinks.memberId,
+        memberFirst: member.firstName,
+        memberLast: member.lastName,
+        memberRelationship: member.relationship,
         firstName: users.firstName,
         lastName: users.lastName,
         clinicName: organizations.name
@@ -69,6 +75,7 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
       .from(patientDoctorLinks)
       .innerJoin(users, eq(users.id, patientDoctorLinks.doctorUserId))
       .innerJoin(organizations, eq(organizations.id, patientDoctorLinks.organizationId))
+      .leftJoin(member, eq(member.id, patientDoctorLinks.memberId))
       .where(eq(patientDoctorLinks.patientAccountId, request.patientActor!.patientAccountId))
       .orderBy(asc(organizations.name));
 
@@ -78,28 +85,25 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
       organizationId: row.organizationId,
       patientId: row.patientId,
       status: row.status,
+      label: row.label,
+      memberId: row.memberId,
+      // Whose profile this link is for ("You" for the account holder).
+      profileName: row.memberId ? buildDisplayName(row.memberFirst ?? "", row.memberLast ?? "") : "You",
+      profileRelationship: row.memberId ? row.memberRelationship : "self",
       doctorName: buildDisplayName(row.firstName, row.lastName),
       clinicName: row.clinicName
     }));
   });
 
-  // Link a doctor: create (or reuse) a self-registered clinic record + the link.
+  // Link a doctor to a specific profile (the account holder, or a family member), with an
+  // optional custom tag. Each profile links its own doctors.
   app.post("/link", async (request, reply) => {
     const accountId = request.patientActor!.patientAccountId;
-    const { doctorUserId } = parseOrThrowValidation(portalLinkDoctorSchema, request.body);
+    const { doctorUserId, memberId, label } = parseOrThrowValidation(portalLinkDoctorSchema, request.body);
 
-    const accountRows = await app.db
-      .select()
-      .from(patientAccounts)
-      .where(eq(patientAccounts.id, accountId))
-      .limit(1);
+    const accountRows = await app.db.select().from(patientAccounts).where(eq(patientAccounts.id, accountId)).limit(1);
     assertOrThrow(accountRows.length === 1, 404, "Account not found");
     const account = accountRows[0];
-    assertOrThrow(
-      account.profileCompleted && account.firstName && account.lastName && account.dob && account.gender,
-      409,
-      "Complete your profile before adding a doctor"
-    );
 
     const doctorRows = await app.db
       .select({ id: users.id, organizationId: users.organizationId, isActive: users.isActive })
@@ -110,26 +114,103 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
     assertOrThrow(doctorRows.length === 1 && doctorRows[0].isActive, 404, "Doctor not found");
     const organizationId = doctorRows[0].organizationId;
 
+    // Members loaded once — needed for the minor guardian-NIC fallback.
+    const memberRows = await app.db
+      .select()
+      .from(patientAccountMembers)
+      .where(eq(patientAccountMembers.patientAccountId, accountId));
+    const ownerNic = account.nic?.trim() || null;
+    const parentNic =
+      memberRows.find((m) => m.relationship === "father" && m.nic)?.nic ??
+      memberRows.find((m) => m.relationship === "mother" && m.nic)?.nic ??
+      ownerNic;
+
+    // Resolve the subject profile (account holder or a family member).
+    type Subject = {
+      code: string;
+      relationship: string;
+      firstName: string;
+      lastName: string;
+      dob: string;
+      gender: "male" | "female" | "other";
+      ownNic: string | null;
+      guardianNic: string | null;
+      guardianRelationship: string | null;
+      phone: string | null;
+      address: string | null;
+      bloodGroup: string | null;
+    };
+    let subject: Subject;
+    if (memberId != null) {
+      const m = memberRows.find((row) => row.id === memberId);
+      assertOrThrow(m, 404, "Family member not found");
+      assertOrThrow(m!.dob, 409, "Add the member's date of birth before adding a doctor");
+      const isMinor = ageFromDob(m!.dob!) < 18;
+      const ownNic = m!.nic?.trim() || null;
+      subject = {
+        code: `SRM-${accountId}-${memberId}`.slice(0, 24),
+        relationship: m!.relationship,
+        firstName: m!.firstName,
+        lastName: m!.lastName,
+        dob: m!.dob!,
+        gender: (m!.gender ?? "other") as "male" | "female" | "other",
+        ownNic,
+        guardianNic: isMinor && !ownNic ? parentNic : null,
+        guardianRelationship: isMinor && !ownNic && parentNic ? "Guardian" : null,
+        phone: m!.phone ?? null,
+        address: null,
+        bloodGroup: m!.bloodGroup ?? null
+      };
+    } else {
+      assertOrThrow(
+        account.profileCompleted && account.firstName && account.lastName && account.dob && account.gender,
+        409,
+        "Complete your profile before adding a doctor"
+      );
+      subject = {
+        code: `SR-${accountId}-${doctorUserId}`.slice(0, 24),
+        relationship: "self",
+        firstName: account.firstName!,
+        lastName: account.lastName!,
+        dob: account.dob!,
+        gender: account.gender as "male" | "female" | "other",
+        ownNic: ownerNic,
+        guardianNic: null,
+        guardianRelationship: null,
+        phone: account.phone?.trim() || null,
+        address: account.address ?? null,
+        bloodGroup: account.bloodGroup ?? null
+      };
+    }
+
+    // Already linked (this profile to this doctor)? Update the tag if given.
     const existingLink = await app.db
       .select({ id: patientDoctorLinks.id })
       .from(patientDoctorLinks)
-      .where(and(eq(patientDoctorLinks.patientAccountId, accountId), eq(patientDoctorLinks.doctorUserId, doctorUserId)))
+      .where(
+        and(
+          eq(patientDoctorLinks.patientAccountId, accountId),
+          eq(patientDoctorLinks.doctorUserId, doctorUserId),
+          memberId != null ? eq(patientDoctorLinks.memberId, memberId) : isNull(patientDoctorLinks.memberId)
+        )
+      )
       .limit(1);
     if (existingLink.length === 1) {
+      if (label !== undefined) {
+        await app.db
+          .update(patientDoctorLinks)
+          .set({ label: label || null, updatedAt: new Date() })
+          .where(eq(patientDoctorLinks.id, existingLink[0].id));
+      }
       return reply.code(200).send({ linkId: existingLink[0].id, alreadyLinked: true });
     }
 
-    const patientCode = `SR-${accountId}-${doctorUserId}`.slice(0, 24);
-    const age = ageFromDob(account.dob!);
-
-    const nic = account.nic?.trim() || null;
-    const phone = account.phone?.trim() || null;
+    const age = ageFromDob(subject.dob);
+    const familyCode = `SRF-${accountId}`.slice(0, 30);
+    const familyLabel = account.familyName?.trim() || `${account.lastName ?? "Patient"} Family`;
 
     const result = await app.db.transaction(async (tx) => {
-      // 1) Auto-merge: if this account's NIC (preferred) or phone matches an existing
-      //    real clinic chart in this org, link straight to it so the patient sees their
-      //    full existing history + documents. Product decision: auto-merge with no
-      //    verification step (see below audit log — PHI-sensitive).
+      // Auto-merge on the subject's own NIC (or, for the account holder, phone).
       let matchedPatientId: number | null = null;
       const findMatch = async (column: typeof patients.nic | typeof patients.phone, value: string) => {
         const rows = await tx
@@ -146,70 +227,50 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
           .limit(1);
         return rows.length === 1 ? rows[0].id : null;
       };
-      if (nic) matchedPatientId = await findMatch(patients.nic, nic);
-      if (matchedPatientId === null && phone) matchedPatientId = await findMatch(patients.phone, phone);
+      if (subject.ownNic) matchedPatientId = await findMatch(patients.nic, subject.ownNic);
+      if (matchedPatientId === null && memberId == null && subject.phone) {
+        matchedPatientId = await findMatch(patients.phone, subject.phone);
+      }
+
+      const values = {
+        firstName: subject.firstName,
+        lastName: subject.lastName,
+        dob: subject.dob,
+        age,
+        gender: subject.gender,
+        nic: subject.ownNic,
+        guardianNic: subject.guardianNic,
+        guardianRelationship: subject.guardianRelationship,
+        phone: subject.phone,
+        address: subject.address,
+        bloodGroup: subject.bloodGroup
+      };
 
       let patientId: number;
       if (matchedPatientId !== null) {
-        // Link to the existing chart; never overwrite the clinician-owned record.
         patientId = matchedPatientId;
       } else {
-        // 2) No match — create (or reuse) a self-registered clinic record as before.
         const existingPatient = await tx
           .select({ id: patients.id })
           .from(patients)
-          .where(and(eq(patients.organizationId, organizationId), eq(patients.patientCode, patientCode)))
+          .where(and(eq(patients.organizationId, organizationId), eq(patients.patientCode, subject.code)))
           .limit(1);
-
         if (existingPatient.length === 1) {
           patientId = existingPatient[0].id;
           await tx
             .update(patients)
-            .set({ isActive: true, deletedAt: null, updatedAt: new Date() })
+            .set({ ...values, isActive: true, deletedAt: null, updatedAt: new Date() })
             .where(eq(patients.id, patientId));
         } else {
           const inserted = await tx
             .insert(patients)
-            .values({
-              organizationId,
-              patientCode,
-              nic,
-              firstName: account.firstName!,
-              lastName: account.lastName!,
-              dob: account.dob!,
-              age,
-              gender: account.gender as "male" | "female" | "other",
-              phone,
-              address: account.address ?? null,
-              bloodGroup: account.bloodGroup ?? null,
-              selfRegistered: true
-            })
+            .values({ organizationId, patientCode: subject.code, selfRegistered: true, ...values })
             .returning({ id: patients.id });
           patientId = inserted[0].id;
         }
       }
 
-      const link = await tx
-        .insert(patientDoctorLinks)
-        .values({
-          patientAccountId: accountId,
-          organizationId,
-          patientId,
-          doctorUserId,
-          // A match links to a real existing chart -> "verified"; otherwise self-registered.
-          status: matchedPatientId !== null ? "verified" : "self_registered"
-        })
-        .returning();
-
-      // --- Sync the portal family into this clinic: group the owner + members under one
-      // clinic family so the doctor sees them together and portal history aggregates. ---
-      const memberRows = await tx
-        .select()
-        .from(patientAccountMembers)
-        .where(eq(patientAccountMembers.patientAccountId, accountId));
-
-      const familyCode = `SRF-${accountId}`.slice(0, 30);
-      const familyLabel = account.familyName?.trim() || `${account.lastName ?? "Patient"} Family`;
+      // Group this profile under the account's clinic family so the doctor sees the family.
       let familyId: number;
       const existingFamily = await tx
         .select({ id: families.id })
@@ -226,84 +287,38 @@ const portalDoctorsRoutes: FastifyPluginAsync = async (app) => {
           .returning({ id: families.id });
         familyId = fam[0].id;
       }
-
-      const linkToFamily = async (memberPatientId: number, relationship: string) => {
-        await tx.update(patients).set({ familyId, updatedAt: new Date() }).where(eq(patients.id, memberPatientId));
-        const existing = await tx
-          .select({ id: familyMembers.id })
-          .from(familyMembers)
-          .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.patientId, memberPatientId)))
-          .limit(1);
-        if (existing.length === 0) {
-          await tx.insert(familyMembers).values({ organizationId, familyId, patientId: memberPatientId, relationship });
-        } else {
-          await tx.update(familyMembers).set({ relationship }).where(eq(familyMembers.id, existing[0].id));
-        }
-      };
-
-      await linkToFamily(patientId, "self");
-
-      // Guardian NIC for minors without their own NIC: father -> mother -> account holder.
-      const parentNic =
-        memberRows.find((m) => m.relationship === "father" && m.nic)?.nic ??
-        memberRows.find((m) => m.relationship === "mother" && m.nic)?.nic ??
-        nic;
-
-      for (const member of memberRows) {
-        // A member can only become a clinic chart once they have a date of birth.
-        if (!member.dob) continue;
-        const memberOwnNic = member.nic?.trim() || null;
-        // Skip a member who is the account holder themselves (same NIC) — already a chart.
-        if (memberOwnNic && nic && memberOwnNic === nic) continue;
-        const memberCode = `SRM-${accountId}-${member.id}`.slice(0, 30);
-        const memberAge = ageFromDob(member.dob);
-        const isMinor = memberAge < 18;
-        const memberGender = (member.gender ?? "other") as "male" | "female" | "other";
-        // Minors without their own NIC carry the guardian's NIC in the guardian field
-        // (never in `nic` — that's unique per org and children share a parent's NIC).
-        const memberValues = {
-          firstName: member.firstName,
-          lastName: member.lastName,
-          dob: member.dob,
-          age: memberAge,
-          gender: memberGender,
-          nic: memberOwnNic,
-          guardianNic: isMinor && !memberOwnNic ? parentNic : null,
-          guardianRelationship: isMinor && !memberOwnNic && parentNic ? "Guardian" : null,
-          phone: member.phone ?? null,
-          bloodGroup: member.bloodGroup ?? null
-        };
-
-        let memberPatientId: number;
-        const existingMember = await tx
-          .select({ id: patients.id })
-          .from(patients)
-          .where(and(eq(patients.organizationId, organizationId), eq(patients.patientCode, memberCode)))
-          .limit(1);
-        if (existingMember.length === 1) {
-          memberPatientId = existingMember[0].id;
-          await tx
-            .update(patients)
-            .set({ ...memberValues, isActive: true, deletedAt: null, updatedAt: new Date() })
-            .where(eq(patients.id, memberPatientId));
-        } else {
-          const insertedMember = await tx
-            .insert(patients)
-            .values({ organizationId, patientCode: memberCode, selfRegistered: true, ...memberValues })
-            .returning({ id: patients.id });
-          memberPatientId = insertedMember[0].id;
-        }
-        await linkToFamily(memberPatientId, member.relationship);
+      await tx.update(patients).set({ familyId, updatedAt: new Date() }).where(eq(patients.id, patientId));
+      const existingFm = await tx
+        .select({ id: familyMembers.id })
+        .from(familyMembers)
+        .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.patientId, patientId)))
+        .limit(1);
+      if (existingFm.length === 0) {
+        await tx.insert(familyMembers).values({ organizationId, familyId, patientId, relationship: subject.relationship });
+      } else {
+        await tx.update(familyMembers).set({ relationship: subject.relationship }).where(eq(familyMembers.id, existingFm[0].id));
       }
 
-      return { linkId: link[0].id, patientId, merged: matchedPatientId !== null, familyId };
+      const link = await tx
+        .insert(patientDoctorLinks)
+        .values({
+          patientAccountId: accountId,
+          organizationId,
+          patientId,
+          doctorUserId,
+          memberId: memberId ?? null,
+          label: label || null,
+          status: matchedPatientId !== null ? "verified" : "self_registered"
+        })
+        .returning();
+
+      return { linkId: link[0].id, patientId, merged: matchedPatientId !== null };
     });
 
     if (result.merged) {
-      // PHI-safe audit trail (ids only; no NIC/phone values) of the auto-merge.
       request.log.info(
-        { event: "portal.auto_merge", accountId, patientId: result.patientId, doctorUserId, organizationId },
-        "Portal account auto-merged to an existing clinic chart by NIC/phone match"
+        { event: "portal.auto_merge", accountId, patientId: result.patientId, doctorUserId, organizationId, memberId: memberId ?? null },
+        "Portal profile auto-merged to an existing clinic chart"
       );
     }
 

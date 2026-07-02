@@ -758,13 +758,19 @@ export const portalProfileSchema = z
 
 export const portalLinkDoctorSchema = z
   .object({
-    doctorUserId: z.coerce.number().int().positive()
+    doctorUserId: z.coerce.number().int().positive(),
+    // Which family member this link is for (omit/null = the account holder).
+    memberId: z.coerce.number().int().positive().nullable().optional(),
+    // Custom tag for the doctor, e.g. "Family doctor", "Dental".
+    label: z.string().trim().max(60).nullable().optional()
   })
   .strict();
 
 export const portalDocumentCreateSchema = z
   .object({
-    doctorUserId: z.coerce.number().int().positive()
+    doctorUserId: z.coerce.number().int().positive(),
+    // Which profile the document is for (omit/null = the account holder).
+    memberId: z.coerce.number().int().positive().nullable().optional()
   })
   .strict();
 

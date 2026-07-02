@@ -1,10 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { aliasedTable, and, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   encounterDiagnoses,
   encounters,
   organizations,
+  patientAccountMembers,
   patientDoctorLinks,
+  patientDocuments,
   patients,
   prescriptionItems,
   prescriptions,
@@ -74,11 +76,42 @@ const portalClinicalRoutes: FastifyPluginAsync = async (app) => {
     return { patientIds: [...byPatientId.keys()], byPatientId };
   };
 
-  // Home: diagnosis/visit timeline aggregated across every linked clinic record.
-  app.get("/home", async (request) => {
-    const ctx = await loadLinks(request.patientActor!.patientAccountId);
-    if (ctx.patientIds.length === 0) return { timeline: [] };
+  // Links for a SINGLE profile (the account holder when memberId is null, else one family
+  // member). Unlike loadLinks this does NOT expand to the whole family — it returns only the
+  // clinic records that belong to that specific profile, so the per-profile view stays scoped.
+  const loadProfileLinks = async (accountId: number, memberId: number | null): Promise<LinkContext> => {
+    const rows = await app.readDb
+      .select({
+        patientId: patientDoctorLinks.patientId,
+        organizationId: patientDoctorLinks.organizationId,
+        clinicName: organizations.name,
+        firstName: users.firstName,
+        lastName: users.lastName
+      })
+      .from(patientDoctorLinks)
+      .innerJoin(organizations, eq(organizations.id, patientDoctorLinks.organizationId))
+      .innerJoin(users, eq(users.id, patientDoctorLinks.doctorUserId))
+      .where(
+        and(
+          eq(patientDoctorLinks.patientAccountId, accountId),
+          memberId != null ? eq(patientDoctorLinks.memberId, memberId) : isNull(patientDoctorLinks.memberId)
+        )
+      );
 
+    const byPatientId = new Map<number, { clinicName: string; doctorName: string; organizationId: string }>();
+    for (const row of rows) {
+      byPatientId.set(row.patientId, {
+        clinicName: row.clinicName,
+        doctorName: buildDisplayName(row.firstName, row.lastName),
+        organizationId: row.organizationId
+      });
+    }
+    return { patientIds: [...byPatientId.keys()], byPatientId };
+  };
+
+  // Build the diagnosis/visit timeline for a set of clinic records.
+  const buildTimeline = async (ctx: LinkContext) => {
+    if (ctx.patientIds.length === 0) return [];
     const visitRows = await app.readDb
       .select({
         encounterId: encounters.id,
@@ -106,7 +139,7 @@ const portalClinicalRoutes: FastifyPluginAsync = async (app) => {
       diagByEncounter.set(row.encounterId, list);
     }
 
-    const timeline = visitRows.map((row) => {
+    return visitRows.map((row) => {
       const meta = ctx.byPatientId.get(row.patientId);
       return {
         encounterId: row.encounterId,
@@ -118,8 +151,103 @@ const portalClinicalRoutes: FastifyPluginAsync = async (app) => {
         nextVisitDate: row.nextVisitDate ?? null
       };
     });
+  };
 
-    return { timeline };
+  // Home: diagnosis/visit timeline aggregated across every linked clinic record.
+  app.get("/home", async (request) => {
+    const ctx = await loadLinks(request.patientActor!.patientAccountId);
+    return { timeline: await buildTimeline(ctx) };
+  });
+
+  // Per-profile view: one family member's (or the account holder's) diagnoses plus the
+  // documents sent to and received from their clinics — kept separate from the family-wide
+  // aggregate so the Home grid can drill into a single profile.
+  app.get("/profiles/:memberId/summary", async (request) => {
+    const accountId = request.patientActor!.patientAccountId;
+    const raw = (request.params as { memberId: string }).memberId;
+    const memberId = raw === "self" ? null : Number(raw);
+    assertOrThrow(raw === "self" || Number.isInteger(memberId), 400, "Invalid profile");
+
+    // Guard: a numeric memberId must belong to this account.
+    if (memberId != null) {
+      const owned = await app.readDb
+        .select({ id: patientAccountMembers.id })
+        .from(patientAccountMembers)
+        .where(and(eq(patientAccountMembers.id, memberId), eq(patientAccountMembers.patientAccountId, accountId)))
+        .limit(1);
+      assertOrThrow(owned.length === 1, 404, "Profile not found");
+    }
+
+    const ctx = await loadProfileLinks(accountId, memberId);
+    if (ctx.patientIds.length === 0) return { timeline: [], sentDocuments: [], receivedDocuments: [] };
+
+    const uploader = aliasedTable(users, "uploader");
+    const [timeline, sentRows, receivedRows] = await Promise.all([
+      buildTimeline(ctx),
+      app.readDb
+        .select({
+          id: patientDocuments.id,
+          fileName: patientDocuments.fileName,
+          contentType: patientDocuments.contentType,
+          sizeBytes: patientDocuments.sizeBytes,
+          uploadedAt: patientDocuments.uploadedAt,
+          reviewedAt: patientDocuments.reviewedAt,
+          doctorFirst: users.firstName,
+          doctorLast: users.lastName,
+          clinicName: organizations.name
+        })
+        .from(patientDocuments)
+        .innerJoin(users, eq(users.id, patientDocuments.doctorUserId))
+        .innerJoin(organizations, eq(organizations.id, patientDocuments.organizationId))
+        .where(and(inArray(patientDocuments.patientId, ctx.patientIds), eq(patientDocuments.source, "patient")))
+        .orderBy(desc(patientDocuments.uploadedAt)),
+      app.readDb
+        .select({
+          id: patientDocuments.id,
+          fileName: patientDocuments.fileName,
+          contentType: patientDocuments.contentType,
+          sizeBytes: patientDocuments.sizeBytes,
+          uploadedAt: patientDocuments.uploadedAt,
+          reviewedAt: patientDocuments.reviewedAt,
+          note: patientDocuments.note,
+          uploadedByFirst: uploader.firstName,
+          uploadedByLast: uploader.lastName,
+          clinicName: organizations.name
+        })
+        .from(patientDocuments)
+        .innerJoin(organizations, eq(organizations.id, patientDocuments.organizationId))
+        .leftJoin(uploader, eq(uploader.id, patientDocuments.uploadedByUserId))
+        .where(and(inArray(patientDocuments.patientId, ctx.patientIds), eq(patientDocuments.source, "assistant")))
+        .orderBy(desc(patientDocuments.uploadedAt))
+    ]);
+
+    return {
+      timeline,
+      sentDocuments: sentRows.map((row) => ({
+        id: row.id,
+        fileName: row.fileName,
+        contentType: row.contentType,
+        sizeBytes: row.sizeBytes,
+        uploadedAt: row.uploadedAt,
+        reviewedAt: row.reviewedAt,
+        doctorName: buildDisplayName(row.doctorFirst, row.doctorLast),
+        clinicName: row.clinicName
+      })),
+      receivedDocuments: receivedRows.map((row) => ({
+        id: row.id,
+        fileName: row.fileName,
+        contentType: row.contentType,
+        sizeBytes: row.sizeBytes,
+        uploadedAt: row.uploadedAt,
+        reviewedAt: row.reviewedAt,
+        note: row.note,
+        uploadedByName:
+          row.uploadedByFirst || row.uploadedByLast
+            ? buildDisplayName(row.uploadedByFirst ?? "", row.uploadedByLast ?? "")
+            : "Clinic",
+        clinicName: row.clinicName
+      }))
+    };
   });
 
   // History: prescription summary cards.

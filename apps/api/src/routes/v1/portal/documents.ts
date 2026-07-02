@@ -45,14 +45,21 @@ const portalDocumentsRoutes: FastifyPluginAsync = async (app) => {
   // so we never depend on multipart field ordering. Bytes are proxied to storage.
   app.post("/", async (request, reply) => {
     const accountId = request.patientActor!.patientAccountId;
-    const { doctorUserId } = parseOrThrowValidation(portalDocumentCreateSchema, request.query);
+    const { doctorUserId, memberId } = parseOrThrowValidation(portalDocumentCreateSchema, request.query);
 
+    // Resolve the specific profile→doctor link (defaults to the account holder's link).
     const link = await app.db
       .select({ organizationId: patientDoctorLinks.organizationId, patientId: patientDoctorLinks.patientId })
       .from(patientDoctorLinks)
-      .where(and(eq(patientDoctorLinks.patientAccountId, accountId), eq(patientDoctorLinks.doctorUserId, doctorUserId)))
+      .where(
+        and(
+          eq(patientDoctorLinks.patientAccountId, accountId),
+          eq(patientDoctorLinks.doctorUserId, doctorUserId),
+          memberId != null ? eq(patientDoctorLinks.memberId, memberId) : isNull(patientDoctorLinks.memberId)
+        )
+      )
       .limit(1);
-    assertOrThrow(link.length === 1, 404, "You are not linked to that doctor");
+    assertOrThrow(link.length === 1, 404, "That profile is not linked to this doctor");
 
     const file = await (request as unknown as { file: () => Promise<any> }).file();
     assertOrThrow(file, 400, "No file uploaded");
@@ -102,11 +109,14 @@ const portalDocumentsRoutes: FastifyPluginAsync = async (app) => {
         doctorUserId: patientDocuments.doctorUserId,
         doctorFirst: users.firstName,
         doctorLast: users.lastName,
-        clinicName: organizations.name
+        clinicName: organizations.name,
+        profileFirst: patients.firstName,
+        profileLast: patients.lastName
       })
       .from(patientDocuments)
       .innerJoin(users, eq(users.id, patientDocuments.doctorUserId))
       .innerJoin(organizations, eq(organizations.id, patientDocuments.organizationId))
+      .leftJoin(patients, eq(patients.id, patientDocuments.patientId))
       .where(eq(patientDocuments.patientAccountId, request.patientActor!.patientAccountId))
       .orderBy(desc(patientDocuments.uploadedAt));
 
@@ -118,7 +128,9 @@ const portalDocumentsRoutes: FastifyPluginAsync = async (app) => {
       uploadedAt: row.uploadedAt,
       reviewedAt: row.reviewedAt,
       doctorName: buildDisplayName(row.doctorFirst, row.doctorLast),
-      clinicName: row.clinicName
+      clinicName: row.clinicName,
+      // Which family profile this document was sent for.
+      profileName: buildDisplayName(row.profileFirst ?? "", row.profileLast ?? "")
     }));
   });
 
