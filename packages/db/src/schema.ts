@@ -737,6 +737,11 @@ export const patientAccounts = pgTable("patient_accounts", {
     .notNull()
     .default(sql`'[]'::jsonb`),
   familyName: varchar("family_name", { length: 120 }),
+  // Real-world location captured at profile creation (null = not captured / permission denied).
+  latitude: numeric("latitude", { precision: 9, scale: 6 }),
+  longitude: numeric("longitude", { precision: 9, scale: 6 }),
+  locationAccuracyM: numeric("location_accuracy_m", { precision: 8, scale: 1 }),
+  locationCapturedAt: timestamp("location_captured_at", { withTimezone: true }),
   profileCompleted: boolean("profile_completed").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   ...auditTimestamps

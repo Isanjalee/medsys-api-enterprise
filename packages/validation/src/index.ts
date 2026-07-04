@@ -761,7 +761,11 @@ export const portalProfileSchema = z
         })
       )
       .max(50)
-      .optional()
+      .optional(),
+    // Real-world location captured on the device (both required together to be stored).
+    latitude: z.coerce.number().min(-90).max(90).optional().nullable(),
+    longitude: z.coerce.number().min(-180).max(180).optional().nullable(),
+    locationAccuracyM: z.coerce.number().min(0).max(1_000_000).optional().nullable()
   })
   .strict();
 
