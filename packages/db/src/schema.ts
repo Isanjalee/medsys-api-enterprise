@@ -767,6 +767,24 @@ export const patientAccountMembers = pgTable(
   (table) => [index("patient_account_members_account_idx").on(table.patientAccountId)]
 );
 
+export const patientHealthMetrics = pgTable(
+  "patient_health_metrics",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    patientAccountId: bigint("patient_account_id", { mode: "number" })
+      .notNull()
+      .references(() => patientAccounts.id),
+    // null = the account holder ("self"); otherwise one of their family members.
+    memberId: bigint("member_id", { mode: "number" }).references(() => patientAccountMembers.id),
+    heightCm: numeric("height_cm", { precision: 5, scale: 1 }).notNull(),
+    weightKg: numeric("weight_kg", { precision: 5, scale: 1 }).notNull(),
+    bmi: numeric("bmi", { precision: 4, scale: 1 }).notNull(),
+    recordedAt: date("recorded_at").notNull().default(sql`CURRENT_DATE`),
+    ...auditTimestamps
+  },
+  (table) => [index("patient_health_metrics_profile_idx").on(table.patientAccountId, table.memberId, table.recordedAt)]
+);
+
 export const patientRefreshTokens = pgTable(
   "patient_refresh_tokens",
   {
