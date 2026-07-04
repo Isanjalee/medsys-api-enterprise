@@ -728,6 +728,14 @@ export const portalSignupSchema = z
   })
   .strict();
 
+export const portalHealthCreateSchema = z
+  .object({
+    memberId: z.coerce.number().int().positive().nullable().optional(),
+    heightCm: z.coerce.number().positive().min(30).max(300),
+    weightKg: z.coerce.number().positive().min(1).max(500)
+  })
+  .strict();
+
 export const portalLoginSchema = z
   .object({
     email: z.string().email().max(255),
