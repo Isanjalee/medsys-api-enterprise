@@ -67,6 +67,18 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
     const body = parseOrThrowValidation(portalProfileSchema, request.body);
     const age = ageFromDob(body.dob);
 
+    // Only touch location when a fresh capture is supplied (both coords) — a save without it
+    // must not wipe a previously captured location.
+    const hasLocation = body.latitude != null && body.longitude != null;
+    const locationFields = hasLocation
+      ? {
+          latitude: String(body.latitude),
+          longitude: String(body.longitude),
+          locationAccuracyM: body.locationAccuracyM != null ? String(body.locationAccuracyM) : null,
+          locationCapturedAt: new Date()
+        }
+      : {};
+
     const updated = await app.db.transaction(async (tx) => {
       const rows = await tx
         .update(patientAccounts)
@@ -80,6 +92,7 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
           address: body.address ?? null,
           bloodGroup: body.bloodGroup ?? null,
           allergies: body.allergies ?? [],
+          ...locationFields,
           profileCompleted: true,
           updatedAt: new Date()
         })
