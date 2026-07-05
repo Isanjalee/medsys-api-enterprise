@@ -772,6 +772,21 @@ export const patientAccountMembers = pgTable(
   (table) => [index("patient_account_members_account_idx").on(table.patientAccountId)]
 );
 
+export const banners = pgTable(
+  "banners",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    title: varchar("title", { length: 160 }),
+    imageKey: varchar("image_key", { length: 400 }).notNull(),
+    contentType: varchar("content_type", { length: 100 }).notNull(),
+    targetUrl: text("target_url"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    ...auditTimestamps
+  },
+  (table) => [index("banners_active_sort_idx").on(table.isActive, table.sortOrder, table.id)]
+);
+
 export const patientHealthMetrics = pgTable(
   "patient_health_metrics",
   {
