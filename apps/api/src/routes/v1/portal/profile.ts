@@ -91,6 +91,8 @@ const portalProfileRoutes: FastifyPluginAsync = async (app) => {
           phone: body.phone ?? null,
           address: body.address ?? null,
           bloodGroup: body.bloodGroup ?? null,
+          // Only set district when supplied — a save without it must not wipe a chosen district.
+          ...(body.district ? { district: body.district } : {}),
           allergies: body.allergies ?? [],
           ...locationFields,
           profileCompleted: true,

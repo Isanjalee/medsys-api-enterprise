@@ -766,6 +766,52 @@ export const portalLoginSchema = z
   })
   .strict();
 
+// Sri Lanka's 25 administrative districts — the bucket for the Health Sri Lanka heat map.
+export const SRI_LANKA_DISTRICTS = [
+  "Colombo",
+  "Gampaha",
+  "Kalutara",
+  "Kandy",
+  "Matale",
+  "Nuwara Eliya",
+  "Galle",
+  "Matara",
+  "Hambantota",
+  "Jaffna",
+  "Kilinochchi",
+  "Mannar",
+  "Vavuniya",
+  "Mullaitivu",
+  "Batticaloa",
+  "Ampara",
+  "Trincomalee",
+  "Kurunegala",
+  "Puttalam",
+  "Anuradhapura",
+  "Polonnaruwa",
+  "Badulla",
+  "Monaragala",
+  "Ratnapura",
+  "Kegalle"
+] as const;
+
+// Chronic conditions surfaced in the survey (extensible).
+export const SURVEY_CONDITIONS = ["sugar", "cholesterol", "pressure", "arthritis", "asthma", "heart"] as const;
+
+const districtSchema = z.enum(SRI_LANKA_DISTRICTS);
+
+export const portalSurveyCreateSchema = z
+  .object({
+    memberId: z.coerce.number().int().positive().nullable().optional(),
+    district: districtSchema,
+    hadCovid: z.boolean(),
+    hadDengue: z.boolean(),
+    conditions: z.array(z.enum(SURVEY_CONDITIONS)).max(20).optional().default([]),
+    latitude: z.coerce.number().min(-90).max(90).optional().nullable(),
+    longitude: z.coerce.number().min(-180).max(180).optional().nullable()
+  })
+  .strict();
+
 export const portalProfileSchema = z
   .object({
     firstName: z.string().trim().min(1).max(80),
@@ -775,6 +821,7 @@ export const portalProfileSchema = z
     nic: z.string().trim().max(20).optional().nullable(),
     phone: z.string().trim().max(30).optional().nullable(),
     address: z.string().trim().max(2000).optional().nullable(),
+    district: districtSchema.optional().nullable(),
     bloodGroup: z.string().trim().max(5).optional().nullable(),
     allergies: z
       .array(

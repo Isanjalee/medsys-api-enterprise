@@ -737,6 +737,8 @@ export const patientAccounts = pgTable("patient_accounts", {
     .notNull()
     .default(sql`'[]'::jsonb`),
   familyName: varchar("family_name", { length: 120 }),
+  // Home district (one of Sri Lanka's 25) — the bucket for the Health Sri Lanka heat map.
+  district: varchar("district", { length: 40 }),
   // Real-world location captured at profile creation (null = not captured / permission denied).
   latitude: numeric("latitude", { precision: 9, scale: 6 }),
   longitude: numeric("longitude", { precision: 9, scale: 6 }),
@@ -763,6 +765,8 @@ export const patientAccountMembers = pgTable(
     bloodGroup: varchar("blood_group", { length: 8 }),
     // Family role: father, mother, son, daughter, sister, brother, grandfather, etc.
     relationship: varchar("relationship", { length: 40 }).notNull(),
+    // Home district (falls back to the account's district when unset).
+    district: varchar("district", { length: 40 }),
     allergies: jsonb("allergies")
       .$type<Array<{ name: string; severity?: "low" | "moderate" | "high" }>>()
       .notNull()
@@ -803,6 +807,31 @@ export const patientHealthMetrics = pgTable(
     ...auditTimestamps
   },
   (table) => [index("patient_health_metrics_profile_idx").on(table.patientAccountId, table.memberId, table.recordedAt)]
+);
+
+// "Health Sri Lanka" public-health self-survey — one row per submission per profile. Feeds the
+// universal district heat map (aggregated only; individual locations are never exposed).
+export const patientHealthSurveys = pgTable(
+  "patient_health_surveys",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    patientAccountId: bigint("patient_account_id", { mode: "number" })
+      .notNull()
+      .references(() => patientAccounts.id),
+    // null = the account holder ("self"); otherwise one of their family members.
+    memberId: bigint("member_id", { mode: "number" }).references(() => patientAccountMembers.id),
+    district: varchar("district", { length: 40 }).notNull(),
+    hadCovid: boolean("had_covid").notNull().default(false),
+    hadDengue: boolean("had_dengue").notNull().default(false),
+    conditions: jsonb("conditions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    latitude: numeric("latitude", { precision: 9, scale: 6 }),
+    longitude: numeric("longitude", { precision: 9, scale: 6 }),
+    ...auditTimestamps
+  },
+  (table) => [
+    index("patient_health_surveys_district_idx").on(table.district),
+    index("patient_health_surveys_profile_idx").on(table.patientAccountId, table.memberId)
+  ]
 );
 
 export const patientRefreshTokens = pgTable(
