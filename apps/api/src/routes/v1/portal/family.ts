@@ -1,7 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { patientAccountMembers, patientAccounts } from "@medsys/db";
+import {
+  patientAccountMembers,
+  patientAccounts,
+  patientDoctorLinks,
+  patientHealthMetrics,
+  patientHealthSurveys
+} from "@medsys/db";
+import { SRI_LANKA_DISTRICTS } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../../lib/http-error.js";
 
 const RELATIONSHIPS = [
@@ -32,6 +39,7 @@ const memberSchema = z
     gender: z.enum(["male", "female", "other"]).optional().nullable(),
     nic: z.string().trim().max(30).optional().nullable(),
     phone: z.string().trim().max(30).optional().nullable(),
+    district: z.enum(SRI_LANKA_DISTRICTS).optional().nullable(),
     bloodGroup: z.string().trim().max(8).optional().nullable(),
     allergies: z
       .array(z.object({ name: z.string().trim().min(1), severity: z.enum(["low", "moderate", "high"]).optional() }))
@@ -92,6 +100,7 @@ const portalFamilyRoutes: FastifyPluginAsync = async (app) => {
       // Effective NIC applies the guardian fallback for minors without their own NIC.
       effectiveNic: member.nic || (isMinor ? parentNic : null),
       phone: member.phone,
+      district: member.district,
       bloodGroup: member.bloodGroup,
       allergies: member.allergies
     };
@@ -139,6 +148,7 @@ const portalFamilyRoutes: FastifyPluginAsync = async (app) => {
         gender: body.gender ?? null,
         nic: body.nic?.trim() || null,
         phone: body.phone?.trim() || null,
+        district: body.district ?? null,
         bloodGroup: body.bloodGroup?.trim() || null,
         allergies: body.allergies ?? []
       })
@@ -161,6 +171,7 @@ const portalFamilyRoutes: FastifyPluginAsync = async (app) => {
         gender: body.gender ?? null,
         nic: body.nic?.trim() || null,
         phone: body.phone?.trim() || null,
+        district: body.district ?? null,
         bloodGroup: body.bloodGroup?.trim() || null,
         allergies: body.allergies ?? [],
         updatedAt: new Date()
@@ -175,9 +186,24 @@ const portalFamilyRoutes: FastifyPluginAsync = async (app) => {
     const accountId = request.patientActor!.patientAccountId;
     const id = Number((request.params as { id: string }).id);
     assertOrThrow(Number.isInteger(id), 400, "Invalid member id");
-    await app.db
-      .delete(patientAccountMembers)
-      .where(and(eq(patientAccountMembers.id, id), eq(patientAccountMembers.patientAccountId, accountId)));
+
+    await app.db.transaction(async (tx) => {
+      const owned = await tx
+        .select({ id: patientAccountMembers.id })
+        .from(patientAccountMembers)
+        .where(and(eq(patientAccountMembers.id, id), eq(patientAccountMembers.patientAccountId, accountId)))
+        .limit(1);
+      assertOrThrow(owned.length === 1, 404, "Member not found");
+
+      // Remove the member's own dependent rows first (they FK-reference the member).
+      await tx.delete(patientDoctorLinks).where(eq(patientDoctorLinks.memberId, id));
+      await tx.delete(patientHealthMetrics).where(eq(patientHealthMetrics.memberId, id));
+      await tx.delete(patientHealthSurveys).where(eq(patientHealthSurveys.memberId, id));
+      await tx
+        .delete(patientAccountMembers)
+        .where(and(eq(patientAccountMembers.id, id), eq(patientAccountMembers.patientAccountId, accountId)));
+    });
+
     return { ok: true };
   });
 };

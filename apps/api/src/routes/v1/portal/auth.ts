@@ -24,6 +24,7 @@ const serializeAccount = (a: AccountRow) => ({
   nic: a.nic ?? null,
   address: a.address ?? null,
   bloodGroup: a.bloodGroup ?? null,
+  district: a.district ?? null,
   allergies: a.allergies ?? [],
   latitude: a.latitude ?? null,
   longitude: a.longitude ?? null,
