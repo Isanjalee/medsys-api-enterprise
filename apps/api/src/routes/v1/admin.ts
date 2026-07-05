@@ -1,11 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { organizations, platformAdmins, userRoles, users } from "@medsys/db";
+import { banners, organizations, platformAdmins, userRoles, users } from "@medsys/db";
+import { bannerCreateSchema, bannerUpdateSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
 import { writeAuditLog } from "../../lib/audit.js";
 import { splitFullName } from "../../lib/names.js";
+import { getDocument, putDocument, resolveDocumentContentType } from "../../lib/s3.js";
 
 const loginSchema = z.object({ username: z.string().min(1), password: z.string().min(1) }).strict();
 
@@ -424,6 +427,69 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return { user: serializeOrgUser(updated[0]) };
+  });
+
+  // --- Home banners (patient portal carousel) ---
+  app.get("/banners", { preHandler: app.authenticatePlatformAdmin }, async () => {
+    const rows = await app.db.select().from(banners).orderBy(asc(banners.sortOrder), asc(banners.id));
+    return rows.map((b) => ({
+      id: b.id,
+      title: b.title,
+      targetUrl: b.targetUrl,
+      sortOrder: b.sortOrder,
+      isActive: b.isActive,
+      imageUrl: `/api/admin/banners/${b.id}/image`,
+      createdAt: b.createdAt
+    }));
+  });
+
+  app.post("/banners", { preHandler: app.authenticatePlatformAdmin }, async (request, reply) => {
+    const query = parseOrThrowValidation(bannerCreateSchema, request.query);
+    const file = await (request as unknown as { file: () => Promise<{ filename?: string; mimetype?: string; toBuffer: () => Promise<Buffer> } | undefined> }).file();
+    assertOrThrow(file, 400, "No image uploaded");
+    const fileName = String(file!.filename ?? "banner").slice(0, 255);
+    const contentType = resolveDocumentContentType(file!.mimetype, fileName);
+    assertOrThrow(contentType && contentType.startsWith("image/"), 415, "Only image files are allowed");
+    const buffer = await file!.toBuffer();
+    assertOrThrow(buffer.length > 0, 400, "Empty file");
+    assertOrThrow(buffer.length <= app.env.PATIENT_DOCUMENT_MAX_BYTES, 413, "Image is too large");
+
+    const key = `banners/${randomUUID()}-${fileName.replace(/[^A-Za-z0-9._-]/g, "_").slice(-120)}`;
+    await putDocument(app.env, key, buffer, contentType!);
+    const inserted = await app.db
+      .insert(banners)
+      .values({ title: query.title || null, imageKey: key, contentType: contentType!, targetUrl: query.targetUrl || null, sortOrder: query.sortOrder ?? 0 })
+      .returning({ id: banners.id });
+    return reply.code(201).send({ id: inserted[0].id });
+  });
+
+  app.patch("/banners/:id", { preHandler: app.authenticatePlatformAdmin }, async (request) => {
+    const id = Number((request.params as { id: string }).id);
+    assertOrThrow(Number.isInteger(id), 400, "Invalid banner id");
+    const body = parseOrThrowValidation(bannerUpdateSchema, request.body);
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.title !== undefined) set.title = body.title || null;
+    if (body.targetUrl !== undefined) set.targetUrl = body.targetUrl || null;
+    if (body.sortOrder !== undefined) set.sortOrder = body.sortOrder;
+    if (body.isActive !== undefined) set.isActive = body.isActive;
+    await app.db.update(banners).set(set).where(eq(banners.id, id));
+    return { ok: true };
+  });
+
+  app.delete("/banners/:id", { preHandler: app.authenticatePlatformAdmin }, async (request) => {
+    const id = Number((request.params as { id: string }).id);
+    assertOrThrow(Number.isInteger(id), 400, "Invalid banner id");
+    await app.db.delete(banners).where(eq(banners.id, id));
+    return { ok: true };
+  });
+
+  app.get("/banners/:id/image", { preHandler: app.authenticatePlatformAdmin }, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    assertOrThrow(Number.isInteger(id), 400, "Invalid banner id");
+    const rows = await app.db.select({ imageKey: banners.imageKey, contentType: banners.contentType }).from(banners).where(eq(banners.id, id)).limit(1);
+    assertOrThrow(rows.length === 1, 404, "Banner not found");
+    const buffer = await getDocument(app.env, rows[0].imageKey);
+    return reply.header("Content-Type", rows[0].contentType).header("Cache-Control", "no-store").send(buffer);
   });
 };
 

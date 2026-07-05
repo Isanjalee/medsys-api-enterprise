@@ -728,6 +728,29 @@ export const portalSignupSchema = z
   })
   .strict();
 
+const bannerTargetUrl = z
+  .string()
+  .trim()
+  .max(2000)
+  .refine((v) => v === "" || /^https?:\/\//i.test(v), "Must be an http(s) URL");
+
+export const bannerCreateSchema = z
+  .object({
+    title: z.string().trim().max(160).optional(),
+    targetUrl: bannerTargetUrl.optional(),
+    sortOrder: z.coerce.number().int().min(0).max(9999).optional()
+  })
+  .strict();
+
+export const bannerUpdateSchema = z
+  .object({
+    title: z.string().trim().max(160).nullable().optional(),
+    targetUrl: bannerTargetUrl.nullable().optional(),
+    sortOrder: z.coerce.number().int().min(0).max(9999).optional(),
+    isActive: z.boolean().optional()
+  })
+  .strict();
+
 export const portalHealthCreateSchema = z
   .object({
     memberId: z.coerce.number().int().positive().nullable().optional(),
