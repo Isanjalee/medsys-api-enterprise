@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { userRoles, users } from "@medsys/db";
+import { z } from "zod";
+import { doctorAssistants, userRoles, users } from "@medsys/db";
 import { normalizeRoles, type UserRole } from "@medsys/types";
 import {
   createUserFrontendSchema,
@@ -330,6 +331,85 @@ const userRoutes: FastifyPluginAsync = async (app) => {
           })
         )
       };
+    }
+  );
+
+  // Which assistants are assigned to each doctor in this org (drives consultation routing).
+  app.get("/assignments", { preHandler: app.authorizePermissions(["user.read"]) }, async (request) => {
+    const actor = request.actor!;
+    const rows = await app.readDb
+      .select({ doctorUserId: doctorAssistants.doctorUserId, assistantUserId: doctorAssistants.assistantUserId })
+      .from(doctorAssistants)
+      .where(eq(doctorAssistants.organizationId, actor.organizationId));
+    const byDoctor = new Map<number, number[]>();
+    for (const row of rows) {
+      const list = byDoctor.get(row.doctorUserId) ?? [];
+      list.push(row.assistantUserId);
+      byDoctor.set(row.doctorUserId, list);
+    }
+    return {
+      assignments: [...byDoctor.entries()].map(([doctorUserId, assistantUserIds]) => ({ doctorUserId, assistantUserIds }))
+    };
+  });
+
+  // Replace a doctor's assigned assistants (owner-scoped to their own organization).
+  app.put(
+    "/:doctorId/assistants",
+    { preHandler: [app.authorizePermissions(["user.write"]), app.enforceSensitiveRateLimit("user.write")] },
+    async (request) => {
+      const actor = request.actor!;
+      const doctorId = Number((request.params as { doctorId: string }).doctorId);
+      assertOrThrow(Number.isInteger(doctorId) && doctorId > 0, 400, "Invalid doctor id.");
+      const { assistantUserIds } = parseOrThrowValidation(
+        z.object({ assistantUserIds: z.array(z.number().int().positive()).max(50) }).strict(),
+        request.body
+      );
+      const uniqueAssistantIds = [...new Set(assistantUserIds)];
+
+      const doctorRows = await app.readDb
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.id, doctorId), eq(users.organizationId, actor.organizationId), eq(users.role, "doctor")))
+        .limit(1);
+      assertOrThrow(doctorRows.length === 1, 404, "Doctor not found in this organization.");
+
+      if (uniqueAssistantIds.length > 0) {
+        const validAssistants = await app.readDb
+          .select({ id: users.id })
+          .from(users)
+          .where(
+            and(eq(users.organizationId, actor.organizationId), eq(users.role, "assistant"), inArray(users.id, uniqueAssistantIds))
+          );
+        assertOrThrow(
+          validAssistants.length === uniqueAssistantIds.length,
+          400,
+          "One or more assistants are not valid for this organization."
+        );
+      }
+
+      await app.db.transaction(async (tx) => {
+        await tx
+          .delete(doctorAssistants)
+          .where(and(eq(doctorAssistants.organizationId, actor.organizationId), eq(doctorAssistants.doctorUserId, doctorId)));
+        if (uniqueAssistantIds.length > 0) {
+          await tx.insert(doctorAssistants).values(
+            uniqueAssistantIds.map((assistantUserId) => ({
+              organizationId: actor.organizationId,
+              doctorUserId: doctorId,
+              assistantUserId
+            }))
+          );
+        }
+      });
+
+      await writeAuditLog(request, {
+        entityType: "user",
+        action: "assign_assistants",
+        entityId: doctorId,
+        payload: { assistantUserIds: uniqueAssistantIds }
+      });
+
+      return { doctorUserId: doctorId, assistantUserIds: uniqueAssistantIds };
     }
   );
 
