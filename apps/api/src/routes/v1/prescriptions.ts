@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import {
   appointments,
   dispenseRecords,
+  doctorAssistants,
   encounterDiagnoses,
   encounters,
   inventoryItems,
@@ -214,6 +215,23 @@ const prescriptionsRoutes: FastifyPluginAsync = async (app) => {
       ];
       if (toDate) {
         queueConditions.push(lte(encounters.checkedAt, toDate));
+      }
+
+      // An assistant only sees the queue for the doctors they're assigned to. Owners/doctors with
+      // this permission see the whole clinic queue.
+      if (actor.role === "assistant") {
+        const assignedRows = await app.readDb
+          .select({ doctorUserId: doctorAssistants.doctorUserId })
+          .from(doctorAssistants)
+          .where(
+            and(
+              eq(doctorAssistants.assistantUserId, actor.userId),
+              eq(doctorAssistants.organizationId, actor.organizationId)
+            )
+          );
+        const assignedDoctorIds = assignedRows.map((row) => row.doctorUserId);
+        // No assigned doctors → an impossible id so the queue is empty rather than clinic-wide.
+        queueConditions.push(inArray(encounters.doctorId, assignedDoctorIds.length > 0 ? assignedDoctorIds : [-1]));
       }
 
       const rows = await app.readDb

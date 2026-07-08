@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   appointments,
   dispenseRecords,
+  doctorAssistants,
   encounterDiagnoses,
   encounters,
   families,
@@ -17,7 +18,8 @@ import {
   patients,
   prescriptionItems,
   prescriptions,
-  testOrders
+  testOrders,
+  users
 } from "@medsys/db";
 import { hasAllResolvedPermissions } from "@medsys/types";
 import { createGuardianFrontendSchema, createPatientFrontendSchema, saveConsultationWorkflowSchema } from "@medsys/validation";
@@ -573,6 +575,25 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
         !payload.prescription &&
         !payload.dispense &&
         !payload.clinicalSummary;
+
+      // Routing replaces the old operating mode: a doctor with ≥1 active assigned assistant sends
+      // completed consultations (incl. consultation-only and outside drugs) to that assistant's
+      // queue; a doctor with none completes the consultation directly.
+      const activeAssignedAssistant = await app.readDb
+        .select({ id: doctorAssistants.id })
+        .from(doctorAssistants)
+        .innerJoin(users, eq(users.id, doctorAssistants.assistantUserId))
+        .where(
+          and(
+            eq(doctorAssistants.doctorUserId, doctorId),
+            eq(doctorAssistants.organizationId, actor.organizationId),
+            eq(users.isActive, true),
+            eq(users.role, "assistant")
+          )
+        )
+        .limit(1);
+      const hasAssignedAssistant = activeAssignedAssistant.length > 0;
+      const routedToAssistant = !directDispenseRequested && hasAssignedAssistant;
 
       const result = await app.db.transaction(async (tx) => {
         const ensureFamilyMembership = async (
@@ -1377,8 +1398,12 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           } else if (directDispenseRequested) {
             await createDispenseRecord(prescriptionId, payload.dispense?.items ?? []);
             dispenseStatus = "completed";
-          } else {
+          } else if (hasAssignedAssistant) {
+            // Assistant will dispense from their queue.
             dispenseStatus = "pending";
+          } else {
+            // No assigned assistant — the prescription is recorded and the consultation completes.
+            dispenseStatus = "none";
           }
         }
 
@@ -1420,28 +1445,18 @@ const consultationRoutes: FastifyPluginAsync = async (app) => {
           });
         }
 
-        const workflowStatus = shouldReuseEncounter
-          ? visit.status === "completed"
+        // One-button flow: route to the assistant queue when the doctor has an active assigned
+        // assistant (even for consultation-only / outside-only), otherwise complete directly.
+        const assistantStatus = workflowType === "appointment" ? "doctor_completed" : "ready_for_dispense";
+        const workflowStatus =
+          shouldReuseEncounter && visit.status === "completed"
             ? "completed"
-            : workflowType === "appointment"
-              ? "doctor_completed"
-              : "ready_for_dispense"
-          : workflowType === "appointment"
-            ? clinicalPrescriptionItems.length === 0
-              ? "completed"
-              : directDispenseRequested
-                ? "completed"
-                : "doctor_completed"
-            : clinicalPrescriptionItems.length === 0
-              ? "completed"
-              : directDispenseRequested
-                ? "completed"
-                : "ready_for_dispense";
+            : routedToAssistant
+              ? assistantStatus
+              : "completed";
 
-        const persistedVisitStatus =
-          clinicalPrescriptionItems.length === 0 || directDispenseRequested
-            ? "completed"
-            : "in_consultation";
+        // Stay "in_consultation" only while an assistant still has to act; otherwise complete.
+        const persistedVisitStatus = routedToAssistant ? "in_consultation" : "completed";
 
         const closedVisit = shouldReuseEncounter
           ? visit
