@@ -126,6 +126,29 @@ export const users = pgTable(
   (table) => [uniqueIndex("users_org_email_idx").on(table.organizationId, table.email)]
 );
 
+// Which assistants are assigned to which doctors (many-to-many). A completed consultation routes
+// to the doctor's active assigned assistant(s); a doctor with no assigned active assistant
+// completes directly. Replaces the retired center-wide "operating mode".
+export const doctorAssistants = pgTable(
+  "doctor_assistants",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    doctorUserId: bigint("doctor_user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    assistantUserId: bigint("assistant_user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    ...auditTimestamps
+  },
+  (table) => [
+    uniqueIndex("doctor_assistants_pair_idx").on(table.doctorUserId, table.assistantUserId),
+    index("doctor_assistants_assistant_idx").on(table.assistantUserId),
+    index("doctor_assistants_org_idx").on(table.organizationId)
+  ]
+);
+
 export const userRoles = pgTable(
   "user_roles",
   {

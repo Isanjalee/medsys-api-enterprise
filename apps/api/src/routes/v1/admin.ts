@@ -1,8 +1,8 @@
 import type { FastifyPluginAsync } from "fastify";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { banners, organizations, platformAdmins, userRoles, users } from "@medsys/db";
+import { banners, doctorAssistants, organizations, platformAdmins, userRoles, users } from "@medsys/db";
 import { bannerCreateSchema, bannerUpdateSchema } from "@medsys/validation";
 import { assertOrThrow, parseOrThrowValidation } from "../../lib/http-error.js";
 import { hashPassword, verifyPassword } from "../../lib/password.js";
@@ -38,6 +38,10 @@ const updateOrganizationSchema = z
     (v) => v.name !== undefined || v.isActive !== undefined || v.operatingMode !== undefined,
     "At least one field must be provided."
   );
+
+const assignAssistantsSchema = z
+  .object({ assistantUserIds: z.array(z.number().int().positive()).max(50) })
+  .strict();
 
 const createOrgUserSchema = z
   .object({
@@ -370,6 +374,81 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
     return { user: serializeOrgUser(created) };
   });
+
+  // Which assistants are assigned to each doctor in the org (drives consultation routing).
+  app.get("/organizations/:id/assignments", { preHandler: app.authenticatePlatformAdmin }, async (request) => {
+    const { id } = parseOrThrowValidation(orgIdParamSchema, request.params);
+    const rows = await app.readDb
+      .select({ doctorUserId: doctorAssistants.doctorUserId, assistantUserId: doctorAssistants.assistantUserId })
+      .from(doctorAssistants)
+      .where(eq(doctorAssistants.organizationId, id));
+    const byDoctor = new Map<number, number[]>();
+    for (const row of rows) {
+      const list = byDoctor.get(row.doctorUserId) ?? [];
+      list.push(row.assistantUserId);
+      byDoctor.set(row.doctorUserId, list);
+    }
+    return {
+      assignments: [...byDoctor.entries()].map(([doctorUserId, assistantUserIds]) => ({ doctorUserId, assistantUserIds }))
+    };
+  });
+
+  // Replace a doctor's assigned assistants (both owner and super-admin can manage assignments).
+  app.put(
+    "/organizations/:id/doctors/:doctorId/assistants",
+    { preHandler: app.authenticatePlatformAdmin },
+    async (request) => {
+      const params = request.params as { id: string; doctorId: string };
+      const { id } = parseOrThrowValidation(orgIdParamSchema, { id: params.id });
+      const doctorId = Number(params.doctorId);
+      assertOrThrow(Number.isInteger(doctorId) && doctorId > 0, 400, "Invalid doctor id.");
+      const { assistantUserIds } = parseOrThrowValidation(assignAssistantsSchema, request.body);
+      const uniqueAssistantIds = [...new Set(assistantUserIds)];
+
+      const doctorRows = await app.readDb
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.id, doctorId), eq(users.organizationId, id), eq(users.role, "doctor")))
+        .limit(1);
+      assertOrThrow(doctorRows.length === 1, 404, "Doctor not found in this organization.");
+
+      if (uniqueAssistantIds.length > 0) {
+        const validAssistants = await app.readDb
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.organizationId, id), eq(users.role, "assistant"), inArray(users.id, uniqueAssistantIds)));
+        assertOrThrow(
+          validAssistants.length === uniqueAssistantIds.length,
+          400,
+          "One or more assistants are not valid for this organization."
+        );
+      }
+
+      await app.db.transaction(async (tx) => {
+        await tx
+          .delete(doctorAssistants)
+          .where(and(eq(doctorAssistants.organizationId, id), eq(doctorAssistants.doctorUserId, doctorId)));
+        if (uniqueAssistantIds.length > 0) {
+          await tx.insert(doctorAssistants).values(
+            uniqueAssistantIds.map((assistantUserId) => ({
+              organizationId: id,
+              doctorUserId: doctorId,
+              assistantUserId
+            }))
+          );
+        }
+      });
+
+      await writeAuditLog(request, {
+        entityType: "user",
+        action: "assign_assistants",
+        entityId: doctorId,
+        payload: { organizationId: id, assistantUserIds: uniqueAssistantIds, by: request.platformAdmin!.username }
+      });
+
+      return { doctorUserId: doctorId, assistantUserIds: uniqueAssistantIds };
+    }
+  );
 
   app.patch("/users/:id", { preHandler: app.authenticatePlatformAdmin }, async (request) => {
     const { id } = parseOrThrowValidation(userIdParamSchema, request.params);
